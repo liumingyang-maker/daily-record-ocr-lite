@@ -244,14 +244,43 @@ async def reanalyze(job_id: str):
     except (FileNotFoundError, ValueError):
         raise HTTPException(status_code=404, detail="任务不存在。")
 
-    try:
-        await analyze_job(job_id, storage)
-    except (PipelineError, VisionProviderError) as exc:
-        logger.warning("任务 %s 重新识别失败: %s", job_id, exc)
-    except Exception:
-        logger.exception("任务 %s 重新识别发生未知错误", job_id)
+    # 提交到后台队列重新识别
+    from .jobs import get_task_queue
+    queue = get_task_queue()
+    await queue.submit(job_id)
 
     return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
+
+
+@app.post("/api/jobs/{job_id}/mode")
+async def switch_mode(job_id: str, request: Request):
+    """切换识别模式（freeform/template/auto）并重新识别。"""
+    storage = _get_storage()
+    try:
+        job = storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    body = await request.json()
+    mode = body.get("mode", "auto")
+    valid_modes = {"freeform", "template", "auto"}
+    if mode not in valid_modes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"无效模式: {mode}。允许: {', '.join(sorted(valid_modes))}",
+        )
+
+    job["recognition_mode"] = mode
+    job["status"] = "UPLOADED"
+    job["status_message"] = f"已切换为 {mode} 模式，等待重新识别。"
+    storage.save_job(job)
+
+    # 提交到后台队列
+    from .jobs import get_task_queue
+    queue = get_task_queue()
+    await queue.submit(job_id)
+
+    return {"status": "UPLOADED", "mode": mode}
 
 
 # ─── 保存人工修改 ───────────────────────────────────────────
