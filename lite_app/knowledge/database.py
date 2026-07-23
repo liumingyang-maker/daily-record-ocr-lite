@@ -98,6 +98,26 @@ CREATE TABLE IF NOT EXISTS recognition_cache (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS company_aliases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL,
+    alias TEXT NOT NULL,
+    alias_type TEXT,
+    source TEXT,
+    UNIQUE(company_id, alias),
+    FOREIGN KEY (company_id) REFERENCES customers(id)
+);
+
+CREATE TABLE IF NOT EXISTS product_aliases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER NOT NULL,
+    alias TEXT NOT NULL,
+    alias_type TEXT,
+    source TEXT,
+    UNIQUE(product_id, alias),
+    FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_aliases_alias ON material_aliases(alias);
 CREATE INDEX IF NOT EXISTS idx_formula_items_formula ON formula_items(formula_id);
 CREATE INDEX IF NOT EXISTS idx_corrections_job ON correction_logs(job_id);
@@ -256,3 +276,39 @@ class KnowledgeDB:
         conn = self._get_conn()
         conn.execute("DELETE FROM recognition_cache WHERE image_hash = ?", (image_hash,))
         conn.commit()
+
+    # ─── 公司别名 ─────────────────────────────────────────
+
+    def add_company_alias(self, company_id: int, alias: str, alias_type: str = "manual", source: str = "web") -> None:
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT OR IGNORE INTO company_aliases (company_id, alias, alias_type, source) VALUES (?, ?, ?, ?)",
+            (company_id, alias, alias_type, source),
+        )
+        conn.commit()
+
+    def find_company_by_alias(self, alias: str) -> dict[str, Any] | None:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT c.* FROM customers c JOIN company_aliases a ON c.id = a.company_id WHERE a.alias = ?",
+            (alias,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    # ─── 产品别名 ─────────────────────────────────────────
+
+    def add_product_alias(self, product_id: int, alias: str, alias_type: str = "manual", source: str = "web") -> None:
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT OR IGNORE INTO product_aliases (product_id, alias, alias_type, source) VALUES (?, ?, ?, ?)",
+            (product_id, alias, alias_type, source),
+        )
+        conn.commit()
+
+    def find_product_by_alias(self, alias: str) -> dict[str, Any] | None:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT p.* FROM products p JOIN product_aliases a ON p.id = a.product_id WHERE a.alias = ?",
+            (alias,),
+        ).fetchone()
+        return dict(row) if row else None
