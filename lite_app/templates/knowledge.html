@@ -31,6 +31,19 @@
 </section>
 
 <section>
+    <h3>批量导入</h3>
+    <div id="import-feedback" class="feedback" style="display:none"></div>
+    <form id="import-form" onsubmit="importFile(event)">
+        <div class="form-group">
+            <label>选择文件（.xlsx 或 .csv）：</label>
+            <input type="file" id="import-file" accept=".xlsx,.csv" required>
+        </div>
+        <p class="hint">支持列：物料名称/name、单位/unit、分类/category、别名/aliases（分号分隔）</p>
+        <button type="submit" class="btn">导入</button>
+    </form>
+</section>
+
+<section>
     <h3>物料列表 ({{ materials | length }})</h3>
     {% if materials %}
     <table class="jobs-table">
@@ -100,6 +113,31 @@ function addMaterial(e) {
         fb.style.display = 'block';
         fb.className = 'feedback feedback-error';
         fb.textContent = '添加失败: ' + err.message;
+    });
+}
+
+function importFile(e) {
+    e.preventDefault();
+    const fileInput = document.getElementById('import-file');
+    if (!fileInput.files.length) return;
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+
+    const fb = document.getElementById('import-feedback');
+    fb.style.display = 'block';
+    fb.className = 'feedback feedback-warn';
+    fb.textContent = '正在导入...';
+
+    fetch('/knowledge/import', {method: 'POST', body: formData})
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(data => {
+        fb.className = 'feedback feedback-ok';
+        fb.textContent = data.message || ('导入完成: ' + data.imported + ' 条');
+        setTimeout(() => location.reload(), 1000);
+    })
+    .catch(err => {
+        fb.className = 'feedback feedback-error';
+        fb.textContent = '导入失败: ' + err.message;
     });
 }
 </script>
