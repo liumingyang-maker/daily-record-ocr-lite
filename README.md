@@ -1,34 +1,45 @@
-# daily-record-ocr（轻量版）
+# daily-record-ocr-lite（准确率优先增强版）
 
 将手机拍摄的中文手写生产/配方笔记识别为结构化数据，允许人工校对，并写入 Excel。
 
-## 为什么不用固定坐标切格
+## 核心设计：双引擎识别
 
-用户的手写笔记是自由排版的活页本，不是固定印刷表格。手机拍摄方向可能与文字方向相差 90°，页面可能有阴影、倾斜和金属活页环。固定坐标切格无法适应这些变化。
+本项目使用 **PP-OCRv6 + 视觉大模型** 双引擎互相验证：
 
-本项目使用**整图视觉理解**：将完整图片交给可配置的视觉模型，由模型理解空间关系后返回结构化 JSON。
+- PP-OCRv6 提供文字、坐标和置信度
+- 视觉大模型接收原图 + OCR 证据，理解空间关系
+- 多来源候选融合，数字冲突严格标记
+- 历史物料/配方匹配辅助纠错
+- 冲突字段局部裁图复核
+- 字段级人工确认
 
 ## 架构
 
 ```
-上传图片 → EXIF/旋转/缩放预处理 → 视觉模型 Provider → JSON 解析
-    → JSON Schema 校验 → 浏览器人工校对 → Excel 导出 → 下载
+上传图片 → VLM/OCR 双图预处理 → PP-OCRv6 整图识别
+    → 视觉大模型（带 OCR 证据）→ 历史匹配
+    → 候选融合 → 冲突局部复核 → 字段级人工确认
+    → Excel 5-Sheet 导出（含识别审查+修正日志）
 ```
 
 核心模块：
 
-- `lite_app/config.py` — 集中配置（YAML + .env + 环境变量占位）
-- `lite_app/storage.py` — 文件夹 + JSON 任务存储
-- `lite_app/image_utils.py` — 图片预处理（EXIF、旋转、缩放、JPEG）
-- `lite_app/providers.py` — VisionProvider 抽象 + mock / openai_compatible
-- `lite_app/pipeline.py` — 提示词构建、模型调用、JSON 提取、Schema 校验
-- `lite_app/exporter.py` — Excel 新建 / 固定模板映射导出
+- `lite_app/ocr/` — OCRProvider 抽象 + PaddleOCRv6 + Mock + 单例管理器
+- `lite_app/vision/` — VisionProvider 抽象 + mock / openai_compatible
+- `lite_app/layout/` — 行聚类、原料-数量横向配对、记录分组
+- `lite_app/knowledge/` — sqlite3 知识库 + 历史匹配器
+- `lite_app/fusion/` — 候选融合引擎 + 冲突检测
+- `lite_app/review/` — 局部复核 + 修正日志
+- `lite_app/pipeline_v2.py` — 双引擎集成 pipeline
+- `lite_app/image_utils_v2.py` — VLM/OCR 双图预处理
+- `lite_app/exporter.py` — Excel 5-Sheet 导出
 - `lite_app/main.py` — FastAPI 页面与 API
 
 ## 安装要求
 
 - Python 3.11+
 - 无需 Node.js、Docker、数据库
+- 推荐安装 OCR 依赖以获得最佳准确率
 
 ## 安装和启动
 
@@ -37,7 +48,10 @@
 ```powershell
 python -m venv venv
 venv\Scripts\activate
-pip install -r requirements.txt
+# 推荐：安装含 OCR 的完整依赖
+pip install -r requirements-ocr.txt
+# 或仅核心依赖（无 OCR，降级运行）
+# pip install -r requirements.txt
 python -m app.main
 ```
 
@@ -46,11 +60,17 @@ python -m app.main
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-ocr.txt
 python -m app.main
 ```
 
 启动后访问 http://127.0.0.1:8765
+
+验证安装：
+
+```bash
+python scripts/verify_install.py
+```
 
 也可使用 uvicorn 直接启动：
 
