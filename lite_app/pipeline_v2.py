@@ -174,6 +174,14 @@ async def analyze_job_v2(job_id: str, storage: JobStorage | None = None) -> dict
                 json.dumps(ocr_json, ensure_ascii=False, indent=2), encoding="utf-8"
             )
 
+            # 生成 overlay 图
+            try:
+                from .ocr.overlay import generate_overlay
+                overlay_path = ocr_dir / f"page_{i:02d}_overlay.jpg"
+                generate_overlay(ocr_path, page_result, overlay_path)
+            except Exception as e:
+                logger.warning("Overlay 生成失败 (page %d): %s", i, e)
+
         timings["ocr_ms"] = int((time.time() - t0) * 1000)
 
         # ─── 阶段3：VLM（带 OCR 证据）──────────────────────
