@@ -602,6 +602,157 @@ async def recheck_field(job_id: str, field_id: str):
     }
 
 
+# ─── 分组 API ─────────────────────────────────────────────
+
+
+@app.get("/api/jobs/{job_id}/tree")
+async def get_job_tree(job_id: str):
+    """获取任务业务树（公司→产品→配方）。"""
+    from .grouping.storage import load_business_entities, build_tree_response
+    storage = _get_storage()
+    try:
+        storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    job_dir = storage.get_job_dir(job_id)
+    entities = load_business_entities(job_dir)
+    if not entities:
+        return {"summary": {}, "companies": []}
+    return build_tree_response(entities)
+
+
+@app.get("/api/jobs/{job_id}/pages")
+async def get_job_pages(job_id: str):
+    """获取任务页面视图。"""
+    from .grouping.storage import load_business_entities, build_pages_response
+    storage = _get_storage()
+    try:
+        storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    job_dir = storage.get_job_dir(job_id)
+    entities = load_business_entities(job_dir)
+    if not entities:
+        return []
+    return build_pages_response(entities)
+
+
+@app.get("/api/jobs/{job_id}/formulas/{formula_id}")
+async def get_formula_detail(job_id: str, formula_id: str):
+    """获取配方详情。"""
+    from .grouping.storage import load_business_entities, build_formula_detail
+    storage = _get_storage()
+    try:
+        storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    job_dir = storage.get_job_dir(job_id)
+    entities = load_business_entities(job_dir)
+    if not entities:
+        raise HTTPException(status_code=404, detail="业务实体不存在。")
+
+    detail = build_formula_detail(entities, formula_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail=f"配方不存在: {formula_id}")
+    return detail
+
+
+@app.patch("/api/jobs/{job_id}/pages/{page_id}/company")
+async def update_page_company(job_id: str, page_id: str, request: Request):
+    """更新页面公司归属。"""
+    from .grouping.storage import load_business_entities, save_business_entities
+    storage = _get_storage()
+    try:
+        storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    body = await request.json()
+    job_dir = storage.get_job_dir(job_id)
+    entities = load_business_entities(job_dir)
+    if not entities:
+        raise HTTPException(status_code=400, detail="业务实体不存在。")
+
+    # 找到页面并更新公司
+    page = next((p for p in entities.pages if p.page_id == page_id), None)
+    if not page:
+        raise HTTPException(status_code=404, detail=f"页面不存在: {page_id}")
+
+    new_company = body.get("raw_value", body.get("company_id", ""))
+    page.company.raw_value = new_company
+    page.company.standard_value = body.get("standard_value", new_company)
+    page.company.review_status = "MANUAL_CONFIRMED"
+
+    # 重新构建公司分组
+    from .grouping.service import _build_company_groups, _build_product_groups
+    _build_company_groups(entities)
+    _build_product_groups(entities)
+
+    save_business_entities(job_dir, entities)
+    return {"status": "updated", "page_id": page_id, "company": new_company}
+
+
+@app.patch("/api/jobs/{job_id}/formulas/{formula_id}/group")
+async def update_formula_group(job_id: str, formula_id: str, request: Request):
+    """更新配方分组（公司/产品归属）。"""
+    from .grouping.storage import load_business_entities, save_business_entities
+    storage = _get_storage()
+    try:
+        storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    body = await request.json()
+    job_dir = storage.get_job_dir(job_id)
+    entities = load_business_entities(job_dir)
+    if not entities:
+        raise HTTPException(status_code=400, detail="业务实体不存在。")
+
+    formula = next((f for f in entities.formulas if f.formula_id == formula_id), None)
+    if not formula:
+        raise HTTPException(status_code=404, detail=f"配方不存在: {formula_id}")
+
+    if "company_id" in body:
+        formula.company_id = body["company_id"]
+    if "product_id" in body:
+        formula.product_id = body["product_id"]
+
+    save_business_entities(job_dir, entities)
+    return {"status": "updated", "formula_id": formula_id}
+
+
+@app.patch("/api/jobs/{job_id}/formulas/{formula_id}/number")
+async def update_formula_number(job_id: str, formula_id: str, request: Request):
+    """更新配方编号（不改变 formula_id）。"""
+    from .grouping.storage import load_business_entities, save_business_entities
+    from .grouping.service import normalize_formula_no
+    storage = _get_storage()
+    try:
+        storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    body = await request.json()
+    job_dir = storage.get_job_dir(job_id)
+    entities = load_business_entities(job_dir)
+    if not entities:
+        raise HTTPException(status_code=400, detail="业务实体不存在。")
+
+    formula = next((f for f in entities.formulas if f.formula_id == formula_id), None)
+    if not formula:
+        raise HTTPException(status_code=404, detail=f"配方不存在: {formula_id}")
+
+    new_no = body.get("formula_no_raw", "")
+    formula.formula_no_raw = new_no
+    formula.formula_no_normalized = normalize_formula_no(new_no)
+
+    save_business_entities(job_dir, entities)
+    return {"status": "updated", "formula_id": formula_id, "formula_no_raw": new_no}
+
+
 # ─── 知识库管理 ─────────────────────────────────────────────
 
 
