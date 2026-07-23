@@ -280,6 +280,17 @@ async def analyze_job_v2(job_id: str, storage: JobStorage | None = None) -> dict
         # 同时保存为 result.json（兼容旧接口）
         storage.save_result(job_id, vlm_result)
 
+        # ─── 阶段6：构建业务分组 ─────────────────────────────
+        try:
+            from .grouping.service import build_business_entities
+            from .grouping.storage import save_business_entities
+            entities = build_business_entities(job_id, vlm_result)
+            save_business_entities(job_dir, entities)
+            logger.info("任务 %s 业务分组构建完成: %d 公司, %d 配方",
+                        job_id, len(entities.company_groups), len(entities.formulas))
+        except Exception as e:
+            logger.warning("任务 %s 业务分组构建失败（不影响主流程）: %s", job_id, e)
+
         # 判断是否有冲突
         conflicts = [f for f in fusion_result.get("fields", []) if f.get("status") == "CONFLICT"]
         need_review = [f for f in fusion_result.get("fields", []) if f.get("status") == "NEED_REVIEW"]

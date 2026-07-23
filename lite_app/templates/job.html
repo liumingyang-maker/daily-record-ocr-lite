@@ -47,11 +47,12 @@
 <section class="actions-section">
     <h3>操作</h3>
     <div class="action-buttons">
+        <a href="/jobs/{{ job.id }}/result" class="btn btn-primary">查看分组结果</a>
         <form action="/jobs/{{ job.id }}/analyze" method="post" style="display:inline">
             <button type="submit" class="btn">重新识别</button>
         </form>
         <form action="/jobs/{{ job.id }}/export" method="post" style="display:inline">
-            <button type="submit" class="btn btn-primary">导出 Excel</button>
+            <button type="submit" class="btn">导出 Excel</button>
         </form>
         {% if job.export_file %}
         <a href="/jobs/{{ job.id }}/files/{{ job.export_file }}" class="btn btn-success">下载 {{ job.export_file }}</a>
