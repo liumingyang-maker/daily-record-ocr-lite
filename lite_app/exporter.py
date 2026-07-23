@@ -74,6 +74,12 @@ def export_job(job_id: str, storage: JobStorage | None = None) -> str:
     for table_cfg in tables:
         _write_table(wb, table_cfg, result, is_template)
 
+    # 写入识别审查 Sheet
+    _write_audit_sheet(wb, job_dir, is_template)
+
+    # 写入修正日志 Sheet
+    _write_correction_sheet(wb, job_id, is_template)
+
     # 保存
     wb.save(str(output_path))
     logger.info("导出完成: %s", output_path)
@@ -230,3 +236,92 @@ def _auto_column_width(ws: Any, columns: list[dict[str, Any]]) -> None:
         # 中文字符占约2个宽度
         width = min(max_len + 2, MAX_AUTO_WIDTH)
         ws.column_dimensions[col_letter].width = max(width, 8)
+
+
+def _write_audit_sheet(wb: Workbook, job_dir: Path, is_template: bool) -> None:
+    """写入识别审查 Sheet。"""
+    ws = _get_sheet(wb, "识别审查")
+    headers = ["记录", "字段ID", "字段类型", "OCR", "OCR置信度", "VLM", "历史候选", "最终值", "来源", "状态"]
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        if not is_template:
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+
+    # 读取融合结果
+    fusion_path = job_dir / "fusion" / "result.json"
+    if not fusion_path.exists():
+        return
+
+    try:
+        fusion_data = json.loads(fusion_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+
+    fields = fusion_data.get("fields", [])
+    row = 2
+    for f in fields:
+        candidates = f.get("candidates", [])
+        ocr_val = ""
+        ocr_conf = ""
+        vlm_val = ""
+        history_val = ""
+        for c in candidates:
+            src = c.get("source", "")
+            if src.startswith("ocr"):
+                ocr_val = c.get("value", "")
+                ocr_conf = str(c.get("confidence", ""))
+            elif src == "vlm":
+                vlm_val = c.get("value", "")
+            elif src.startswith("history"):
+                history_val = c.get("value", "")
+
+        ws.cell(row=row, column=1, value=f.get("field_id", "").split("_")[0] if "_" in f.get("field_id", "") else "")
+        ws.cell(row=row, column=2, value=f.get("field_id", ""))
+        ws.cell(row=row, column=3, value=f.get("field_type", ""))
+        ws.cell(row=row, column=4, value=ocr_val)
+        ws.cell(row=row, column=5, value=ocr_conf)
+        ws.cell(row=row, column=6, value=vlm_val)
+        ws.cell(row=row, column=7, value=history_val)
+        ws.cell(row=row, column=8, value=f.get("final_value", ""))
+        ws.cell(row=row, column=9, value=f.get("final_source", ""))
+        ws.cell(row=row, column=10, value=f.get("status", ""))
+
+        # 冲突字段标红
+        if f.get("status") == "CONFLICT":
+            for col in range(1, 11):
+                ws.cell(row=row, column=col).fill = PatternFill(
+                    start_color="FFC7CE", end_color="FFC7CE", fill_type="solid"
+                )
+        row += 1
+
+
+def _write_correction_sheet(wb: Workbook, job_id: str, is_template: bool) -> None:
+    """写入修正日志 Sheet。"""
+    ws = _get_sheet(wb, "修正日志")
+    headers = ["记录", "字段ID", "原值", "新值", "OCR", "VLM", "选择来源", "修改时间"]
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        if not is_template:
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+
+    # 读取修正日志
+    try:
+        from .knowledge.database import KnowledgeDB
+        db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+        db.initialize()
+        corrections = db.get_corrections_for_job(job_id)
+        row = 2
+        for c in corrections:
+            ws.cell(row=row, column=1, value=c.get("record_id", ""))
+            ws.cell(row=row, column=2, value=c.get("field_id", ""))
+            ws.cell(row=row, column=3, value=c.get("old_value", ""))
+            ws.cell(row=row, column=4, value=c.get("new_value", ""))
+            ws.cell(row=row, column=5, value=c.get("ocr_value", ""))
+            ws.cell(row=row, column=6, value=c.get("vlm_value", ""))
+            ws.cell(row=row, column=7, value=c.get("chosen_source", ""))
+            ws.cell(row=row, column=8, value=c.get("created_at", ""))
+            row += 1
+    except Exception as e:
+        logger.warning("修正日志读取失败: %s", e)
