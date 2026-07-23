@@ -769,6 +769,164 @@ async def update_formula_number(job_id: str, formula_id: str, request: Request):
     return {"status": "updated", "formula_id": formula_id, "formula_no_raw": new_no}
 
 
+@app.post("/api/jobs/{job_id}/formulas/merge")
+async def merge_formulas(job_id: str, request: Request):
+    """合并相邻配方（仅同页面）。"""
+    from .grouping.storage import load_business_entities, save_business_entities
+    from .grouping.models import make_formula_id
+    storage = _get_storage()
+    try:
+        storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    body = await request.json()
+    formula_ids = body.get("formula_ids", [])
+    if len(formula_ids) < 2:
+        raise HTTPException(status_code=400, detail="至少需要两条配方才能合并。")
+
+    job_dir = storage.get_job_dir(job_id)
+    entities = load_business_entities(job_dir)
+    if not entities:
+        raise HTTPException(status_code=400, detail="业务实体不存在。")
+
+    # 找到要合并的配方
+    to_merge = [f for f in entities.formulas if f.formula_id in formula_ids]
+    if len(to_merge) != len(formula_ids):
+        raise HTTPException(status_code=404, detail="部分配方不存在。")
+
+    # 检查是否同页面
+    page_ids = set(f.page_id for f in to_merge)
+    if len(page_ids) > 1:
+        raise HTTPException(status_code=400, detail="只能合并同一页面的配方。")
+
+    # 合并：以第一条为基础，合并材料和工艺
+    base = to_merge[0]
+    for other in to_merge[1:]:
+        base.materials.extend(other.materials)
+        base.process_parameters.extend(other.process_parameters)
+        if other.notes.raw_value:
+            base.notes.raw_value = (base.notes.raw_value + " " + other.notes.raw_value).strip()
+        base.warnings.extend(other.warnings)
+
+    # 移除被合并的配方
+    merged_ids = set(formula_ids[1:])
+    entities.formulas = [f for f in entities.formulas if f.formula_id not in merged_ids]
+
+    save_business_entities(job_dir, entities)
+    return {"status": "merged", "formula_id": base.formula_id, "merged_count": len(formula_ids)}
+
+
+@app.post("/api/jobs/{job_id}/formulas/{formula_id}/split")
+async def split_formula(job_id: str, formula_id: str, request: Request):
+    """拆分配方（按材料索引拆分）。"""
+    from .grouping.storage import load_business_entities, save_business_entities
+    from .grouping.models import Formula, make_formula_id
+    storage = _get_storage()
+    try:
+        storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    body = await request.json()
+    split_after = body.get("split_after_material", 0)  # 在第 N 条材料后拆分
+
+    job_dir = storage.get_job_dir(job_id)
+    entities = load_business_entities(job_dir)
+    if not entities:
+        raise HTTPException(status_code=400, detail="业务实体不存在。")
+
+    formula = next((f for f in entities.formulas if f.formula_id == formula_id), None)
+    if not formula:
+        raise HTTPException(status_code=404, detail=f"配方不存在: {formula_id}")
+
+    if split_after <= 0 or split_after >= len(formula.materials):
+        raise HTTPException(status_code=400, detail="拆分位置无效。")
+
+    # 创建新配方（下半部分）
+    new_seq = formula.formula_sequence + 1
+    new_id = make_formula_id(job_id, formula.page_id, new_seq)
+    new_formula = Formula(
+        formula_id=new_id,
+        page_id=formula.page_id,
+        source_image_index=formula.source_image_index,
+        company_id=formula.company_id,
+        product_id=formula.product_id,
+        formula_no_raw="",
+        formula_no_normalized="",
+        formula_sequence=new_seq,
+        record_date=formula.record_date,
+        record_bbox=formula.record_bbox,
+        materials=formula.materials[split_after:],
+        process_parameters=formula.process_parameters,
+        review_status="REVIEW_REQUIRED",
+        warnings=["由拆分操作创建"],
+    )
+
+    # 截断原配方
+    formula.materials = formula.materials[:split_after]
+    formula.process_parameters = []
+    formula.review_status = "REVIEW_REQUIRED"
+    formula.warnings.append("由拆分操作截断")
+
+    # 重新编号后续配方
+    for f in entities.formulas:
+        if f.page_id == formula.page_id and f.formula_sequence >= new_seq:
+            f.formula_sequence += 1
+
+    entities.formulas.append(new_formula)
+    save_business_entities(job_dir, entities)
+    return {"status": "split", "original_id": formula_id, "new_id": new_id}
+
+
+@app.post("/api/jobs/{job_id}/companies/merge")
+async def merge_company_groups(job_id: str, request: Request):
+    """合并两个公司组。"""
+    from .grouping.storage import load_business_entities, save_business_entities
+    storage = _get_storage()
+    try:
+        storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    body = await request.json()
+    source_id = body.get("source_company_id", "")
+    target_id = body.get("target_company_id", "")
+    if not source_id or not target_id:
+        raise HTTPException(status_code=400, detail="需要 source_company_id 和 target_company_id。")
+
+    job_dir = storage.get_job_dir(job_id)
+    entities = load_business_entities(job_dir)
+    if not entities:
+        raise HTTPException(status_code=400, detail="业务实体不存在。")
+
+    source = next((c for c in entities.company_groups if c.company_id == source_id), None)
+    target = next((c for c in entities.company_groups if c.company_id == target_id), None)
+    if not source or not target:
+        raise HTTPException(status_code=404, detail="公司组不存在。")
+
+    # 合并：将 source 的页面和配方归入 target
+    target.raw_names.extend(source.raw_names)
+    target.source_page_ids.extend(source.source_page_ids)
+    target.source_image_indexes.extend(source.source_image_indexes)
+
+    # 更新配方的 company_id
+    for f in entities.formulas:
+        if f.company_id == source_id:
+            f.company_id = target_id
+
+    # 更新产品组的 company_id
+    for pg in entities.product_groups:
+        if pg.company_id == source_id:
+            pg.company_id = target_id
+
+    # 移除 source 公司组
+    entities.company_groups = [c for c in entities.company_groups if c.company_id != source_id]
+
+    save_business_entities(job_dir, entities)
+    return {"status": "merged", "target_company_id": target_id}
+
+
 # ─── 知识库管理 ─────────────────────────────────────────────
 
 
