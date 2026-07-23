@@ -283,6 +283,26 @@ async def switch_mode(job_id: str, request: Request):
     return {"status": "UPLOADED", "mode": mode}
 
 
+@app.post("/api/jobs/{job_id}/reanalyze")
+async def reanalyze_api(job_id: str):
+    """重新识别（API 版本，提交到后台队列）。"""
+    storage = _get_storage()
+    try:
+        job = storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    job["status"] = "UPLOADED"
+    job["status_message"] = "等待重新识别..."
+    storage.save_job(job)
+
+    from .jobs import get_task_queue
+    queue = get_task_queue()
+    await queue.submit(job_id)
+
+    return {"status": "UPLOADED", "message": "已提交重新识别"}
+
+
 # ─── 保存人工修改 ───────────────────────────────────────────
 
 
