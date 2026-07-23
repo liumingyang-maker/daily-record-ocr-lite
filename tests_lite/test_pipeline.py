@@ -1,9 +1,6 @@
 """Pipeline 模块测试。"""
 
-import json
 import pytest
-from pathlib import Path
-from unittest.mock import AsyncMock, patch
 
 from lite_app.pipeline import (
     PipelineError,

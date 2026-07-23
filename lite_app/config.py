@@ -125,7 +125,37 @@ def get_config() -> AppConfig:
     if not isinstance(raw, dict):
         raise ValueError(f"配置文件格式错误: {config_path}")
     data = _resolve_value(raw)
+    _validate_config(data, config_path)
     return AppConfig(data)
+
+
+_REQUIRED_FIELDS = [
+    ("app", "host"),
+    ("app", "port"),
+    ("app", "jobs_dir"),
+    ("app", "max_upload_mb"),
+    ("app", "allowed_extensions"),
+    ("preprocess", "max_side"),
+    ("preprocess", "jpeg_quality"),
+    ("vision", "provider"),
+    ("vision", "model"),
+    ("schema_file",),
+    ("export_file",),
+]
+
+
+def _validate_config(data: dict[str, Any], config_path: Path) -> None:
+    """校验必要配置字段，缺失时给出明确错误。"""
+    for field_path in _REQUIRED_FIELDS:
+        obj = data
+        for key in field_path:
+            if not isinstance(obj, dict) or key not in obj:
+                dotted = ".".join(field_path)
+                raise ValueError(
+                    f"配置文件 {config_path} 缺少必要字段: {dotted}。"
+                    f"请检查 config/app.yaml 是否完整。"
+                )
+            obj = obj[key]
 
 
 def clear_config_cache() -> None:

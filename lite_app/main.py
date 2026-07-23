@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -14,7 +13,7 @@ from fastapi.templating import Jinja2Templates
 
 from .config import get_config, load_schema_config
 from .exporter import ExportError, export_job
-from .pipeline import PipelineError, analyze_job, extract_json, validate_result
+from .pipeline import PipelineError, analyze_job, validate_result
 from .providers import VisionProviderError
 from .storage import JobStorage
 
@@ -60,8 +59,20 @@ async def create_job(
     files: list[UploadFile] = File(...),
     rotation: str = Form("auto"),
 ):
+    import shutil
+    from PIL import Image as PILImage
+    import io as _io
+
     cfg = get_config()
     storage = _get_storage()
+
+    # 校验旋转值
+    valid_rotations = {"auto", "0", "90cw", "90ccw", "180"}
+    if rotation not in valid_rotations:
+        raise HTTPException(
+            status_code=400,
+            detail=f"无效的旋转设置: {rotation}。允许: {', '.join(sorted(valid_rotations))}",
+        )
 
     # 校验文件
     if not files:
@@ -70,6 +81,8 @@ async def create_job(
     max_bytes = cfg.max_upload_mb * 1024 * 1024
     total_size = 0
 
+    # 先读取并验证所有文件（在创建任务之前）
+    validated_files: list[tuple[str, bytes]] = []
     for f in files:
         if not f.filename:
             raise HTTPException(status_code=400, detail="文件名不能为空。")
@@ -79,6 +92,25 @@ async def create_job(
                 status_code=400,
                 detail=f"不支持的文件类型: {ext}。允许: {', '.join(cfg.allowed_extensions)}",
             )
+        content = await f.read()
+        if not content:
+            raise HTTPException(status_code=400, detail=f"文件为空: {f.filename}")
+        total_size += len(content)
+        if total_size > max_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"上传文件总大小超过限制 ({cfg.max_upload_mb}MB)。",
+            )
+        # Pillow 预验证：确认是有效图片
+        try:
+            img = PILImage.open(_io.BytesIO(content))
+            img.verify()
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail=f"文件不是可识别的图片: {f.filename}",
+            )
+        validated_files.append((f.filename, content))
 
     # 创建任务
     job = storage.create_job(rotation=rotation)
@@ -86,31 +118,24 @@ async def create_job(
 
     # 保存上传文件
     try:
-        for i, f in enumerate(files, 1):
-            content = await f.read()
-            if not content:
-                raise HTTPException(status_code=400, detail=f"文件为空: {f.filename}")
-            total_size += len(content)
-            if total_size > max_bytes:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"上传文件总大小超过限制 ({cfg.max_upload_mb}MB)。",
-                )
-            img_info = storage.save_upload(job_id, i, f.filename or "upload.jpg", content)
+        for i, (filename, content) in enumerate(validated_files, 1):
+            img_info = storage.save_upload(job_id, i, filename, content)
             job["images"].append(img_info)
         storage.save_job(job)
-    except HTTPException:
-        raise
     except Exception as e:
+        # 清理失败的任务目录
+        try:
+            shutil.rmtree(storage.get_job_dir(job_id), ignore_errors=True)
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=f"文件保存失败: {e}")
 
     # 执行识别
     try:
         await analyze_job(job_id, storage)
     except (PipelineError, VisionProviderError) as e:
-        # 识别失败但任务已创建，重定向到详情页显示错误
         logger.warning("任务 %s 识别失败: %s", job_id, e)
-    except Exception as e:
+    except Exception:
         logger.exception("任务 %s 未知错误", job_id)
 
     return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
@@ -155,10 +180,10 @@ async def reanalyze(job_id: str):
 
     try:
         await analyze_job(job_id, storage)
-    except (PipelineError, VisionProviderError):
-        pass  # 状态已在 pipeline 中更新
+    except (PipelineError, VisionProviderError) as exc:
+        logger.warning("任务 %s 重新识别失败: %s", job_id, exc)
     except Exception:
-        pass
+        logger.exception("任务 %s 重新识别发生未知错误", job_id)
 
     return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
 
@@ -245,9 +270,21 @@ async def download_file(job_id: str, filename: str):
 
     # 判断是图片还是其他文件
     ext = file_path.suffix.lower()
-    if ext in (".jpg", ".jpeg", ".png", ".webp"):
-        return FileResponse(file_path, media_type="image/jpeg")
-    elif ext in (".xlsx", ".xlsm"):
+    mime_map = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }
+    if ext in mime_map:
+        return FileResponse(file_path, media_type=mime_map[ext])
+    elif ext == ".xlsm":
+        return FileResponse(
+            file_path,
+            media_type="application/vnd.ms-excel.sheet.macroEnabled.12",
+            filename=filename,
+        )
+    elif ext == ".xlsx":
         return FileResponse(
             file_path,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

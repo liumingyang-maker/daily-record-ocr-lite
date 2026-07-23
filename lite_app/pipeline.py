@@ -103,19 +103,21 @@ def _extract_from_fence(text: str) -> dict[str, Any] | None:
 
 
 def _extract_from_brace(text: str) -> dict[str, Any] | None:
-    """从第一个 { 开始用 raw_decode 提取。"""
-    start = text.find("{")
-    if start == -1:
-        return None
+    """遍历所有 { 位置，用 raw_decode 尝试提取首个合法顶层对象。"""
     decoder = json.JSONDecoder()
-    try:
-        result, _ = decoder.raw_decode(text, start)
-        if isinstance(result, dict):
-            return result
-        if isinstance(result, list):
-            raise PipelineError("模型返回了 JSON 数组，但需要的是 JSON 对象。")
-    except json.JSONDecodeError:
-        pass
+    last_error: Exception | None = None
+    for i, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            result, _ = decoder.raw_decode(text, i)
+            if isinstance(result, dict):
+                return result
+            if isinstance(result, list):
+                raise PipelineError("模型返回了 JSON 数组，但需要的是 JSON 对象。")
+        except json.JSONDecodeError as e:
+            last_error = e
+            continue
     return None
 
 

@@ -71,11 +71,13 @@ class JobStorage:
 
     def _job_dir(self, job_id: str) -> Path:
         """获取任务目录，并验证安全性。"""
-        job_path = (self.jobs_dir / job_id).resolve()
-        # 确保在 jobs_dir 下
-        if not str(job_path).startswith(str(self.jobs_dir.resolve())):
-            raise ValueError(f"非法任务 ID: {job_id}")
-        return job_path
+        root = self.jobs_dir.resolve()
+        candidate = (root / job_id).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"非法任务 ID: {job_id}") from exc
+        return candidate
 
     def create_job(self, rotation: str = "auto") -> dict[str, Any]:
         """创建新任务。"""
@@ -203,8 +205,10 @@ class JobStorage:
         job_dir = self._job_dir(job_id)
         file_path = (job_dir / safe).resolve()
         # 再次确认在任务目录下
-        if not str(file_path).startswith(str(job_dir.resolve())):
-            raise ValueError(f"非法文件路径: {filename}")
+        try:
+            file_path.relative_to(job_dir.resolve())
+        except ValueError as exc:
+            raise ValueError(f"非法文件路径: {filename}") from exc
         if not file_path.exists():
             raise FileNotFoundError(f"文件不存在: {filename}")
         return file_path

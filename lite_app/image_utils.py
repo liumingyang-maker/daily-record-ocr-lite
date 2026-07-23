@@ -87,11 +87,9 @@ def _to_rgb(img: Image.Image) -> Image.Image:
     if img.mode == "RGB":
         return img
     if img.mode in ("RGBA", "LA", "P"):
-        background = Image.new("RGB", img.size, (255, 255, 255))
-        if img.mode == "P":
-            img = img.convert("RGBA")
-        background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
-        return background
+        rgba = img.convert("RGBA")
+        background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        return Image.alpha_composite(background, rgba).convert("RGB")
     return img.convert("RGB")
 
 

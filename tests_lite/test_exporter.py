@@ -138,29 +138,84 @@ class TestExportJob:
         with pytest.raises(ExportError, match="不存在"):
             export_job(job["id"], storage)
 
-    def test_export_with_template(self, storage, tmp_path):
-        """使用已有模板导出。"""
-        # 创建模板
+    def test_export_with_template(self, storage, tmp_path, monkeypatch):
+        """使用已有模板导出：验证原内容保留、新数据写入、源模板不被修改。"""
+        # 创建带有原内容和额外 Sheet 的模板
         template = tmp_path / "template.xlsx"
         wb = Workbook()
         ws = wb.active
         ws.title = "记录汇总"
-        ws["A1"] = "原有内容"
+        ws["A1"] = "原有标题"
+        ws["Z1"] = "额外内容"
+        extra_ws = wb.create_sheet("自定义Sheet")
+        extra_ws["A1"] = "自定义数据"
         wb.create_sheet("配方明细")
         wb.create_sheet("工艺参数")
         wb.save(str(template))
 
-        # 修改导出配置使用模板
+        # 记录模板原始大小
+        original_size = template.stat().st_size
+
+        # 创建任务
         job = storage.create_job()
         storage.save_result(job["id"], SAMPLE_RESULT)
         job["status"] = "READY"
         storage.save_job(job)
 
-        # 直接测试模板加载
-        from lite_app.config import load_export_config
-        export_cfg = load_export_config()
-        # 验证模板不存在时报错
-        export_cfg["excel"]["template_path"] = str(tmp_path / "nonexistent.xlsx")
+        # monkeypatch 导出配置指向模板
+        import lite_app.exporter as exp_module
+
+        def mock_load_export():
+            return {
+                "excel": {
+                    "template_path": str(template),
+                    "keep_vba": False,
+                    "output_name": "out-{job_id}.xlsx",
+                    "cells": [
+                        {"sheet": "记录汇总", "cell": "B1", "value": "$root.page_heading"}
+                    ],
+                    "tables": [
+                        {
+                            "name": "records",
+                            "sheet": "记录汇总",
+                            "source": "records",
+                            "start_row": 3,
+                            "include_header": True,
+                            "auto_width": False,
+                            "columns": [
+                                {"column": "A", "header": "序号", "value": "$index"},
+                                {"column": "B", "header": "日期", "value": "record_date"},
+                            ],
+                        }
+                    ],
+                }
+            }
+
+        monkeypatch.setattr(exp_module, "load_export_config", mock_load_export)
+
+        # 执行导出
+        filename = export_job(job["id"], storage)
+        job_dir = storage.get_job_dir(job["id"])
+        output_path = job_dir / filename
+        assert output_path.exists()
+
+        # 验证输出文件
+        out_wb = load_workbook(str(output_path))
+        out_ws = out_wb["记录汇总"]
+        # 原内容保留
+        assert out_ws["A1"].value == "原有标题"
+        assert out_ws["Z1"].value == "额外内容"
+        # 新写入的数据
+        assert out_ws["B1"].value == "测试标题"
+        assert out_ws.cell(row=3, column=1).value == "序号"
+        assert out_ws.cell(row=4, column=1).value == 1
+        assert out_ws.cell(row=4, column=2).value == "24.7.10"
+        # 额外 Sheet 保留
+        assert "自定义Sheet" in out_wb.sheetnames
+        assert out_wb["自定义Sheet"]["A1"].value == "自定义数据"
+
+        # 源模板未被修改
+        assert template.stat().st_size == original_size
 
     def test_export_template_not_exists_raises(self, storage, monkeypatch):
         """模板不存在时报错。"""
