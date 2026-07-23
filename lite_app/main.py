@@ -372,6 +372,25 @@ async def export(job_id: str):
     return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
 
 
+@app.post("/api/jobs/{job_id}/export")
+async def export_api(job_id: str):
+    """导出 Excel（API 版本，返回 JSON）。"""
+    storage = _get_storage()
+    try:
+        storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    try:
+        filename = export_job(job_id, storage)
+    except ExportError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"导出失败: {e}")
+
+    return {"status": "EXPORTED", "filename": filename, "download_url": f"/jobs/{job_id}/files/{filename}"}
+
+
 # ─── 文件查看和下载 ─────────────────────────────────────────
 
 
