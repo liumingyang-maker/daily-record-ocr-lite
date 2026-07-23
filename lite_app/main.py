@@ -150,13 +150,30 @@ async def create_job(
             pass
         raise HTTPException(status_code=500, detail=f"文件保存失败: {e}")
 
-    # 执行识别
+    # 执行识别（双引擎 pipeline）
     try:
-        await analyze_job(job_id, storage)
-    except (PipelineError, VisionProviderError) as e:
-        logger.warning("任务 %s 识别失败: %s", job_id, e)
-    except Exception:
-        logger.exception("任务 %s 未知错误", job_id)
+        from .pipeline_v2 import analyze_job_v2, PipelineError as PipelineErrorV2
+        from .ocr.manager import OCRModelManager
+        # 配置 OCR 管理器
+        ocr_mgr = OCRModelManager()
+        ocr_cfg = cfg.get("recognition", {})
+        if not ocr_mgr._config:
+            ocr_mgr.configure({
+                "enabled": True,
+                "provider": "mock",
+                "device": "cpu",
+                "tier": "medium",
+                "minimum_score": 0.45,
+            })
+        await analyze_job_v2(job_id, storage)
+    except Exception as e:
+        logger.warning("任务 %s 双引擎识别失败，回退旧 pipeline: %s", job_id, e)
+        try:
+            await analyze_job(job_id, storage)
+        except (PipelineError, VisionProviderError) as e2:
+            logger.warning("任务 %s 识别失败: %s", job_id, e2)
+        except Exception:
+            logger.exception("任务 %s 未知错误", job_id)
 
     return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
 
