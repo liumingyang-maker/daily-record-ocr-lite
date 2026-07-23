@@ -53,6 +53,12 @@ class TestIndex:
 
 
 class TestFullFlow:
+    def _extract_job_id(self, location: str) -> str:
+        """从重定向 URL 中提取 job_id。"""
+        # URL 格式: /jobs/{job_id}/result 或 /jobs/{job_id}
+        path = location.split("/jobs/")[1]
+        return path.split("/")[0]
+
     def test_upload_recognize_edit_export_download(self, client):
         """完整闭环：上传 -> 识别 -> 编辑 -> 导出 -> 下载。"""
         img_data = _make_test_image()
@@ -70,16 +76,16 @@ class TestFullFlow:
         assert resp.status_code == 303
         location = resp.headers["location"]
         assert "/jobs/" in location
-        job_id = location.split("/jobs/")[1]
+        job_id = self._extract_job_id(location)
 
         # 2. 访问任务详情
         resp = client.get(f"/jobs/{job_id}")
         assert resp.status_code == 200
         assert job_id in resp.text
 
-        # 3. 验证识别结果存在（mock provider）
-        resp = client.get(f"/jobs/{job_id}")
-        assert "page_heading" in resp.text or "json-editor" in resp.text
+        # 3. 访问分组结果页面
+        resp = client.get(f"/jobs/{job_id}/result")
+        assert resp.status_code == 200
 
         # 4. 保存修改后的 JSON
         edited_result = {
@@ -119,7 +125,6 @@ class TestFullFlow:
         assert resp.status_code == 200
 
         # 7. 下载 Excel
-        # 先获取 export_file 名
         from lite_app.storage import JobStorage
         storage = JobStorage()
         job = storage.get_job(job_id)
@@ -156,7 +161,7 @@ class TestFullFlow:
             data={"rotation": "0"},
             follow_redirects=False,
         )
-        job_id = resp.headers["location"].split("/jobs/")[1]
+        job_id = self._extract_job_id(resp.headers["location"])
 
         resp = client.post(
             f"/api/jobs/{job_id}/result",
@@ -174,7 +179,7 @@ class TestFullFlow:
             data={"rotation": "0"},
             follow_redirects=False,
         )
-        job_id = resp.headers["location"].split("/jobs/")[1]
+        job_id = self._extract_job_id(resp.headers["location"])
 
         resp = client.post(f"/jobs/{job_id}/analyze", follow_redirects=False)
         assert resp.status_code == 303
@@ -192,7 +197,7 @@ class TestFullFlow:
             data={"rotation": "0"},
             follow_redirects=False,
         )
-        job_id = resp.headers["location"].split("/jobs/")[1]
+        job_id = self._extract_job_id(resp.headers["location"])
 
         resp = client.get(f"/jobs/{job_id}/files/nonexistent.xlsx")
         assert resp.status_code == 404

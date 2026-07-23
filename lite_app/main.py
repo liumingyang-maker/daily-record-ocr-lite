@@ -204,7 +204,7 @@ async def create_job(
     queue = get_task_queue()
     await queue.submit(job_id)
 
-    return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
+    return RedirectResponse(url=f"/jobs/{job_id}/result", status_code=303)
 
 
 # ─── 任务详情 ───────────────────────────────────────────────
