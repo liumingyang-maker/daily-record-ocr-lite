@@ -2,6 +2,15 @@ recognition:
   mode: "${RECOGNITION_MODE:-auto}"
   accuracy_mode: "${ACCURACY_MODE:-dual}"
 
+upload:
+  max_images_per_job: 20
+  max_single_image_mb: 15
+  max_total_upload_mb: 200
+
+vision:
+  batch_size: 3
+  preserve_upload_order: true
+
 preprocess:
   max_side_vlm: 2400
   max_side_ocr: 2600
