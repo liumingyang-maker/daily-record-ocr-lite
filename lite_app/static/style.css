@@ -1,0 +1,114 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f5f7fa;
+    color: #333;
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+header { margin-bottom: 24px; }
+header h1 { font-size: 1.5rem; }
+header h1 a { color: #1a73e8; text-decoration: none; }
+.subtitle { color: #666; font-size: 0.9rem; margin-top: 4px; }
+
+h2 { font-size: 1.2rem; margin-bottom: 12px; }
+h3 { font-size: 1.05rem; margin-bottom: 8px; margin-top: 20px; }
+
+section { margin-bottom: 24px; }
+
+.hint { color: #666; font-size: 0.85rem; margin-bottom: 12px; }
+
+.form-group { margin-bottom: 12px; }
+.form-group label { display: block; font-weight: 600; margin-bottom: 4px; }
+.form-group input[type="file"] { width: 100%; }
+.form-group select { padding: 6px 10px; border-radius: 4px; border: 1px solid #ccc; }
+
+.btn {
+    display: inline-block;
+    padding: 8px 16px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    color: #333;
+    text-decoration: none;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+.btn:hover { background: #f0f0f0; }
+.btn-primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+.btn-primary:hover { background: #1557b0; }
+.btn-success { background: #34a853; color: #fff; border-color: #34a853; }
+.btn-success:hover { background: #2d8f47; }
+.btn-small { padding: 4px 10px; font-size: 0.8rem; }
+
+.jobs-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.jobs-table th, .jobs-table td { padding: 8px; text-align: left; border-bottom: 1px solid #e0e0e0; }
+.jobs-table th { background: #f0f0f0; font-weight: 600; }
+
+.mono { font-family: "Cascadia Code", "Fira Code", monospace; font-size: 0.85em; }
+
+.status { padding: 2px 8px; border-radius: 3px; font-size: 0.8rem; font-weight: 600; }
+.status-ready { background: #e6f4ea; color: #137333; }
+.status-exported { background: #e6f4ea; color: #137333; }
+.status-failed { background: #fce8e6; color: #c5221f; }
+.status-need_review { background: #fef7e0; color: #b06000; }
+.status-recognizing, .status-preparing { background: #e8f0fe; color: #1967d2; }
+.status-uploaded { background: #f0f0f0; color: #555; }
+
+.meta-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+.status-msg { margin-top: 8px; color: #555; }
+
+.error-box {
+    margin-top: 12px;
+    padding: 12px;
+    background: #fce8e6;
+    border: 1px solid #f5c6cb;
+    border-radius: 4px;
+    color: #c5221f;
+    font-size: 0.9rem;
+    overflow-x: auto;
+}
+
+.validation-errors ul { padding-left: 20px; }
+.validation-errors li { margin-bottom: 4px; font-size: 0.85rem; color: #b06000; }
+
+.image-grid { display: flex; flex-wrap: wrap; gap: 16px; }
+.image-card { border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px; max-width: 300px; }
+.image-card img { max-width: 100%; height: auto; border-radius: 4px; }
+.img-label { font-size: 0.8rem; font-weight: 600; margin-bottom: 6px; }
+.img-sub { font-size: 0.75rem; color: #888; margin-top: 4px; }
+
+.action-buttons { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+.json-editor {
+    width: 100%;
+    font-family: "Cascadia Code", "Fira Code", monospace;
+    font-size: 0.85rem;
+    padding: 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    resize: vertical;
+    min-height: 300px;
+    overflow: auto;
+}
+
+.feedback { margin-bottom: 10px; padding: 10px; border-radius: 4px; font-size: 0.9rem; }
+.feedback-ok { background: #e6f4ea; color: #137333; }
+.feedback-warn { background: #fef7e0; color: #b06000; }
+.feedback-error { background: #fce8e6; color: #c5221f; }
+
+.empty { color: #888; font-style: italic; }
+
+@media (max-width: 600px) {
+    .container { padding: 12px; }
+    .meta-grid { grid-template-columns: 1fr; }
+    .image-grid { flex-direction: column; }
+    .image-card { max-width: 100%; }
+}

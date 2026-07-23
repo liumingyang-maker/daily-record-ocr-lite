@@ -1,0 +1,35 @@
+app:
+  host: "${APP_HOST:-127.0.0.1}"
+  port: "${APP_PORT:-8765}"
+  jobs_dir: "${JOBS_DIR:-data/jobs}"
+  max_upload_mb: 20
+  allowed_extensions:
+    - .jpg
+    - .jpeg
+    - .png
+    - .webp
+
+preprocess:
+  max_side: 2048
+  jpeg_quality: 90
+  auto_rotate_portrait_to_landscape: true
+  auto_landscape_direction: ccw90
+  background: white
+
+vision:
+  provider: "${VISION_PROVIDER:-mock}"
+  base_url: "${VISION_BASE_URL:-http://127.0.0.1:11434/v1}"
+  endpoint: "${VISION_ENDPOINT:-/chat/completions}"
+  api_key: "${VISION_API_KEY:-}"
+  model: "${VISION_MODEL:-qwen-vl}"
+  timeout_seconds: 120
+  temperature: 0
+  image_detail: high
+  use_json_schema: false
+  schema_name: handwritten_record
+  mock_result: config/mock_result.json
+  extra_headers: {}
+  extra_body: {}
+
+schema_file: config/record_schema.yaml
+export_file: config/export.yaml

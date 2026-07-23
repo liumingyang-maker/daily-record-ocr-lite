@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}任务 {{ job.id }} - 手写记录识别{% endblock %}
+{% block content %}
+<section class="job-meta">
+    <h2>任务详情</h2>
+    <div class="meta-grid">
+        <div><strong>任务号：</strong><span class="mono">{{ job.id }}</span></div>
+        <div><strong>状态：</strong><span class="status status-{{ job.status | lower }}">{{ job.status }}</span></div>
+        <div><strong>Provider：</strong>{{ job.provider or '-' }}</div>
+        <div><strong>Model：</strong>{{ job.model or '-' }}</div>
+        <div><strong>创建时间：</strong>{{ job.created_at[:19] }}</div>
+        <div><strong>旋转设置：</strong>{{ job.rotation }}</div>
+    </div>
+    {% if job.status_message %}
+    <p class="status-msg">{{ job.status_message }}</p>
+    {% endif %}
+    {% if job.error %}
+    <div class="error-box">错误：{{ job.error }}</div>
+    {% endif %}
+</section>
+
+{% if job.validation_errors %}
+<section class="validation-errors">
+    <h3>Schema 校验问题 ({{ job.validation_errors | length }})</h3>
+    <ul>
+        {% for err in job.validation_errors %}
+        <li class="mono">{{ err }}</li>
+        {% endfor %}
+    </ul>
+</section>
+{% endif %}
+
+<section class="images-section">
+    <h3>图片</h3>
+    <div class="image-grid">
+        {% for img in job.images %}
+        <div class="image-card">
+            <p class="img-label">#{{ loop.index }} {{ img.original_name }}</p>
+            {% if img.prepared %}
+            <a href="/jobs/{{ job.id }}/files/{{ img.prepared }}" target="_blank">
+                <img src="/jobs/{{ job.id }}/files/{{ img.prepared }}" alt="处理后图片 {{ loop.index }}">
+            </a>
+            <p class="img-sub">处理后 (点击查看原图)</p>
+            {% endif %}
+            <a href="/jobs/{{ job.id }}/files/{{ img.source }}" target="_blank" class="btn btn-small">原始图片</a>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+
+<section class="actions-section">
+    <h3>操作</h3>
+    <div class="action-buttons">
+        <form action="/jobs/{{ job.id }}/analyze" method="post" style="display:inline">
+            <button type="submit" class="btn">重新识别</button>
+        </form>
+        <form action="/jobs/{{ job.id }}/export" method="post" style="display:inline">
+            <button type="submit" class="btn btn-primary">导出 Excel</button>
+        </form>
+        {% if job.export_file %}
+        <a href="/jobs/{{ job.id }}/files/{{ job.export_file }}" class="btn btn-success">下载 {{ job.export_file }}</a>
+        {% endif %}
+    </div>
+</section>
+
+<section class="editor-section">
+    <h3>识别结果 (JSON 编辑)</h3>
+    <div id="save-feedback" class="feedback" style="display:none"></div>
+    <textarea id="json-editor" class="json-editor" rows="20">{{ result_json }}</textarea>
+    <button id="save-btn" class="btn btn-primary" onclick="saveResult()">保存修改</button>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const jobId = "{{ job.id }}";
+
+function saveResult() {
+    const editor = document.getElementById('json-editor');
+    const feedback = document.getElementById('save-feedback');
+    const text = editor.value.trim();
+
+    // 前端校验
+    try {
+        JSON.parse(text);
+    } catch (e) {
+        feedback.style.display = 'block';
+        feedback.className = 'feedback feedback-error';
+        feedback.textContent = 'JSON 格式错误: ' + e.message;
+        return;
+    }
+
+    fetch('/api/jobs/' + jobId + '/result', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: text
+    })
+    .then(r => r.json())
+    .then(data => {
+        feedback.style.display = 'block';
+        if (data.validation_errors && data.validation_errors.length > 0) {
+            feedback.className = 'feedback feedback-warn';
+            feedback.textContent = '已保存 (' + data.status + ')，校验问题: ' + data.validation_errors.join('; ');
+        } else {
+            feedback.className = 'feedback feedback-ok';
+            feedback.textContent = '保存成功，校验通过。状态: ' + data.status;
+        }
+    })
+    .catch(e => {
+        feedback.style.display = 'block';
+        feedback.className = 'feedback feedback-error';
+        feedback.textContent = '保存失败: ' + e.message;
+    });
+}
+</script>
+{% endblock %}

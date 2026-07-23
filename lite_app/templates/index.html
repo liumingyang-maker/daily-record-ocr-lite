@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}首页 - 手写记录识别{% endblock %}
+{% block content %}
+<section class="upload-section">
+    <h2>上传手写笔记</h2>
+    <p class="hint">支持一次上传多张图片（JPG/PNG/WebP），识别过程可能需要几十秒，请耐心等待。</p>
+    <form action="/jobs" method="post" enctype="multipart/form-data">
+        <div class="form-group">
+            <label for="files">选择图片：</label>
+            <input type="file" id="files" name="files" multiple accept=".jpg,.jpeg,.png,.webp" required>
+        </div>
+        <div class="form-group">
+            <label for="rotation">旋转设置：</label>
+            <select id="rotation" name="rotation">
+                <option value="auto">自动（竖图转横向）</option>
+                <option value="0">不旋转</option>
+                <option value="90cw">顺时针 90°</option>
+                <option value="90ccw">逆时针 90°</option>
+                <option value="180">180°</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary">上传并识别</button>
+    </form>
+</section>
+
+<section class="jobs-section">
+    <h2>最近任务</h2>
+    {% if jobs %}
+    <table class="jobs-table">
+        <thead>
+            <tr>
+                <th>任务号</th>
+                <th>状态</th>
+                <th>图片数</th>
+                <th>创建时间</th>
+                <th>Provider / Model</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for job in jobs %}
+            <tr>
+                <td class="mono">{{ job.id }}</td>
+                <td><span class="status status-{{ job.status | lower }}">{{ job.status }}</span></td>
+                <td>{{ job.images | length }}</td>
+                <td>{{ job.created_at[:19] }}</td>
+                <td>{{ job.provider or '-' }} / {{ job.model or '-' }}</td>
+                <td><a href="/jobs/{{ job.id }}" class="btn btn-small">详情</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty">暂无任务，请上传图片开始识别。</p>
+    {% endif %}
+</section>
+{% endblock %}

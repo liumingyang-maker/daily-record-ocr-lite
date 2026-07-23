@@ -1,0 +1,105 @@
+excel:
+  template_path: ""
+  keep_vba: false
+  output_name: "recognized-{job_id}.xlsx"
+
+  cells:
+    - sheet: 记录汇总
+      cell: B1
+      value: "$root.page_heading"
+
+  tables:
+    - name: records
+      sheet: 记录汇总
+      source: records
+      start_row: 3
+      include_header: true
+      auto_width: true
+      columns:
+        - column: A
+          header: 序号
+          value: "$index"
+        - column: B
+          header: 图片序号
+          value: source_image_indexes
+        - column: C
+          header: 日期
+          value: record_date
+        - column: D
+          header: 标题
+          value: title
+        - column: E
+          header: 备注
+          value: notes
+        - column: F
+          header: 置信度
+          value: confidence
+        - column: G
+          header: 警告
+          value: warnings
+
+    - name: materials
+      sheet: 配方明细
+      source: records
+      expand: materials
+      start_row: 1
+      include_header: true
+      auto_width: true
+      columns:
+        - column: A
+          header: 记录序号
+          value: "$parent_index"
+        - column: B
+          header: 日期
+          value: "$parent.record_date"
+        - column: C
+          header: 标题
+          value: "$parent.title"
+        - column: D
+          header: 原料序号
+          value: "$index"
+        - column: E
+          header: 原料名称
+          value: name
+        - column: F
+          header: 数量
+          value: amount
+        - column: G
+          header: 单位
+          value: unit
+        - column: H
+          header: 置信度
+          value: confidence
+
+    - name: process
+      sheet: 工艺参数
+      source: records
+      expand: process_parameters
+      start_row: 1
+      include_header: true
+      auto_width: true
+      columns:
+        - column: A
+          header: 记录序号
+          value: "$parent_index"
+        - column: B
+          header: 日期
+          value: "$parent.record_date"
+        - column: C
+          header: 标题
+          value: "$parent.title"
+        - column: D
+          header: 参数序号
+          value: "$index"
+        - column: E
+          header: 参数名
+          value: name
+        - column: F
+          header: 数值
+          value: value
+        - column: G
+          header: 单位
+          value: unit
+        - column: H
+          header: 置信度
+          value: confidence
