@@ -5,30 +5,24 @@
     <h2>任务详情</h2>
     <div class="meta-grid">
         <div><strong>任务号：</strong><span class="mono">{{ job.id }}</span></div>
-        <div><strong>状态：</strong><span class="status status-{{ job.status | lower }}">{{ job.status }}</span></div>
+        <div><strong>状态：</strong><span id="job-status" class="status status-{{ job.status | lower }}">{{ job.status }}</span></div>
         <div><strong>Provider：</strong>{{ job.provider or '-' }}</div>
         <div><strong>Model：</strong>{{ job.model or '-' }}</div>
         <div><strong>创建时间：</strong>{{ job.created_at[:19] }}</div>
         <div><strong>旋转设置：</strong>{{ job.rotation }}</div>
+        <div><strong>识别模式：</strong>
+            <select id="mode-select" onchange="switchMode(this.value)">
+                <option value="auto" {{ 'selected' if job.get('recognition_mode', 'auto') == 'auto' }}>自动</option>
+                <option value="freeform" {{ 'selected' if job.get('recognition_mode') == 'freeform' }}>自由笔记</option>
+                <option value="template" {{ 'selected' if job.get('recognition_mode') == 'template' }}>固定模板</option>
+            </select>
+        </div>
     </div>
-    {% if job.status_message %}
-    <p class="status-msg">{{ job.status_message }}</p>
-    {% endif %}
+    <p id="status-msg" class="status-msg">{{ job.status_message or '' }}</p>
     {% if job.error %}
     <div class="error-box">错误：{{ job.error }}</div>
     {% endif %}
 </section>
-
-{% if job.validation_errors %}
-<section class="validation-errors">
-    <h3>Schema 校验问题 ({{ job.validation_errors | length }})</h3>
-    <ul>
-        {% for err in job.validation_errors %}
-        <li class="mono">{{ err }}</li>
-        {% endfor %}
-    </ul>
-</section>
-{% endif %}
 
 <section class="images-section">
     <h3>图片</h3>
@@ -40,7 +34,6 @@
             <a href="/jobs/{{ job.id }}/files/{{ img.prepared }}" target="_blank">
                 <img src="/jobs/{{ job.id }}/files/{{ img.prepared }}" alt="处理后图片 {{ loop.index }}">
             </a>
-            <p class="img-sub">处理后 (点击查看原图)</p>
             {% endif %}
             <a href="/jobs/{{ job.id }}/files/{{ img.source }}" target="_blank" class="btn btn-small">原始图片</a>
         </div>
@@ -60,57 +53,180 @@
         {% if job.export_file %}
         <a href="/jobs/{{ job.id }}/files/{{ job.export_file }}" class="btn btn-success">下载 {{ job.export_file }}</a>
         {% endif %}
+        <button class="btn" onclick="confirmAll()">确认所有字段</button>
     </div>
 </section>
 
+<!-- 字段级审查区域 -->
+<section class="fields-section" id="fields-section" style="display:none">
+    <h3>字段审查</h3>
+    <div class="field-filters">
+        <button class="btn btn-small" onclick="filterFields('all')">全部</button>
+        <button class="btn btn-small" onclick="filterFields('CONFLICT')">仅冲突</button>
+        <button class="btn btn-small" onclick="filterFields('NEED_REVIEW')">仅待复核</button>
+    </div>
+    <table class="fields-table" id="fields-table">
+        <thead>
+            <tr>
+                <th>字段ID</th>
+                <th>类型</th>
+                <th>OCR</th>
+                <th>VLM</th>
+                <th>历史</th>
+                <th>最终值</th>
+                <th>状态</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody id="fields-body"></tbody>
+    </table>
+</section>
+
+<!-- 高级 JSON 编辑 -->
 <section class="editor-section">
-    <h3>识别结果 (JSON 编辑)</h3>
-    <div id="save-feedback" class="feedback" style="display:none"></div>
-    <textarea id="json-editor" class="json-editor" rows="20">{{ result_json }}</textarea>
-    <button id="save-btn" class="btn btn-primary" onclick="saveResult()">保存修改</button>
+    <h3 onclick="toggleEditor()" style="cursor:pointer">▶ 高级：JSON 编辑器</h3>
+    <div id="editor-panel" style="display:none">
+        <div id="save-feedback" class="feedback" style="display:none"></div>
+        <textarea id="json-editor" class="json-editor" rows="20">{{ result_json }}</textarea>
+        <button id="save-btn" class="btn btn-primary" onclick="saveResult()">保存修改</button>
+    </div>
 </section>
 {% endblock %}
 
 {% block scripts %}
 <script>
 const jobId = "{{ job.id }}";
+let allFields = [];
+
+// 状态轮询
+function pollStatus() {
+    fetch('/api/jobs/' + jobId)
+        .then(r => r.json())
+        .then(job => {
+            document.getElementById('job-status').textContent = job.status;
+            document.getElementById('job-status').className = 'status status-' + job.status.toLowerCase();
+            document.getElementById('status-msg').textContent = job.status_message || '';
+            const processing = ['UPLOADED','PREPROCESSING','OCR_RUNNING','VISION_RUNNING','MATCHING_HISTORY','FUSING','LOCAL_RECHECK'];
+            if (processing.includes(job.status)) {
+                setTimeout(pollStatus, 2000);
+            } else {
+                loadFields();
+            }
+        })
+        .catch(() => setTimeout(pollStatus, 3000));
+}
+
+// 加载融合字段
+function loadFields() {
+    fetch('/api/jobs/' + jobId)
+        .then(r => r.json())
+        .then(job => {
+            // 尝试从 fusion result 获取字段
+            return fetch('/jobs/' + jobId + '/files/fusion/result.json').catch(() => null);
+        })
+        .then(r => r ? r.json() : null)
+        .then(data => {
+            if (data && data.fields && data.fields.length > 0) {
+                allFields = data.fields;
+                document.getElementById('fields-section').style.display = 'block';
+                renderFields('all');
+            }
+        })
+        .catch(() => {});
+}
+
+function renderFields(filter) {
+    const tbody = document.getElementById('fields-body');
+    tbody.innerHTML = '';
+    const filtered = filter === 'all' ? allFields : allFields.filter(f => f.status === filter);
+    filtered.forEach(f => {
+        const ocr = (f.candidates || []).find(c => c.source && c.source.startsWith('ocr'));
+        const vlm = (f.candidates || []).find(c => c.source === 'vlm');
+        const hist = (f.candidates || []).find(c => c.source && c.source.startsWith('history'));
+        const statusClass = f.status === 'CONFLICT' ? 'status-failed' : f.status === 'NEED_REVIEW' ? 'status-need_review' : 'status-ready';
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td class="mono">${f.field_id || ''}</td>
+            <td>${f.field_type || ''}</td>
+            <td>${ocr ? ocr.value + ' (' + (ocr.confidence||0).toFixed(2) + ')' : '-'}</td>
+            <td>${vlm ? vlm.value + ' (' + (vlm.confidence||0).toFixed(2) + ')' : '-'}</td>
+            <td>${hist ? hist.value : '-'}</td>
+            <td><input type="text" value="${f.final_value || ''}" data-field-id="${f.field_id}" style="width:80px"></td>
+            <td><span class="status ${statusClass}">${f.status}</span></td>
+            <td>
+                <button class="btn btn-small" onclick="acceptField('${f.field_id}', 'ocr')">OCR</button>
+                <button class="btn btn-small" onclick="acceptField('${f.field_id}', 'vlm')">VLM</button>
+                <button class="btn btn-small btn-primary" onclick="saveField('${f.field_id}')">保存</button>
+            </td>`;
+        tbody.appendChild(row);
+    });
+}
+
+function filterFields(filter) { renderFields(filter); }
+
+function acceptField(fieldId, source) {
+    const field = allFields.find(f => f.field_id === fieldId);
+    if (!field) return;
+    const candidate = (field.candidates || []).find(c => c.source === source || c.source.startsWith(source));
+    if (!candidate) return;
+    fetch('/api/jobs/' + jobId + '/fields/' + fieldId, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({value: candidate.value, source: source, field_type: field.field_type})
+    }).then(r => r.json()).then(() => { field.final_value = candidate.value; field.status = 'MANUAL_CONFIRMED'; renderFields('all'); });
+}
+
+function saveField(fieldId) {
+    const input = document.querySelector(`input[data-field-id="${fieldId}"]`);
+    if (!input) return;
+    const field = allFields.find(f => f.field_id === fieldId);
+    fetch('/api/jobs/' + jobId + '/fields/' + fieldId, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({value: input.value, source: 'manual', field_type: field ? field.field_type : ''})
+    }).then(r => r.json()).then(() => { if(field){field.final_value=input.value; field.status='MANUAL_CONFIRMED';} renderFields('all'); });
+}
+
+function confirmAll() {
+    fetch('/api/jobs/' + jobId + '/confirm', {method: 'POST'})
+        .then(r => r.json())
+        .then(data => { document.getElementById('job-status').textContent = data.status; location.reload(); });
+}
+
+function switchMode(mode) {
+    fetch('/api/jobs/' + jobId + '/mode', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({mode: mode})
+    }).then(() => { setTimeout(pollStatus, 1000); });
+}
+
+function toggleEditor() {
+    const panel = document.getElementById('editor-panel');
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
 
 function saveResult() {
     const editor = document.getElementById('json-editor');
     const feedback = document.getElementById('save-feedback');
     const text = editor.value.trim();
-
-    // 前端校验
-    try {
-        JSON.parse(text);
-    } catch (e) {
+    try { JSON.parse(text); } catch (e) {
         feedback.style.display = 'block';
         feedback.className = 'feedback feedback-error';
         feedback.textContent = 'JSON 格式错误: ' + e.message;
         return;
     }
-
-    fetch('/api/jobs/' + jobId + '/result', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: text
-    })
-    .then(r => r.json())
-    .then(data => {
+    fetch('/api/jobs/' + jobId + '/result', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: text})
+    .then(r => r.json()).then(data => {
         feedback.style.display = 'block';
-        if (data.validation_errors && data.validation_errors.length > 0) {
-            feedback.className = 'feedback feedback-warn';
-            feedback.textContent = '已保存 (' + data.status + ')，校验问题: ' + data.validation_errors.join('; ');
-        } else {
-            feedback.className = 'feedback feedback-ok';
-            feedback.textContent = '保存成功，校验通过。状态: ' + data.status;
-        }
-    })
-    .catch(e => {
-        feedback.style.display = 'block';
-        feedback.className = 'feedback feedback-error';
-        feedback.textContent = '保存失败: ' + e.message;
-    });
+        feedback.className = 'feedback ' + (data.validation_errors && data.validation_errors.length ? 'feedback-warn' : 'feedback-ok');
+        feedback.textContent = data.validation_errors && data.validation_errors.length ? '已保存，校验问题: ' + data.validation_errors.join('; ') : '保存成功。状态: ' + data.status;
+    }).catch(e => { feedback.style.display='block'; feedback.className='feedback feedback-error'; feedback.textContent='保存失败: '+e.message; });
 }
+
+// 初始化
+const currentStatus = "{{ job.status }}";
+const processing = ['UPLOADED','PREPROCESSING','OCR_RUNNING','VISION_RUNNING','MATCHING_HISTORY','FUSING','LOCAL_RECHECK'];
+if (processing.includes(currentStatus)) { pollStatus(); } else { loadFields(); }
 </script>
 {% endblock %}
