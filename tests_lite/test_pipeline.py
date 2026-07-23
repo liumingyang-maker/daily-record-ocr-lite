@@ -156,7 +156,8 @@ class TestAnalyzeJob:
         # 验证结果文件存在
         loaded = storage.load_result(job_id)
         assert loaded is not None
-        assert "page_heading" in loaded
+        # 新格式使用 pages[]，旧格式使用 page_heading
+        assert "pages" in loaded or "page_heading" in loaded
 
     @pytest.mark.asyncio
     async def test_failed_on_bad_image(self, storage, tmp_path):
