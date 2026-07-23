@@ -1,0 +1,54 @@
+recognition:
+  mode: "${RECOGNITION_MODE:-auto}"
+  accuracy_mode: "${ACCURACY_MODE:-dual}"
+
+preprocess:
+  max_side_vlm: 2400
+  max_side_ocr: 2600
+  jpeg_quality: 94
+  exif_transpose: true
+  auto_rotate: true
+  enable_perspective_correction: true
+  enable_deskew: true
+  enable_shadow_reduction: true
+  enable_clahe: true
+  generate_enhanced_variant: adaptive
+
+ocr:
+  enabled: "${OCR_ENABLED:-true}"
+  provider: "${OCR_PROVIDER:-paddleocr_v6}"
+  device: "${OCR_DEVICE:-cpu}"
+  tier: "${OCR_TIER:-medium}"
+  minimum_score: "${OCR_MIN_SCORE:-0.45}"
+  use_doc_orientation_classify: false
+  use_doc_unwarping: false
+  use_textline_orientation: true
+  warmup_on_start: false
+
+vision:
+  provider: "${VISION_PROVIDER:-mock}"
+  base_url: "${VISION_BASE_URL:-http://127.0.0.1:11434/v1}"
+  endpoint: "${VISION_ENDPOINT:-/chat/completions}"
+  api_key: "${VISION_API_KEY:-}"
+  model: "${VISION_MODEL:-}"
+  timeout_seconds: "${VISION_TIMEOUT_SECONDS:-180}"
+  temperature: 0
+  image_detail: high
+  use_json_schema: "${VISION_USE_JSON_SCHEMA:-false}"
+  mock_result: config/mock_result.json
+  extra_headers: {}
+  extra_body: {}
+
+history:
+  enabled: "${ENABLE_HISTORY_MATCH:-true}"
+  max_material_candidates: 5
+  max_formula_candidates: 3
+
+fusion:
+  enable_conflict_recheck: "${ENABLE_CONFLICT_RECHECK:-true}"
+  automatic_accept_score: 0.90
+  review_score: 0.70
+  numeric_conflict_always_review: true
+
+cache:
+  enabled: "${ENABLE_CACHE:-true}"

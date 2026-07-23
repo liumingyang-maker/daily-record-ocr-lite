@@ -39,6 +39,26 @@ async def health():
     return {"status": "ok", "app": "daily-record-ocr-lite"}
 
 
+@app.get("/api/engine-status")
+async def engine_status():
+    from .ocr.manager import OCRModelManager
+    ocr_mgr = OCRModelManager()
+    cfg = get_config()
+    vision_cfg = cfg.vision
+    return {
+        "ocr": ocr_mgr.get_status(),
+        "vision": {
+            "configured": bool(vision_cfg.get("base_url")),
+            "provider": vision_cfg.get("provider", "mock"),
+            "model": vision_cfg.get("model", ""),
+        },
+        "queue": {
+            "pending": 0,
+            "running_job_id": None,
+        },
+    }
+
+
 # ─── 首页 ───────────────────────────────────────────────────
 
 

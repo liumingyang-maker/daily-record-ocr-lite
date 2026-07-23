@@ -1,0 +1,32 @@
+rules:
+  text:
+    ocr_vlm_exact_agreement_bonus: 0.12
+    history_exact_alias_bonus: 0.05
+    low_ocr_penalty: 0.15
+    low_ocr_threshold: 0.60
+
+  numeric:
+    disagreement_status: CONFLICT
+    exact_agreement_bonus: 0.15
+    history_must_not_override: true
+    decimal_point_conflict_always_review: true
+    sign_conflict_always_review: true
+    percent_conflict_always_review: true
+
+  model_code:
+    digit_difference_status: CONFLICT
+    letter_case_only_can_normalize: true
+    o_zero_ambiguity_generates_candidate: true
+    i_one_ambiguity_generates_candidate: true
+
+  date:
+    preserve_original: true
+    parse_failure_warns: true
+
+confidence:
+  auto_accept_threshold: 0.90
+  review_threshold: 0.70
+  max_confidence: 0.99
+  ocr_vlm_agree_cap: 0.98
+  single_source_cap: 0.85
+  history_only_cap: 0.60

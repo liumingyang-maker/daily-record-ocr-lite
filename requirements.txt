@@ -7,3 +7,5 @@ pyyaml>=6,<7
 pillow>=10,<12
 openpyxl>=3.1,<4
 jsonschema>=4.22,<5
+rapidfuzz>=3,<4
+numpy>=1.26,<3
