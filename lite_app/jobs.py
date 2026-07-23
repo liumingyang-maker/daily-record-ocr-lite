@@ -13,10 +13,16 @@ class TaskQueue:
     """进程内单 worker 任务队列。"""
 
     def __init__(self) -> None:
-        self._queue: asyncio.Queue[str] = asyncio.Queue()
+        self._queue: asyncio.Queue[str] | None = None
         self._worker_task: asyncio.Task | None = None
         self._running_job_id: str | None = None
         self._handler: Callable[[str], Coroutine] | None = None
+
+    def _ensure_queue(self) -> asyncio.Queue[str]:
+        """惰性创建队列（绑定当前事件循环）。"""
+        if self._queue is None:
+            self._queue = asyncio.Queue()
+        return self._queue
 
     def set_handler(self, handler: Callable[[str], Coroutine]) -> None:
         """设置任务处理函数。"""
@@ -24,6 +30,7 @@ class TaskQueue:
 
     async def start(self) -> None:
         """启动后台 worker。"""
+        self._ensure_queue()
         if self._worker_task is None or self._worker_task.done():
             self._worker_task = asyncio.create_task(self._worker())
             logger.info("后台任务 worker 已启动")
@@ -37,15 +44,17 @@ class TaskQueue:
             except asyncio.CancelledError:
                 pass
             logger.info("后台任务 worker 已停止")
+        self._worker_task = None
 
     async def submit(self, job_id: str) -> None:
         """提交任务到队列。"""
-        await self._queue.put(job_id)
-        logger.info("任务 %s 已加入队列，当前排队: %d", job_id, self._queue.qsize())
+        q = self._ensure_queue()
+        await q.put(job_id)
+        logger.info("任务 %s 已加入队列，当前排队: %d", job_id, q.qsize())
 
     @property
     def pending_count(self) -> int:
-        return self._queue.qsize()
+        return self._queue.qsize() if self._queue else 0
 
     @property
     def running_job_id(self) -> str | None:
@@ -59,8 +68,9 @@ class TaskQueue:
 
     async def _worker(self) -> None:
         """单 worker 循环：逐个处理任务。"""
+        q = self._ensure_queue()
         while True:
-            job_id = await self._queue.get()
+            job_id = await q.get()
             self._running_job_id = job_id
             try:
                 if self._handler:
@@ -69,7 +79,7 @@ class TaskQueue:
                 logger.exception("后台任务 %s 执行失败: %s", job_id, e)
             finally:
                 self._running_job_id = None
-                self._queue.task_done()
+                q.task_done()
 
 
 # 全局单例
@@ -81,3 +91,9 @@ def get_task_queue() -> TaskQueue:
     if _task_queue is None:
         _task_queue = TaskQueue()
     return _task_queue
+
+
+def reset_task_queue() -> None:
+    """重置全局队列（测试用）。"""
+    global _task_queue
+    _task_queue = None

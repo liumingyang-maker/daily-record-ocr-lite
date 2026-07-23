@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期：启动时初始化 OCR 管理器。"""
+    """应用生命周期：启动时初始化 OCR 管理器和后台队列。"""
     try:
         from .ocr.manager import OCRModelManager
         rec_cfg = load_recognition_config()
@@ -40,7 +40,32 @@ async def lifespan(app: FastAPI):
         logger.info("OCR 管理器已配置: provider=%s", ocr_cfg.get("provider", "mock"))
     except Exception as e:
         logger.warning("OCR 管理器初始化失败（降级运行）: %s", e)
+
+    # 启动后台任务队列
+    from .jobs import get_task_queue
+    queue = get_task_queue()
+    queue.set_handler(_process_job_background)
+    await queue.start()
+
     yield
+
+    await queue.stop()
+
+
+async def _process_job_background(job_id: str) -> None:
+    """后台处理单个任务：双引擎 pipeline，失败时回退旧 pipeline。"""
+    storage = _get_storage()
+    try:
+        from .pipeline_v2 import analyze_job_v2
+        await analyze_job_v2(job_id, storage)
+    except Exception as e:
+        logger.warning("任务 %s 双引擎识别失败，回退旧 pipeline: %s", job_id, e)
+        try:
+            await analyze_job(job_id, storage)
+        except (PipelineError, VisionProviderError) as e2:
+            logger.warning("任务 %s 识别失败: %s", job_id, e2)
+        except Exception:
+            logger.exception("任务 %s 未知错误", job_id)
 
 
 app = FastAPI(title="daily-record-ocr-lite", lifespan=lifespan)
@@ -174,30 +199,10 @@ async def create_job(
             pass
         raise HTTPException(status_code=500, detail=f"文件保存失败: {e}")
 
-    # 执行识别（双引擎 pipeline）
-    try:
-        from .pipeline_v2 import analyze_job_v2, PipelineError as PipelineErrorV2
-        from .ocr.manager import OCRModelManager
-        # 配置 OCR 管理器
-        ocr_mgr = OCRModelManager()
-        ocr_cfg = cfg.get("recognition", {})
-        if not ocr_mgr._config:
-            ocr_mgr.configure({
-                "enabled": True,
-                "provider": "mock",
-                "device": "cpu",
-                "tier": "medium",
-                "minimum_score": 0.45,
-            })
-        await analyze_job_v2(job_id, storage)
-    except Exception as e:
-        logger.warning("任务 %s 双引擎识别失败，回退旧 pipeline: %s", job_id, e)
-        try:
-            await analyze_job(job_id, storage)
-        except (PipelineError, VisionProviderError) as e2:
-            logger.warning("任务 %s 识别失败: %s", job_id, e2)
-        except Exception:
-            logger.exception("任务 %s 未知错误", job_id)
+    # 提交到后台队列（非阻塞）
+    from .jobs import get_task_queue
+    queue = get_task_queue()
+    await queue.submit(job_id)
 
     return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
 
