@@ -1005,6 +1005,42 @@ async def merge_product_groups(job_id: str, request: Request):
     return {"status": "merged", "target_product_id": target_id}
 
 
+@app.post("/api/jobs/{job_id}/products/{product_id}/alias")
+async def save_product_alias(job_id: str, product_id: str, request: Request):
+    """将原文保存为产品别名到知识库。"""
+    from .config import PROJECT_ROOT
+    from .knowledge.database import KnowledgeDB
+    storage = _get_storage()
+    try:
+        storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    body = await request.json()
+    alias = body.get("alias", "").strip()
+    if not alias:
+        raise HTTPException(status_code=400, detail="别名不能为空。")
+
+    standard_name = body.get("standard_name", alias).strip()
+    db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+    db.initialize()
+
+    # 查找或创建产品（使用 products 表）
+    conn = db._get_conn()
+    conn.execute(
+        "INSERT OR IGNORE INTO products (name, usage_count) VALUES (?, 0)",
+        (standard_name,),
+    )
+    conn.commit()
+    row = conn.execute("SELECT id FROM products WHERE name = ?", (standard_name,)).fetchone()
+    product_db_id = row["id"] if row else None
+
+    if product_db_id:
+        db.add_product_alias(product_db_id, alias, alias_type="user_confirmed", source="web")
+
+    return {"status": "saved", "alias": alias, "standard_name": standard_name}
+
+
 # ─── 知识库管理 ─────────────────────────────────────────────
 
 
