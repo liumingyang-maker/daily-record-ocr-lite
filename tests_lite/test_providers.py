@@ -217,13 +217,32 @@ class TestOpenAICompatibleProvider:
             await provider.analyze([img_path], "sys", "user", {})
 
     @pytest.mark.asyncio
-    async def test_response_format_option(self):
-        """验证 use_json_schema 配置。"""
+    async def test_response_format_option(self, tmp_path):
+        """验证 use_json_schema 时请求体包含 response_format。"""
+        img_path = self._make_test_image(tmp_path)
+        captured = {}
+
+        def handler(request: httpx.Request):
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json=self._make_response('{"page_heading": "", "records": [], "warnings": []}'),
+            )
+
+        transport = httpx.MockTransport(handler)
+        schema = {"type": "object", "properties": {"page_heading": {"type": "string"}}}
         provider = OpenAICompatibleProvider(
-            self._make_config(use_json_schema=True, schema_name="my_schema")
+            self._make_config(use_json_schema=True, schema_name="my_schema"),
+            _transport=transport,
         )
-        assert provider.use_json_schema is True
-        assert provider.schema_name == "my_schema"
+        await provider.analyze([img_path], "sys", "user", schema)
+
+        body = captured["body"]
+        assert "response_format" in body
+        assert body["response_format"]["type"] == "json_schema"
+        assert body["response_format"]["json_schema"]["name"] == "my_schema"
+        assert body["response_format"]["json_schema"]["strict"] is True
+        assert body["response_format"]["json_schema"]["schema"] == schema
 
     def test_empty_base_url_raises(self):
         """验证空 base_url 报错。"""
