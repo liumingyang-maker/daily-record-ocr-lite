@@ -1,0 +1,24 @@
+# 真实手写样本回归测试用例
+# 将真实图片放在 tests/fixtures/private/ 目录下
+# 运行: python scripts/benchmark.py --fixtures tests/fixtures/private
+
+cases:
+  - image: sample_01.jpg
+    expected:
+      records:
+        - record_date: "24.7.10"
+          title_contains: "PA66"
+          materials:
+            - name_contains: "PA66"
+              amount: "60"
+            - name_contains: "GF30"
+              amount: "30"
+
+  - image: sample_02.jpg
+    expected:
+      records:
+        - record_date: "24.7.11"
+          title_contains: "PP"
+          materials:
+            - name_contains: "PP"
+              amount: "70"
