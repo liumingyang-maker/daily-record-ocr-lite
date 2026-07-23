@@ -602,6 +602,103 @@ async def add_material(request: Request):
     return {"id": mid, "name": name}
 
 
+@app.post("/knowledge/import")
+async def import_knowledge(file: UploadFile = File(...)):
+    """从 Excel/CSV 导入物料和配方到知识库。"""
+    from .config import PROJECT_ROOT
+    from .knowledge.database import KnowledgeDB
+    import csv
+    import io as _io
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="文件名不能为空。")
+
+    ext = Path(file.filename).suffix.lower()
+    if ext not in (".xlsx", ".csv"):
+        raise HTTPException(status_code=400, detail=f"不支持的文件类型: {ext}。允许: .xlsx, .csv")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="文件为空。")
+
+    db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+    db.initialize()
+
+    imported_count = 0
+
+    try:
+        if ext == ".csv":
+            text = content.decode("utf-8-sig")
+            reader = csv.DictReader(_io.StringIO(text))
+            for row in reader:
+                name = (row.get("物料名称") or row.get("name") or row.get("material") or "").strip()
+                if name:
+                    unit = (row.get("单位") or row.get("unit") or "").strip()
+                    category = (row.get("分类") or row.get("category") or "").strip()
+                    db.add_material(name, category, unit)
+                    # 别名
+                    alias_str = (row.get("别名") or row.get("aliases") or "").strip()
+                    if alias_str:
+                        mid = db.add_material(name, category, unit)
+                        for alias in alias_str.replace("；", ";").split(";"):
+                            if alias.strip():
+                                db.add_alias(mid, alias.strip(), alias_type="import", source="csv")
+                    imported_count += 1
+        else:
+            # xlsx
+            from openpyxl import load_workbook
+            import io as _io2
+            wb = load_workbook(_io2.BytesIO(content), read_only=True)
+            ws = wb.active
+            rows = list(ws.iter_rows(values_only=True))
+            if len(rows) < 2:
+                raise HTTPException(status_code=400, detail="文件行数不足。")
+
+            # 自动识别列
+            headers = [str(h or "").strip() for h in rows[0]]
+            name_col = None
+            unit_col = None
+            category_col = None
+            alias_col = None
+            for i, h in enumerate(headers):
+                hl = h.lower()
+                if "物料" in h or "名称" in h or hl == "name" or hl == "material":
+                    name_col = i
+                elif "单位" in h or hl == "unit":
+                    unit_col = i
+                elif "分类" in h or hl == "category":
+                    category_col = i
+                elif "别名" in h or hl == "aliases":
+                    alias_col = i
+
+            if name_col is None:
+                name_col = 0  # 默认第一列
+
+            for row in rows[1:]:
+                if not row or len(row) <= name_col:
+                    continue
+                name = str(row[name_col] or "").strip()
+                if not name:
+                    continue
+                unit = str(row[unit_col] or "").strip() if unit_col is not None and len(row) > unit_col else ""
+                category = str(row[category_col] or "").strip() if category_col is not None and len(row) > category_col else ""
+                mid = db.add_material(name, category, unit)
+                if alias_col is not None and len(row) > alias_col:
+                    alias_str = str(row[alias_col] or "").strip()
+                    if alias_str:
+                        for alias in alias_str.replace("；", ";").split(";"):
+                            if alias.strip():
+                                db.add_alias(mid, alias.strip(), alias_type="import", source="xlsx")
+                imported_count += 1
+            wb.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"导入失败: {e}")
+
+    return {"imported": imported_count, "message": f"成功导入 {imported_count} 条物料记录。"}
+
+
 # ─── 启动入口 ───────────────────────────────────────────────
 
 
