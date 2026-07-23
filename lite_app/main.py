@@ -927,6 +927,89 @@ async def merge_company_groups(job_id: str, request: Request):
     return {"status": "merged", "target_company_id": target_id}
 
 
+@app.post("/api/jobs/{job_id}/companies/{company_id}/alias")
+async def save_company_alias(job_id: str, company_id: str, request: Request):
+    """将原文保存为公司别名到知识库。"""
+    from .config import PROJECT_ROOT
+    from .knowledge.database import KnowledgeDB
+    storage = _get_storage()
+    try:
+        storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    body = await request.json()
+    alias = body.get("alias", "").strip()
+    if not alias:
+        raise HTTPException(status_code=400, detail="别名不能为空。")
+
+    db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+    db.initialize()
+
+    # 查找或创建公司
+    company = db.find_company_by_name(body.get("standard_name", alias))
+    if company:
+        company_db_id = company["id"]
+    else:
+        company_db_id = db.add_material(body.get("standard_name", alias))  # 复用 customers 表
+        # 实际上应该用 customers 表
+        conn = db._get_conn()
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO customers (name, usage_count) VALUES (?, 0)",
+            (body.get("standard_name", alias),),
+        )
+        conn.commit()
+        row = conn.execute("SELECT id FROM customers WHERE name = ?", (body.get("standard_name", alias),)).fetchone()
+        company_db_id = row["id"] if row else company_db_id
+
+    db.add_company_alias(company_db_id, alias, alias_type="user_confirmed", source="web")
+    return {"status": "saved", "alias": alias, "company_id": company_id}
+
+
+@app.post("/api/jobs/{job_id}/products/merge")
+async def merge_product_groups(job_id: str, request: Request):
+    """合并两个产品组。"""
+    from .grouping.storage import load_business_entities, save_business_entities
+    storage = _get_storage()
+    try:
+        storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    body = await request.json()
+    source_id = body.get("source_product_id", "")
+    target_id = body.get("target_product_id", "")
+    if not source_id or not target_id:
+        raise HTTPException(status_code=400, detail="需要 source_product_id 和 target_product_id。")
+
+    job_dir = storage.get_job_dir(job_id)
+    entities = load_business_entities(job_dir)
+    if not entities:
+        raise HTTPException(status_code=400, detail="业务实体不存在。")
+
+    source = next((p for p in entities.product_groups if p.product_id == source_id), None)
+    target = next((p for p in entities.product_groups if p.product_id == target_id), None)
+    if not source or not target:
+        raise HTTPException(status_code=404, detail="产品组不存在。")
+
+    # 合并
+    target.raw_names.extend(source.raw_names)
+    target.source_page_ids.extend(source.source_page_ids)
+
+    # 更新配方的 product_id
+    for f in entities.formulas:
+        if f.product_id == source_id:
+            f.product_id = target_id
+
+    # 移除 source
+    entities.product_groups = [p for p in entities.product_groups if p.product_id != source_id]
+
+    save_business_entities(job_dir, entities)
+    return {"status": "merged", "target_product_id": target_id}
+
+
 # ─── 知识库管理 ─────────────────────────────────────────────
 
 
