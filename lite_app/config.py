@@ -187,3 +187,27 @@ def load_export_config() -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"导出配置文件格式错误: {path}")
     return data
+
+
+def load_recognition_config() -> dict[str, Any]:
+    """加载 recognition.yaml。"""
+    path = PROJECT_ROOT / "config" / "recognition.yaml"
+    if not path.exists():
+        return {}
+    with open(path, encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+    if not isinstance(raw, dict):
+        return {}
+    return _resolve_value(raw)
+
+
+def load_fusion_rules() -> dict[str, Any]:
+    """加载 fusion_rules.yaml。"""
+    path = PROJECT_ROOT / "config" / "fusion_rules.yaml"
+    if not path.exists():
+        return {}
+    with open(path, encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    if not isinstance(data, dict):
+        return {}
+    return data
