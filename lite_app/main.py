@@ -943,29 +943,24 @@ async def save_company_alias(job_id: str, company_id: str, request: Request):
     if not alias:
         raise HTTPException(status_code=400, detail="别名不能为空。")
 
+    standard_name = body.get("standard_name", alias).strip()
     db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
     db.initialize()
 
-    # 查找或创建公司
-    company = db.find_company_by_name(body.get("standard_name", alias))
-    if company:
-        company_db_id = company["id"]
-    else:
-        company_db_id = db.add_material(body.get("standard_name", alias))  # 复用 customers 表
-        # 实际上应该用 customers 表
-        conn = db._get_conn()
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat()
-        cur = conn.execute(
-            "INSERT OR IGNORE INTO customers (name, usage_count) VALUES (?, 0)",
-            (body.get("standard_name", alias),),
-        )
-        conn.commit()
-        row = conn.execute("SELECT id FROM customers WHERE name = ?", (body.get("standard_name", alias),)).fetchone()
-        company_db_id = row["id"] if row else company_db_id
+    # 查找或创建公司（使用 customers 表）
+    conn = db._get_conn()
+    conn.execute(
+        "INSERT OR IGNORE INTO customers (name, usage_count) VALUES (?, 0)",
+        (standard_name,),
+    )
+    conn.commit()
+    row = conn.execute("SELECT id FROM customers WHERE name = ?", (standard_name,)).fetchone()
+    company_db_id = row["id"] if row else None
 
-    db.add_company_alias(company_db_id, alias, alias_type="user_confirmed", source="web")
-    return {"status": "saved", "alias": alias, "company_id": company_id}
+    if company_db_id:
+        db.add_company_alias(company_db_id, alias, alias_type="user_confirmed", source="web")
+
+    return {"status": "saved", "alias": alias, "standard_name": standard_name}
 
 
 @app.post("/api/jobs/{job_id}/products/merge")
