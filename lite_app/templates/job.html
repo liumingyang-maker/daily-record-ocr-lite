@@ -35,7 +35,10 @@
                 <img src="/jobs/{{ job.id }}/files/{{ img.prepared }}" alt="处理后图片 {{ loop.index }}">
             </a>
             {% endif %}
-            <a href="/jobs/{{ job.id }}/files/{{ img.source }}" target="_blank" class="btn btn-small">原始图片</a>
+            <div style="margin-top:4px">
+                <a href="/jobs/{{ job.id }}/files/{{ img.source }}" target="_blank" class="btn btn-small">原始图片</a>
+                <a href="/jobs/{{ job.id }}/files/ocr/page_{{ '%02d' | format(loop.index) }}_overlay.jpg" target="_blank" class="btn btn-small">OCR Overlay</a>
+            </div>
         </div>
         {% endfor %}
     </div>
