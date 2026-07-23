@@ -480,6 +480,128 @@ async def confirm_job(job_id: str):
     return {"status": "READY"}
 
 
+@app.post("/api/jobs/{job_id}/fields/{field_id}/recheck")
+async def recheck_field(job_id: str, field_id: str):
+    """对单个冲突字段执行局部复核。"""
+    storage = _get_storage()
+    try:
+        job = storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    job_dir = storage.get_job_dir(job_id)
+    fusion_path = job_dir / "fusion" / "result.json"
+    if not fusion_path.exists():
+        raise HTTPException(status_code=400, detail="融合结果不存在。")
+
+    fusion_data = json.loads(fusion_path.read_text(encoding="utf-8"))
+    fields = fusion_data.get("fields", [])
+    target = None
+    for f in fields:
+        if f.get("field_id") == field_id:
+            target = f
+            break
+
+    if not target:
+        raise HTTPException(status_code=404, detail=f"字段不存在: {field_id}")
+
+    # 执行局部复核（使用 OCR 管理器）
+    from .ocr.manager import OCRModelManager
+    from .review.recheck import crop_field_region
+
+    # 找到对应的 OCR 图片
+    ocr_img = None
+    for img in job.get("images", []):
+        prepared = img.get("prepared_ocr") or img.get("prepared", "")
+        if prepared:
+            candidate = job_dir / prepared
+            if candidate.exists():
+                ocr_img = candidate
+                break
+
+    if not ocr_img:
+        return {"status": "no_image", "field_id": field_id}
+
+    # 裁图
+    bbox = target.get("bbox")
+    if not bbox or len(bbox) != 4:
+        # 尝试从候选中获取
+        for c in target.get("candidates", []):
+            if c.get("bbox"):
+                bbox = c["bbox"]
+                break
+
+    crops_dir = job_dir / "crops"
+    if bbox:
+        try:
+            crop_field_region(ocr_img, bbox, crops_dir, field_id)
+        except Exception as e:
+            logger.warning("裁图失败: %s", e)
+
+    # 局部 OCR
+    ocr_mgr = OCRModelManager()
+    crop_path = crops_dir / f"{field_id}_context.jpg"
+    local_texts = []
+    if crop_path.exists():
+        try:
+            import asyncio
+            page = await asyncio.to_thread(ocr_mgr.get_provider().recognize, crop_path)
+            local_texts = [t.text for t in page.tokens]
+        except Exception as e:
+            logger.warning("局部 OCR 失败: %s", e)
+
+    target["local_ocr_texts"] = local_texts
+    target["recheck_done"] = True
+
+    # 保存更新
+    fusion_path.write_text(json.dumps(fusion_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {
+        "status": "recheck_done",
+        "field_id": field_id,
+        "local_ocr_texts": local_texts,
+    }
+
+
+# ─── 知识库管理 ─────────────────────────────────────────────
+
+
+@app.get("/knowledge", response_class=HTMLResponse)
+async def knowledge_page(request: Request):
+    """知识库管理页面。"""
+    from .config import PROJECT_ROOT
+    from .knowledge.database import KnowledgeDB
+    db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+    db.initialize()
+    materials = db.get_all_materials()
+    formulas = db.get_all_formulas()
+    return templates.TemplateResponse(
+        request, "knowledge.html", {"materials": materials, "formulas": formulas}
+    )
+
+
+@app.post("/knowledge/materials")
+async def add_material(request: Request):
+    """添加物料。"""
+    from .config import PROJECT_ROOT
+    from .knowledge.database import KnowledgeDB
+    body = await request.json()
+    name = body.get("name", "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="物料名称不能为空。")
+
+    db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+    db.initialize()
+    mid = db.add_material(name, body.get("category", ""), body.get("unit", ""))
+
+    # 添加别名
+    for alias in body.get("aliases", []):
+        if alias.strip():
+            db.add_alias(mid, alias.strip(), alias_type="manual", source="web")
+
+    return {"id": mid, "name": name}
+
+
 # ─── 启动入口 ───────────────────────────────────────────────
 
 
