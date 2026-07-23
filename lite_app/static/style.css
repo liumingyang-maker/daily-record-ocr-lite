@@ -114,6 +114,43 @@ section { margin-bottom: 24px; }
 .field-filters { margin-bottom: 10px; display: flex; gap: 6px; }
 .fields-section { max-height: 500px; overflow-y: auto; }
 
+/* 结果页面：三视图 */
+.summary-metrics { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
+.metric { padding: 4px 10px; background: #f0f0f0; border-radius: 4px; font-size: 0.85rem; }
+.metric-ok { background: #e6f4ea; color: #137333; }
+.metric-warn { background: #fef7e0; color: #b06000; }
+
+.view-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.tab-btn { padding: 6px 14px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; }
+.tab-btn.active { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+
+.result-layout { display: grid; grid-template-columns: 280px 1fr 260px; gap: 16px; min-height: 400px; }
+.tree-nav { border-right: 1px solid #e0e0e0; padding-right: 12px; overflow-y: auto; max-height: 600px; }
+.formula-detail { padding: 0 8px; }
+.evidence-panel { border-left: 1px solid #e0e0e0; padding-left: 12px; font-size: 0.85rem; }
+
+.tree-company { margin-bottom: 10px; }
+.tree-company-header { cursor: pointer; padding: 4px 0; }
+.tree-company-header:hover { color: #1a73e8; }
+.tree-meta { font-size: 0.75rem; color: #888; margin-left: 8px; }
+.tree-company.collapsed .tree-products { display: none; }
+.tree-product { margin-left: 12px; margin-top: 4px; }
+.tree-product em { font-size: 0.85rem; color: #555; }
+.tree-product ul { list-style: none; padding-left: 8px; margin: 4px 0; }
+.tree-formula { padding: 3px 6px; cursor: pointer; border-radius: 3px; font-size: 0.85rem; }
+.tree-formula:hover { background: #e8f0fe; }
+.tree-formula.needs-review { background: #fef7e0; }
+.fi { font-weight: bold; margin-right: 4px; }
+
+.clickable { cursor: pointer; }
+.clickable:hover { background: #f5f5f5; }
+
+@media (max-width: 900px) {
+    .result-layout { grid-template-columns: 1fr; }
+    .tree-nav { border-right: none; border-bottom: 1px solid #e0e0e0; max-height: 200px; }
+    .evidence-panel { border-left: none; border-top: 1px solid #e0e0e0; }
+}
+
 @media (max-width: 600px) {
     .container { padding: 12px; }
     .meta-grid { grid-template-columns: 1fr; }

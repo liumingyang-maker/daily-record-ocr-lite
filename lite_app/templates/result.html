@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}识别结果 - {{ job.id }}{% endblock %}
+{% block content %}
+<section class="result-header">
+    <h2>识别结果</h2>
+    <div id="summary-metrics" class="summary-metrics"></div>
+</section>
+
+<section class="view-tabs">
+    <button class="tab-btn active" onclick="switchView('company')">按公司</button>
+    <button class="tab-btn" onclick="switchView('image')">按图片</button>
+    <button class="tab-btn" onclick="switchView('review')">仅看待确认</button>
+</section>
+
+<div class="result-layout">
+    <nav id="tree-nav" class="tree-nav"></nav>
+    <main id="formula-detail" class="formula-detail">
+        <p class="empty">选择左侧配方查看详情</p>
+    </main>
+    <aside id="evidence-panel" class="evidence-panel" style="display:none">
+        <h4>字段证据</h4>
+        <div id="evidence-content"></div>
+    </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const jobId = "{{ job.id }}";
+let treeData = null;
+let pagesData = null;
+let currentView = 'company';
+
+async function loadData() {
+    const [treeRes, pagesRes] = await Promise.all([
+        fetch('/api/jobs/' + jobId + '/tree').then(r => r.json()),
+        fetch('/api/jobs/' + jobId + '/pages').then(r => r.json())
+    ]);
+    treeData = treeRes;
+    pagesData = pagesRes;
+    renderSummary(treeRes.summary || {});
+    renderTree();
+}
+
+function renderSummary(s) {
+    document.getElementById('summary-metrics').innerHTML = `
+        <span class="metric">图片: ${s.image_count || 0}</span>
+        <span class="metric">公司: ${s.company_count || 0}</span>
+        <span class="metric">产品: ${s.product_count || 0}</span>
+        <span class="metric">配方: ${s.formula_count || 0}</span>
+        <span class="metric metric-ok">自动通过: ${s.auto_accepted_formula_count || 0}</span>
+        <span class="metric metric-warn">待确认: ${s.review_formula_count || 0}</span>
+        <span class="metric metric-warn">冲突字段: ${s.conflict_field_count || 0}</span>`;
+}
+
+function switchView(view) {
+    currentView = view;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+    renderTree();
+}
+
+function renderTree() {
+    const nav = document.getElementById('tree-nav');
+    if (!treeData || !treeData.companies) { nav.innerHTML = '<p class="empty">无数据</p>'; return; }
+
+    if (currentView === 'company') {
+        nav.innerHTML = treeData.companies.map(c => {
+            const formulaCount = c.products.reduce((n, p) => n + p.formulas.length, 0);
+            const reviewCount = c.products.reduce((n, p) => n + p.formulas.filter(f => f.review_status !== 'AUTO_ACCEPTED').length, 0);
+            let html = `<div class="tree-company">
+                <div class="tree-company-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                    <strong>${c.display_name || '未知公司'}</strong>
+                    <span class="tree-meta">${c.source_image_indexes.length}图 · ${formulaCount}配方${reviewCount ? ' · ' + reviewCount + '待确认' : ''}</span>
+                </div><div class="tree-products">`;
+            c.products.forEach(p => {
+                html += `<div class="tree-product"><em>${p.display_name || '未分类'}</em><ul>`;
+                p.formulas.forEach(f => {
+                    const icon = f.review_status === 'AUTO_ACCEPTED' ? '✓' : f.review_status === 'REVIEW_REQUIRED' ? '!' : '×';
+                    const no = f.formula_no_raw || ('未编号' + f.formula_sequence);
+                    html += `<li class="tree-formula ${f.review_status !== 'AUTO_ACCEPTED' ? 'needs-review' : ''}" onclick="loadFormula('${f.formula_id}')">
+                        <span class="fi">${icon}</span> ${no} · ${f.record_date || ''} · 图${f.source_image_index}</li>`;
+                });
+                html += '</ul></div>';
+            });
+            html += '</div></div>';
+            return html;
+        }).join('');
+    } else if (currentView === 'image') {
+        nav.innerHTML = (pagesData || []).map(p => {
+            let html = `<div class="tree-company"><div class="tree-company-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                <strong>图片 ${p.source_image_index}</strong>
+                <span class="tree-meta">${p.company.raw_value || '未知公司'}</span></div><div class="tree-products"><ul>`;
+            p.product_sections.forEach(ps => {
+                ps.formula_blocks.forEach(fb => {
+                    const no = fb.formula_no_raw || ('未编号' + fb.formula_sequence);
+                    html += `<li class="tree-formula" onclick="loadFormula('${fb.formula_id}')">${no}</li>`;
+                });
+            });
+            html += '</ul></div></div>';
+            return html;
+        }).join('');
+    } else {
+        // 仅待确认
+        const reviewFormulas = [];
+        (treeData.companies || []).forEach(c => c.products.forEach(p => p.formulas.forEach(f => {
+            if (f.review_status !== 'AUTO_ACCEPTED') reviewFormulas.push({...f, company: c.display_name, product: p.display_name});
+        })));
+        if (!reviewFormulas.length) { nav.innerHTML = '<p class="empty">全部自动通过 ✓</p>'; return; }
+        nav.innerHTML = '<ul>' + reviewFormulas.map(f => {
+            const no = f.formula_no_raw || ('未编号' + f.formula_sequence);
+            return `<li class="tree-formula needs-review" onclick="loadFormula('${f.formula_id}')">
+                <span class="fi">!</span> ${f.company} / ${f.product} / ${no} · ${f.conflict_count}冲突</li>`;
+        }).join('') + '</ul>';
+    }
+}
+
+async function loadFormula(formulaId) {
+    const res = await fetch('/api/jobs/' + jobId + '/formulas/' + formulaId);
+    if (!res.ok) { document.getElementById('formula-detail').innerHTML = '<p class="error-box">配方不存在</p>'; return; }
+    const f = await res.json();
+    const detail = document.getElementById('formula-detail');
+    let html = `<h3>配方 ${f.formula_no_raw || f.formula_sequence}</h3>
+        <div class="meta-grid">
+            <div><strong>日期：</strong>${f.record_date.raw_value || '-'}</div>
+            <div><strong>来源图片：</strong>#${f.source_image_index}</div>
+            <div><strong>状态：</strong><span class="status status-${f.review_status === 'AUTO_ACCEPTED' ? 'ready' : 'need_review'}">${f.review_status}</span></div>
+            <div><strong>冲突：</strong>${f.conflict_count}</div>
+        </div>`;
+    html += '<h4>原料</h4><table class="fields-table"><thead><tr><th>#</th><th>名称</th><th>数量</th><th>单位</th><th>状态</th></tr></thead><tbody>';
+    f.materials.forEach((m, i) => {
+        const st = m.amount.review_status === 'CONFLICT' ? 'status-failed' : 'status-ready';
+        html += `<tr onclick="showEvidence(${JSON.stringify(m).replace(/"/g, '&quot;')})" class="clickable">
+            <td>${i+1}</td><td>${m.name.raw_value}</td><td>${m.amount.raw_value}</td><td>${m.unit.raw_value}</td>
+            <td><span class="status ${st}">${m.amount.review_status}</span></td></tr>`;
+    });
+    html += '</tbody></table>';
+    if (f.process_parameters.length) {
+        html += '<h4>工艺参数</h4><table class="fields-table"><thead><tr><th>参数</th><th>数值</th><th>单位</th><th>状态</th></tr></thead><tbody>';
+        f.process_parameters.forEach(p => {
+            html += `<tr><td>${p.name.raw_value}</td><td>${p.value.raw_value}</td><td>${p.unit.raw_value}</td><td>${p.value.review_status}</td></tr>`;
+        });
+        html += '</tbody></table>';
+    }
+    detail.innerHTML = html;
+}
+
+function showEvidence(material) {
+    const panel = document.getElementById('evidence-panel');
+    const content = document.getElementById('evidence-content');
+    panel.style.display = 'block';
+    content.innerHTML = `
+        <p><strong>名称：</strong>${material.name.raw_value} (置信度: ${material.name.confidence})</p>
+        <p><strong>数量：</strong>${material.amount.raw_value} (置信度: ${material.amount.confidence})</p>
+        <p><strong>来源：</strong>${material.amount.match_source || '-'}</p>
+        <p><strong>证据 tokens：</strong>${(material.amount.evidence_token_ids || []).join(', ') || '-'}</p>
+        <div class="action-buttons">
+            <button class="btn btn-small" onclick="acceptCandidate('${material.field_id}', 'ocr')">采用 OCR</button>
+            <button class="btn btn-small" onclick="acceptCandidate('${material.field_id}', 'vlm')">采用 VLM</button>
+            <button class="btn btn-small btn-primary" onclick="manualEdit('${material.field_id}')">手工填写</button>
+        </div>`;
+}
+
+function acceptCandidate(fieldId, source) {
+    fetch('/api/jobs/' + jobId + '/fields/' + fieldId, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({source: source, value: ''})
+    }).then(() => loadFormula(currentFormulaId));
+}
+
+function manualEdit(fieldId) {
+    const val = prompt('输入新值：');
+    if (val === null) return;
+    fetch('/api/jobs/' + jobId + '/fields/' + fieldId, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({source: 'manual', value: val})
+    }).then(() => location.reload());
+}
+
+let currentFormulaId = '';
+const origLoadFormula = loadFormula;
+loadFormula = function(fid) { currentFormulaId = fid; origLoadFormula(fid); };
+
+loadData();
+</script>
+{% endblock %}

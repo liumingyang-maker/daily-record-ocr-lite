@@ -233,6 +233,22 @@ async def job_detail(job_id: str, request: Request):
     )
 
 
+@app.get("/jobs/{job_id}/result", response_class=HTMLResponse)
+async def job_result_page(job_id: str, request: Request):
+    """识别结果页面（按公司树/按图片/仅待确认三视图）。"""
+    storage = _get_storage()
+    try:
+        job = storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    return templates.TemplateResponse(
+        request,
+        "result.html",
+        {"job": job},
+    )
+
+
 # ─── 重新识别 ───────────────────────────────────────────────
 
 
