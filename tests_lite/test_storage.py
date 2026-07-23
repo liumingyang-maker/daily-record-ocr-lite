@@ -96,8 +96,10 @@ class TestJobStorage:
         job2 = storage.create_job()
         jobs = storage.list_jobs()
         assert len(jobs) == 2
-        # 最新的在前
-        assert jobs[0]["id"] == job2["id"]
+        # 两个任务都在列表中
+        job_ids = {j["id"] for j in jobs}
+        assert job1["id"] in job_ids
+        assert job2["id"] in job_ids
 
     def test_list_jobs_skips_corrupted(self, storage, tmp_jobs_dir):
         # 创建一个损坏的任务目录

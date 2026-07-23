@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -11,7 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .config import get_config, load_schema_config
+from .config import get_config, load_schema_config, load_recognition_config
 from .exporter import ExportError, export_job
 from .pipeline import PipelineError, analyze_job, validate_result
 from .providers import VisionProviderError
@@ -19,7 +20,30 @@ from .storage import JobStorage
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="daily-record-ocr-lite")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期：启动时初始化 OCR 管理器。"""
+    try:
+        from .ocr.manager import OCRModelManager
+        rec_cfg = load_recognition_config()
+        ocr_cfg = rec_cfg.get("ocr", {})
+        mgr = OCRModelManager()
+        mgr.configure({
+            "enabled": str(ocr_cfg.get("enabled", "true")).lower() in ("true", "1", "yes"),
+            "provider": ocr_cfg.get("provider", "mock"),
+            "device": ocr_cfg.get("device", "cpu"),
+            "tier": ocr_cfg.get("tier", "medium"),
+            "minimum_score": float(ocr_cfg.get("minimum_score", 0.45)),
+            "use_textline_orientation": ocr_cfg.get("use_textline_orientation", True),
+        })
+        logger.info("OCR 管理器已配置: provider=%s", ocr_cfg.get("provider", "mock"))
+    except Exception as e:
+        logger.warning("OCR 管理器初始化失败（降级运行）: %s", e)
+    yield
+
+
+app = FastAPI(title="daily-record-ocr-lite", lifespan=lifespan)
 
 # 静态文件和模板
 _BASE_DIR = Path(__file__).resolve().parent
