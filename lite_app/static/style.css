@@ -106,9 +106,18 @@ section { margin-bottom: 24px; }
 
 .empty { color: #888; font-style: italic; }
 
+/* 字段审查表 */
+.fields-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-top: 10px; }
+.fields-table th, .fields-table td { padding: 6px 8px; text-align: left; border-bottom: 1px solid #e0e0e0; }
+.fields-table th { background: #f0f0f0; font-weight: 600; position: sticky; top: 0; }
+.fields-table input[type="text"] { padding: 3px 6px; border: 1px solid #ccc; border-radius: 3px; }
+.field-filters { margin-bottom: 10px; display: flex; gap: 6px; }
+.fields-section { max-height: 500px; overflow-y: auto; }
+
 @media (max-width: 600px) {
     .container { padding: 12px; }
     .meta-grid { grid-template-columns: 1fr; }
     .image-grid { flex-direction: column; }
     .image-card { max-width: 100%; }
+    .fields-table { font-size: 0.75rem; }
 }
