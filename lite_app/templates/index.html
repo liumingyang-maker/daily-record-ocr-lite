@@ -3,7 +3,8 @@
 {% block content %}
 <section class="upload-section">
     <h2>上传手写笔记</h2>
-    <p class="hint">支持一次上传多张图片（JPG/PNG/WebP），识别过程可能需要几十秒，请耐心等待。</p>
+    <div id="engine-status" class="hint"></div>
+    <p class="hint">支持一次上传多张图片（JPG/PNG/WebP），上传后自动进入后台识别。</p>
     <form action="/jobs" method="post" enctype="multipart/form-data">
         <div class="form-group">
             <label for="files">选择图片：</label>
@@ -21,6 +22,7 @@
         </div>
         <button type="submit" class="btn btn-primary">上传并识别</button>
     </form>
+    <p style="margin-top:10px"><a href="/knowledge" class="btn btn-small">知识库管理</a></p>
 </section>
 
 <section class="jobs-section">
@@ -54,4 +56,14 @@
     <p class="empty">暂无任务，请上传图片开始识别。</p>
     {% endif %}
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+fetch('/api/engine-status').then(r=>r.json()).then(d=>{
+    const el=document.getElementById('engine-status');
+    if(!d.ocr.loaded){el.innerHTML='⚠️ 当前未启用 PP-OCRv6，识别可靠性降低。请安装: pip install -r requirements-ocr.txt';el.style.color='#b06000';}
+    else{el.innerHTML='✅ OCR: '+d.ocr.provider+' ('+d.ocr.tier+') | Vision: '+d.vision.provider;el.style.color='#137333';}
+}).catch(()=>{});
+</script>
 {% endblock %}
