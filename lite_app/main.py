@@ -314,6 +314,97 @@ async def download_file(job_id: str, filename: str):
         return FileResponse(file_path, filename=filename)
 
 
+# ─── 字段级 API ─────────────────────────────────────────────
+
+
+@app.get("/api/jobs/{job_id}")
+async def get_job_api(job_id: str):
+    """获取任务状态（JSON API，供前端轮询）。"""
+    storage = _get_storage()
+    try:
+        job = storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+    return job
+
+
+@app.post("/api/jobs/{job_id}/fields/{field_id}")
+async def update_field(job_id: str, field_id: str, request: Request):
+    """人工修改单个字段值。"""
+    storage = _get_storage()
+    try:
+        job = storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    body = await request.json()
+    new_value = body.get("value", "")
+    chosen_source = body.get("source", "manual")
+
+    # 加载融合结果
+    job_dir = storage.get_job_dir(job_id)
+    fusion_path = job_dir / "fusion" / "result.json"
+    if not fusion_path.exists():
+        raise HTTPException(status_code=400, detail="融合结果不存在。")
+
+    fusion_data = json.loads(fusion_path.read_text(encoding="utf-8"))
+    fields = fusion_data.get("fields", [])
+
+    # 找到并更新字段
+    updated = False
+    old_value = ""
+    for f in fields:
+        if f.get("field_id") == field_id:
+            old_value = f.get("final_value", "")
+            f["final_value"] = new_value
+            f["final_source"] = chosen_source
+            f["status"] = "MANUAL_CONFIRMED"
+            updated = True
+            break
+
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"字段不存在: {field_id}")
+
+    # 保存
+    fusion_path.write_text(json.dumps(fusion_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 记录修正日志
+    try:
+        from .config import PROJECT_ROOT
+        from .knowledge.database import KnowledgeDB
+        db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+        db.initialize()
+        from .review.corrections import CorrectionService
+        svc = CorrectionService(db)
+        svc.record_correction(
+            job_id=job_id,
+            field_id=field_id,
+            field_type=body.get("field_type", ""),
+            old_value=old_value,
+            new_value=new_value,
+            chosen_source=chosen_source,
+        )
+    except Exception as e:
+        logger.warning("修正日志记录失败: %s", e)
+
+    return {"status": "MANUAL_CONFIRMED", "field_id": field_id, "value": new_value}
+
+
+@app.post("/api/jobs/{job_id}/confirm")
+async def confirm_job(job_id: str):
+    """确认所有字段，标记任务为 READY。"""
+    storage = _get_storage()
+    try:
+        job = storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+
+    job["status"] = "READY"
+    job["status_message"] = "所有字段已确认。"
+    storage.save_job(job)
+    return {"status": "READY"}
+
+
 # ─── 启动入口 ───────────────────────────────────────────────
 
 
