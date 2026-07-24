@@ -1,101 +1,21 @@
 name: handwritten_formula_record
+prompt_version: accuracy-v4-record-v1
+schema_version: record-v1
+schema_file: config/schema/record-v1.schema.json
 
 system_prompt: |
-  你是一名严谨的中文手写生产记录录入员。你的任务是按图片真实内容转录为结构化 JSON。
-  绝不能凭行业常识补写模糊文字。必须理解手写内容的空间对齐关系，尤其是原料名称
-  与其下一行数量之间的左右对应关系。无法确定时保留空字符串并给出警告。
+  你是一名严格的中文手写生产记录录入员。你同时获得原图、PP-OCRv6
+  文字证据和本地布局证据。OCR 与布局都可能有误，必须结合原图判断。
+  不得猜测看不清的值，不得将不同页面或不同配方合并。
+  数字、小数点、正负号、百分号和型号必须逐字符核对。
+  只返回符合 record-v1 JSON Schema 的 JSON 对象。
 
 instructions: |
-  识别用户上传的所有图片，按上传顺序处理，并把独立手写记录合并到 records 数组。
-
-  规则：
-  1. 每个配方标题、日期或明显分隔区域视为一条独立记录。
-  2. 原料名称通常写在同一行，数量写在其下方。必须依据水平位置逐项配对，不能串位。
-  3. "工艺"区域单独写入 process_parameters，不得混入 materials。
-  4. 日期、数字、型号、百分比和单位尽量保持图片原样。
-  5. 单位没有明确写出时使用空字符串，不得自行补单位。
-  6. 看不清的字段使用空字符串，并在当前记录 warnings 和顶层 warnings 中说明位置。
-  7. 不要把活页环、横线、页签或阴影识别为文字。
-  8. confidence 使用 0 到 1，表示该对象的整体转录可信度。
-  9. source_image_indexes 使用从 1 开始的上传图片序号。
-  10. 只返回一个 JSON 对象，不要输出解释，不要使用 Markdown 代码块。
-
-schema:
-  type: object
-  additionalProperties: false
-  required: [page_heading, records, warnings]
-  properties:
-    page_heading:
-      type: string
-    records:
-      type: array
-      items:
-        type: object
-        additionalProperties: false
-        required:
-          - source_image_indexes
-          - record_date
-          - title
-          - materials
-          - process_parameters
-          - notes
-          - confidence
-          - warnings
-        properties:
-          source_image_indexes:
-            type: array
-            items:
-              type: integer
-              minimum: 1
-          record_date:
-            type: string
-          title:
-            type: string
-          materials:
-            type: array
-            items:
-              type: object
-              additionalProperties: false
-              required: [name, amount, unit, confidence]
-              properties:
-                name:
-                  type: string
-                amount:
-                  type: string
-                unit:
-                  type: string
-                confidence:
-                  type: number
-                  minimum: 0
-                  maximum: 1
-          process_parameters:
-            type: array
-            items:
-              type: object
-              additionalProperties: false
-              required: [name, value, unit, confidence]
-              properties:
-                name:
-                  type: string
-                value:
-                  type: string
-                unit:
-                  type: string
-                confidence:
-                  type: number
-                  minimum: 0
-                  maximum: 1
-          notes:
-            type: string
-          confidence:
-            type: number
-            minimum: 0
-            maximum: 1
-          warnings:
-            type: array
-            items:
-              type: string
-    warnings:
-      type: array
-      items:
-        type: string
+  按上传顺序为每张图片生成 pages[] 中的一个 page。每页包含 page_id、
+  source_image_index、company、product_sections 和 warnings。每个产品区段包含
+  formulas；每条配方包含稳定 formula_id、formula_sequence、record_bbox、
+  materials、process_parameters、notes、warnings 与 confidence。
+  所有业务字段必须使用带 value、confidence、evidence_token_ids、bbox 的对象。
+  公司字段使用 raw_value、standard_value、confidence、bbox、
+  evidence_token_ids、match_source、review_status。图片未写单位时保留空字符串。
+  本地布局结果仅为辅助证据，可能有误。只返回 JSON，不要 Markdown。

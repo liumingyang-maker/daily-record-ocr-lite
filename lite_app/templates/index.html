@@ -3,7 +3,8 @@
 {% block content %}
 <section class="upload-section">
     <h2>上传手写笔记</h2>
-    <p class="hint">支持一次上传多张图片（JPG/PNG/WebP），识别过程可能需要几十秒，请耐心等待。</p>
+    <div id="engine-status" class="hint"></div>
+    <p class="hint">支持一次上传多张图片（JPG/PNG/WebP），上传后自动进入后台识别。</p>
     <form action="/jobs" method="post" enctype="multipart/form-data">
         <div class="form-group">
             <label for="files">选择图片：</label>
@@ -19,8 +20,15 @@
                 <option value="180">180°</option>
             </select>
         </div>
-        <button type="submit" class="btn btn-primary">上传并识别</button>
+        <button type="submit" class="btn btn-primary"
+                {% if setup_state == "SETUP_REQUIRED" %}disabled{% endif %}>
+            上传并识别
+        </button>
+        {% if setup_state == "SETUP_REQUIRED" %}
+        <a class="btn" href="/setup">先完成配置</a>
+        {% endif %}
     </form>
+    <p style="margin-top:10px"><a href="/knowledge" class="btn btn-small">知识库管理</a></p>
 </section>
 
 <section class="jobs-section">
@@ -54,4 +62,15 @@
     <p class="empty">暂无任务，请上传图片开始识别。</p>
     {% endif %}
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+fetch('/api/engine-status').then(r=>r.json()).then(d=>{
+    const el=document.getElementById('engine-status');
+    if(d.setup_state==='DEMO_MODE'){el.textContent='演示引擎：Mock OCR + 固定视觉结果';el.style.color='#9a3412';}
+    else if(d.setup_state==='SETUP_REQUIRED'){el.textContent='尚未配置真实视觉模型，识别入口已锁定。';el.style.color='#b06000';}
+    else{el.textContent='OCR: '+d.ocr.configured_provider+' ('+d.ocr.tier+') | Vision: '+d.vision.provider;el.style.color='#137333';}
+}).catch(()=>{});
+</script>
 {% endblock %}

@@ -24,6 +24,26 @@ env/
 # Task data
 data/jobs/*/
 !data/jobs/.gitkeep
+data/cache/
+data/settings.json
+data/secrets.env
+data/setup_health.json
+data/last-doctor.json
+backups/
+
+# Knowledge DB
+data/knowledge.sqlite3
+data/knowledge.sqlite3-wal
+data/knowledge.sqlite3-shm
+
+# Models
+data/models/*
+!data/models/.gitkeep
+
+# Private test fixtures
+tests/fixtures/private/*
+!tests/fixtures/private/.gitkeep
+!tests/fixtures/private/golden_cases.yaml
 
 # OS
 .DS_Store
@@ -31,4 +51,3 @@ Thumbs.db
 
 # Legacy
 *.db
-*.sqlite3

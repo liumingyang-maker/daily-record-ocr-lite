@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/liumingyang-maker/daily-record-ocr-lite/config/schema/recheck-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "fields"],
+  "properties": {
+    "schema_version": {"const": "recheck-v1"},
+    "fields": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field_id", "value", "confidence"],
+        "properties": {
+          "field_id": {"type": "string"},
+          "value": {"type": "string"},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+        }
+      }
+    }
+  }
+}

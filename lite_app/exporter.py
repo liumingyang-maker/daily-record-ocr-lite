@@ -7,11 +7,15 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from openpyxl import Workbook, load_workbook
+from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import column_index_from_string
 
-from .config import PROJECT_ROOT, load_export_config
+from .config import PROJECT_ROOT
+from .excel_safety import safe_excel_value
+from .final_result import FinalResultError, FinalResultService
+from .readiness import collect_unresolved_fields, evaluate_ready_gate
+from .status import JobStatus
 from .storage import JobStorage
 
 logger = logging.getLogger(__name__)
@@ -19,9 +23,13 @@ logger = logging.getLogger(__name__)
 MAX_AUTO_WIDTH = 50
 
 
-class ExportError(Exception):
+class ExportError(RuntimeError):
     """导出错误。"""
     pass
+
+
+class UnresolvedReviewError(ExportError):
+    """Formal export was requested while reviewable fields remain."""
 
 
 def export_job(job_id: str, storage: JobStorage | None = None) -> str:
@@ -34,57 +42,71 @@ def export_job(job_id: str, storage: JobStorage | None = None) -> str:
         storage = JobStorage()
 
     job = storage.get_job(job_id)
-    result = storage.load_result(job_id)
-    if result is None:
-        raise ExportError("识别结果不存在，请先完成识别。")
-
-    export_config = load_export_config()
-    excel_cfg = export_config.get("excel", {})
-
-    template_path_str = excel_cfg.get("template_path", "")
-    keep_vba = excel_cfg.get("keep_vba", False)
-    output_name = excel_cfg.get("output_name", "recognized-{job_id}.xlsx")
-    output_name = output_name.replace("{job_id}", job_id)
-
     job_dir = storage.get_job_dir(job_id)
-    output_path = job_dir / output_name
+    demo_mode = bool(job.get("demo_mode"))
+    try:
+        result = FinalResultService(job_dir).load()
+    except FinalResultError as exc:
+        raise ExportError("正式导出要求 review/final_result.json。") from exc
+    if not demo_mode and job.get("status") != JobStatus.READY:
+        raise UnresolvedReviewError(
+            f"正式导出仅允许 READY 任务；当前状态为 {job.get('status', '')}"
+        )
 
-    # 加载或创建工作簿
-    if template_path_str:
-        template_path = Path(template_path_str)
-        if not template_path.is_absolute():
-            template_path = PROJECT_ROOT / template_path
-        if not template_path.exists():
-            raise ExportError(f"Excel 模板不存在: {template_path}")
-        wb = load_workbook(str(template_path), keep_vba=keep_vba)
-        is_template = True
-    else:
-        wb = Workbook()
-        # 删除默认 Sheet
-        if "Sheet" in wb.sheetnames:
-            del wb["Sheet"]
-        is_template = False
+    unresolved = collect_unresolved_fields(result)
+    if not demo_mode:
+        gate = evaluate_ready_gate(job, result, job_dir)
+        if not gate.ready:
+            raise UnresolvedReviewError("；".join(gate.reasons))
+    if unresolved and not demo_mode:
+        raise UnresolvedReviewError(
+            f"仍有 {len(unresolved)} 个未确认字段，正式导出已阻止。"
+        )
 
-    # 写入单元格映射
-    cells = excel_cfg.get("cells", [])
-    _write_cells(wb, cells, result)
+    prefix = "DEMO-" if demo_mode else ""
+    output_name = f"{prefix}recognized-{job_id}.xlsx"
+    output_relative = Path("export") / output_name
+    output_path = job_dir / output_relative
+    from .grouping.exporter import export_grouped_excel
+    from .grouping.review import build_reviewed_business_entities
 
-    # 写入表格映射
-    tables = excel_cfg.get("tables", [])
-    for table_cfg in tables:
-        _write_table(wb, table_cfg, result, is_template)
-
-    # 保存
-    wb.save(str(output_path))
+    entities = build_reviewed_business_entities(job_dir, job_id, result)
+    job["status"] = JobStatus.EXPORTING
+    job["status_message"] = "正在从正式 FinalResult 生成 Excel。"
+    storage.save_job(job)
+    export_grouped_excel(entities, output_path)
     logger.info("导出完成: %s", output_path)
 
     # 更新任务状态
-    job["export_file"] = output_name
-    job["status"] = "EXPORTED"
+    job["export_file"] = output_relative.as_posix()
+    job["status"] = JobStatus.EXPORTED
     job["status_message"] = f"已导出: {output_name}"
     storage.save_job(job)
 
-    return output_name
+    return output_relative.as_posix()
+
+
+def _iter_final_fields(result: dict[str, Any]):
+    for page in result.get("pages", []):
+        for section in page.get("product_sections", []):
+            product = section.get("product_or_series")
+            if isinstance(product, dict):
+                yield product
+            for formula in section.get("formulas", []):
+                for name in ("record_date", "notes"):
+                    field = formula.get(name)
+                    if isinstance(field, dict):
+                        yield field
+                for material in formula.get("materials", []):
+                    for name in ("name", "amount", "unit"):
+                        field = material.get(name)
+                        if isinstance(field, dict):
+                            yield field
+                for parameter in formula.get("process_parameters", []):
+                    for name in ("name", "value", "unit"):
+                        field = parameter.get(name)
+                        if isinstance(field, dict):
+                            yield field
 
 
 def _get_sheet(wb: Workbook, sheet_name: str) -> Any:
@@ -144,7 +166,7 @@ def _write_cells(
         expr = cell_cfg["value"]
         ws = _get_sheet(wb, sheet_name)
         value = _resolve_value(expr, {}, result, None, 0, 0)
-        ws[cell_ref] = value
+        ws[cell_ref] = safe_excel_value(value)
 
 
 def _write_table(
@@ -194,7 +216,11 @@ def _write_table(
                     value = _resolve_value(
                         expr, item, result, record, item_idx, parent_idx
                     )
-                    ws.cell(row=current_row, column=col_idx, value=value)
+                    ws.cell(
+                        row=current_row,
+                        column=col_idx,
+                        value=safe_excel_value(value),
+                    )
                 current_row += 1
     else:
         # 直接写记录
@@ -206,7 +232,11 @@ def _write_table(
                 value = _resolve_value(
                     expr, record, result, None, item_idx, 0
                 )
-                ws.cell(row=current_row, column=col_idx, value=value)
+                ws.cell(
+                    row=current_row,
+                    column=col_idx,
+                    value=safe_excel_value(value),
+                )
             current_row += 1
 
     # 自动列宽
@@ -230,3 +260,92 @@ def _auto_column_width(ws: Any, columns: list[dict[str, Any]]) -> None:
         # 中文字符占约2个宽度
         width = min(max_len + 2, MAX_AUTO_WIDTH)
         ws.column_dimensions[col_letter].width = max(width, 8)
+
+
+def _write_audit_sheet(wb: Workbook, job_dir: Path, is_template: bool) -> None:
+    """写入识别审查 Sheet。"""
+    ws = _get_sheet(wb, "识别审查")
+    headers = ["记录", "字段ID", "字段类型", "OCR", "OCR置信度", "VLM", "历史候选", "最终值", "来源", "状态"]
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        if not is_template:
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+
+    # 读取融合结果
+    fusion_path = job_dir / "fusion" / "result.json"
+    if not fusion_path.exists():
+        return
+
+    try:
+        fusion_data = json.loads(fusion_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+
+    fields = fusion_data.get("fields", [])
+    row = 2
+    for f in fields:
+        candidates = f.get("candidates", [])
+        ocr_val = ""
+        ocr_conf = ""
+        vlm_val = ""
+        history_val = ""
+        for c in candidates:
+            src = c.get("source", "")
+            if src.startswith("ocr"):
+                ocr_val = c.get("value", "")
+                ocr_conf = str(c.get("confidence", ""))
+            elif src == "vlm":
+                vlm_val = c.get("value", "")
+            elif src.startswith("history"):
+                history_val = c.get("value", "")
+
+        ws.cell(row=row, column=1, value=f.get("field_id", "").split("_")[0] if "_" in f.get("field_id", "") else "")
+        ws.cell(row=row, column=2, value=f.get("field_id", ""))
+        ws.cell(row=row, column=3, value=f.get("field_type", ""))
+        ws.cell(row=row, column=4, value=ocr_val)
+        ws.cell(row=row, column=5, value=ocr_conf)
+        ws.cell(row=row, column=6, value=vlm_val)
+        ws.cell(row=row, column=7, value=history_val)
+        ws.cell(row=row, column=8, value=f.get("final_value", ""))
+        ws.cell(row=row, column=9, value=f.get("final_source", ""))
+        ws.cell(row=row, column=10, value=f.get("status", ""))
+
+        # 冲突字段标红
+        if f.get("status") == "CONFLICT":
+            for col in range(1, 11):
+                ws.cell(row=row, column=col).fill = PatternFill(
+                    start_color="FFC7CE", end_color="FFC7CE", fill_type="solid"
+                )
+        row += 1
+
+
+def _write_correction_sheet(wb: Workbook, job_id: str, is_template: bool) -> None:
+    """写入修正日志 Sheet。"""
+    ws = _get_sheet(wb, "修正日志")
+    headers = ["记录", "字段ID", "原值", "新值", "OCR", "VLM", "选择来源", "修改时间"]
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        if not is_template:
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+
+    # 读取修正日志
+    try:
+        from .knowledge.database import KnowledgeDB
+        db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+        db.initialize()
+        corrections = db.get_corrections_for_job(job_id)
+        row = 2
+        for c in corrections:
+            ws.cell(row=row, column=1, value=c.get("record_id", ""))
+            ws.cell(row=row, column=2, value=c.get("field_id", ""))
+            ws.cell(row=row, column=3, value=c.get("old_value", ""))
+            ws.cell(row=row, column=4, value=c.get("new_value", ""))
+            ws.cell(row=row, column=5, value=c.get("ocr_value", ""))
+            ws.cell(row=row, column=6, value=c.get("vlm_value", ""))
+            ws.cell(row=row, column=7, value=c.get("chosen_source", ""))
+            ws.cell(row=row, column=8, value=c.get("created_at", ""))
+            row += 1
+    except Exception as e:
+        logger.warning("修正日志读取失败: %s", e)

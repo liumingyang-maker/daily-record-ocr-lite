@@ -9,12 +9,31 @@
 <body>
     <div class="container">
         <header>
-            <h1><a href="/">手写记录 OCR</a></h1>
+            <div class="header-row">
+                <h1><a href="/">手写记录 OCR</a></h1>
+                <nav>
+                    <a href="/">任务</a>
+                    <a href="/settings">设置</a>
+                    <a href="/knowledge">知识库</a>
+                </nav>
+            </div>
             <p class="subtitle">上传手写笔记照片 → 视觉模型识别 → 人工校对 → 导出 Excel</p>
         </header>
+        {% if demo_mode %}
+        <div class="global-banner demo-banner" role="alert">
+            <strong>演示模式：</strong>当前使用固定 Mock 结果，不代表真实识别，也不对应上传图片。
+            导出文件会带有 <code>DEMO-</code> 前缀。
+        </div>
+        {% elif setup_state == "SETUP_REQUIRED" %}
+        <div class="global-banner setup-banner" role="alert">
+            <strong>尚未完成配置。</strong>真实识别已锁定，请前往
+            <a href="/setup">安装后配置</a>。
+        </div>
+        {% endif %}
         <main>
             {% block content %}{% endblock %}
         </main>
+        <footer>daily-record-ocr-lite v{{ version }}</footer>
     </div>
     {% block scripts %}{% endblock %}
 </body>

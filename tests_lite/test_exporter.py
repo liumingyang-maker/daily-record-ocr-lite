@@ -1,35 +1,17 @@
-"""Excel 导出模块测试。"""
+"""Excel export tests with FinalResult as the only formal source."""
 
+from __future__ import annotations
+
+import copy
 import json
-import pytest
 from pathlib import Path
 
-from openpyxl import Workbook, load_workbook
+import pytest
+from openpyxl import load_workbook
 
-from lite_app.exporter import ExportError, export_job, _resolve_value
-
-
-SAMPLE_RESULT = {
-    "page_heading": "测试标题",
-    "records": [
-        {
-            "source_image_indexes": [1],
-            "record_date": "24.7.10",
-            "title": "配方A",
-            "materials": [
-                {"name": "PA66", "amount": "60", "unit": "kg", "confidence": 0.95},
-                {"name": "GF30", "amount": "30", "unit": "", "confidence": 0.90},
-            ],
-            "process_parameters": [
-                {"name": "转速", "value": "50", "unit": "Hz", "confidence": 0.88},
-            ],
-            "notes": "备注内容",
-            "confidence": 0.92,
-            "warnings": ["警告1"],
-        }
-    ],
-    "warnings": ["全局警告"],
-}
+from lite_app.exporter import ExportError, _resolve_value, export_job
+from lite_app.final_result import FinalResultService, project_final_result
+from lite_app.readiness import iter_final_fields
 
 
 class TestResolveValue:
@@ -60,72 +42,147 @@ class TestResolveValue:
         assert result == '["a", "b"]'
 
 
+@pytest.fixture
+def strict_result() -> dict:
+    root = Path(__file__).resolve().parents[1]
+    result = json.loads((root / "config" / "mock_result.json").read_text("utf-8"))
+    page = result["pages"][0]
+    page["company"]["raw_value"] = "测试公司"
+    page["company"]["standard_value"] = "测试公司"
+    section = page["product_sections"][0]
+    section["product_or_series"]["value"] = "测试系列"
+    formula = section["formulas"][0]
+    formula["record_date"]["value"] = "24.7.10"
+    first = formula["materials"][0]
+    first["name"]["value"] = "PA66"
+    first["amount"]["value"] = "60"
+    first["unit"]["value"] = "kg"
+    second = copy.deepcopy(first)
+    second["material_id"] = "material_002"
+    second["name"]["value"] = "GF30"
+    second["amount"]["value"] = "30"
+    second["unit"]["value"] = ""
+    formula["materials"].append(second)
+    formula["process_parameters"] = [
+        {
+            "parameter_id": "parameter_001",
+            "name": {
+                "value": "转速",
+                "confidence": 0.95,
+                "evidence_token_ids": [],
+                "bbox": None,
+            },
+            "value": {
+                "value": "50",
+                "confidence": 0.95,
+                "evidence_token_ids": [],
+                "bbox": None,
+            },
+            "unit": {
+                "value": "Hz",
+                "confidence": 0.95,
+                "evidence_token_ids": [],
+                "bbox": None,
+            },
+            "warnings": [],
+        }
+    ]
+    formula["notes"]["value"] = "备注内容"
+    return result
+
+
 class TestExportJob:
     @pytest.fixture
-    def job_with_result(self, storage):
-        """创建带有识别结果的任务。"""
+    def job_with_result(self, storage, strict_result):
         job = storage.create_job()
-        storage.save_result(job["id"], SAMPLE_RESULT)
+        strict_result["pages"][0]["product_sections"][0]["formulas"][0][
+            "formula_id"
+        ] = f"{job['id']}__page_001__formula_001"
+        final = project_final_result(job["id"], strict_result, {"fields": []})
+        final["recognition_run_id"] = "export-test-run"
+        for _, field in iter_final_fields(final):
+            field["status"] = "MANUAL_CONFIRMED"
+            field["review_status"] = "MANUAL_CONFIRMED"
+        FinalResultService(storage.get_job_dir(job["id"])).replace(final)
         job["status"] = "READY"
+        job["demo_mode"] = False
+        job["images"] = [{"source": "source/source_01_test.jpg"}]
+        job["recognition_run_id"] = "export-test-run"
+        job["final_result_run_id"] = "export-test-run"
+        job["ocr_engine"] = {
+            "effective_provider": "paddleocr_v6",
+            "loaded": True,
+        }
+        job["vision_engine"] = {
+            "provider": "openai_compatible",
+            "model": "vision-model",
+            "healthy": True,
+        }
         storage.save_job(job)
         return job
 
     def test_export_creates_file(self, job_with_result, storage):
         filename = export_job(job_with_result["id"], storage)
         assert filename.endswith(".xlsx")
-        job_dir = storage.get_job_dir(job_with_result["id"])
-        assert (job_dir / filename).exists()
+        assert (storage.get_job_dir(job_with_result["id"]) / filename).exists()
 
-    def test_export_creates_three_sheets(self, job_with_result, storage):
+    def test_export_creates_five_sheets(self, job_with_result, storage):
         filename = export_job(job_with_result["id"], storage)
-        job_dir = storage.get_job_dir(job_with_result["id"])
-        wb = load_workbook(str(job_dir / filename))
-        assert "记录汇总" in wb.sheetnames
-        assert "配方明细" in wb.sheetnames
-        assert "工艺参数" in wb.sheetnames
+        workbook = load_workbook(storage.get_job_dir(job_with_result["id"]) / filename)
+        assert workbook.sheetnames == [
+            "记录汇总",
+            "配方明细",
+            "工艺参数",
+            "识别审查",
+            "修正日志",
+        ]
 
-    def test_export_cell_mapping(self, job_with_result, storage):
+    def test_export_summary(self, job_with_result, storage):
         filename = export_job(job_with_result["id"], storage)
-        job_dir = storage.get_job_dir(job_with_result["id"])
-        wb = load_workbook(str(job_dir / filename))
-        ws = wb["记录汇总"]
-        assert ws["B1"].value == "测试标题"
-
-    def test_export_records_table(self, job_with_result, storage):
-        filename = export_job(job_with_result["id"], storage)
-        job_dir = storage.get_job_dir(job_with_result["id"])
-        wb = load_workbook(str(job_dir / filename))
-        ws = wb["记录汇总"]
-        # 表头在第3行
-        assert ws.cell(row=3, column=1).value == "序号"
-        # 数据在第4行
-        assert ws.cell(row=4, column=1).value == 1
-        assert ws.cell(row=4, column=3).value == "24.7.10"
-        assert ws.cell(row=4, column=4).value == "配方A"
+        worksheet = load_workbook(
+            storage.get_job_dir(job_with_result["id"]) / filename
+        )["记录汇总"]
+        assert worksheet["A1"].value == "公司"
+        assert worksheet["A2"].value == "测试公司"
+        assert worksheet["B2"].value == "测试系列"
+        assert worksheet["D2"].value == "24.7.10"
 
     def test_export_materials_expand(self, job_with_result, storage):
         filename = export_job(job_with_result["id"], storage)
-        job_dir = storage.get_job_dir(job_with_result["id"])
-        wb = load_workbook(str(job_dir / filename))
-        ws = wb["配方明细"]
-        # 表头
-        assert ws.cell(row=1, column=5).value == "原料名称"
-        # 数据
-        assert ws.cell(row=2, column=5).value == "PA66"
-        assert ws.cell(row=2, column=6).value == "60"
-        assert ws.cell(row=3, column=5).value == "GF30"
-        # 父记录字段
-        assert ws.cell(row=2, column=1).value == 1  # parent_index
-        assert ws.cell(row=2, column=2).value == "24.7.10"  # parent.record_date
+        worksheet = load_workbook(
+            storage.get_job_dir(job_with_result["id"]) / filename
+        )["配方明细"]
+        assert worksheet["F1"].value == "原料名称"
+        assert worksheet["G1"].value == "数量"
+        assert worksheet["F2"].value == "PA66"
+        assert worksheet["G2"].value == "60"
+        assert worksheet["F3"].value == "GF30"
+        assert worksheet["G3"].value == "30"
 
     def test_export_process_expand(self, job_with_result, storage):
         filename = export_job(job_with_result["id"], storage)
+        worksheet = load_workbook(
+            storage.get_job_dir(job_with_result["id"]) / filename
+        )["工艺参数"]
+        assert worksheet["F2"].value == "转速"
+        assert worksheet["G2"].value == "50"
+        assert worksheet["H2"].value == "Hz"
+
+    def test_export_escapes_untrusted_excel_formulas(self, job_with_result, storage):
         job_dir = storage.get_job_dir(job_with_result["id"])
-        wb = load_workbook(str(job_dir / filename))
-        ws = wb["工艺参数"]
-        assert ws.cell(row=2, column=5).value == "转速"
-        assert ws.cell(row=2, column=6).value == "50"
-        assert ws.cell(row=2, column=7).value == "Hz"
+        service = FinalResultService(job_dir)
+        final = service.load()
+        field = final["pages"][0]["product_sections"][0]["formulas"][0][
+            "materials"
+        ][0]["name"]
+        field["value"] = '=HYPERLINK("https://evil.example","click")'
+        field["status"] = "MANUAL_CONFIRMED"
+        service.replace(final)
+
+        filename = export_job(job_with_result["id"], storage)
+        cell = load_workbook(job_dir / filename)["配方明细"]["F2"]
+        assert cell.data_type == "s"
+        assert cell.value.startswith("'=HYPERLINK")
 
     def test_export_updates_job_status(self, job_with_result, storage):
         export_job(job_with_result["id"], storage)
@@ -133,118 +190,52 @@ class TestExportJob:
         assert job["status"] == "EXPORTED"
         assert job["export_file"] is not None
 
-    def test_export_no_result_raises(self, storage):
+    def test_failed_job_cannot_export_stale_final_result(
+        self, job_with_result, storage
+    ):
+        job_with_result["status"] = "FAILED_SCHEMA"
+        job_with_result["validation_errors"] = [{"severity": "fatal"}]
+        storage.save_job(job_with_result)
+
+        with pytest.raises(ExportError, match="READY"):
+            export_job(job_with_result["id"], storage)
+        assert storage.get_job(job_with_result["id"])["status"] == "FAILED_SCHEMA"
+
+    def test_company_review_status_blocks_formal_export(
+        self, job_with_result, storage
+    ):
+        service = FinalResultService(storage.get_job_dir(job_with_result["id"]))
+        final = service.load()
+        final["pages"][0]["company"]["review_status"] = "NEED_REVIEW"
+        service.replace(final)
+
+        with pytest.raises(ExportError, match="未解决字段"):
+            export_job(job_with_result["id"], storage)
+
+    def test_export_no_final_result_raises(self, storage):
         job = storage.create_job()
-        with pytest.raises(ExportError, match="不存在"):
+        with pytest.raises(ExportError, match="final_result"):
             export_job(job["id"], storage)
 
-    def test_export_with_template(self, storage, tmp_path, monkeypatch):
-        """使用已有模板导出：验证原内容保留、新数据写入、源模板不被修改。"""
-        # 创建带有原内容和额外 Sheet 的模板
-        template = tmp_path / "template.xlsx"
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "记录汇总"
-        ws["A1"] = "原有标题"
-        ws["Z1"] = "额外内容"
-        extra_ws = wb.create_sheet("自定义Sheet")
-        extra_ws["A1"] = "自定义数据"
-        wb.create_sheet("配方明细")
-        wb.create_sheet("工艺参数")
-        wb.save(str(template))
+    def test_compat_result_cannot_override_final_result(
+        self, job_with_result, storage
+    ):
+        job_dir = storage.get_job_dir(job_with_result["id"])
+        compatibility = json.loads((job_dir / "result.json").read_text("utf-8"))
+        compatibility["pages"][0]["product_sections"][0]["formulas"][0][
+            "materials"
+        ][0]["amount"]["value"] = "999"
+        (job_dir / "result.json").write_text(
+            json.dumps(compatibility, ensure_ascii=False), encoding="utf-8"
+        )
 
-        # 记录模板原始大小
-        original_size = template.stat().st_size
-
-        # 创建任务
-        job = storage.create_job()
-        storage.save_result(job["id"], SAMPLE_RESULT)
-        job["status"] = "READY"
-        storage.save_job(job)
-
-        # monkeypatch 导出配置指向模板
-        import lite_app.exporter as exp_module
-
-        def mock_load_export():
-            return {
-                "excel": {
-                    "template_path": str(template),
-                    "keep_vba": False,
-                    "output_name": "out-{job_id}.xlsx",
-                    "cells": [
-                        {"sheet": "记录汇总", "cell": "B1", "value": "$root.page_heading"}
-                    ],
-                    "tables": [
-                        {
-                            "name": "records",
-                            "sheet": "记录汇总",
-                            "source": "records",
-                            "start_row": 3,
-                            "include_header": True,
-                            "auto_width": False,
-                            "columns": [
-                                {"column": "A", "header": "序号", "value": "$index"},
-                                {"column": "B", "header": "日期", "value": "record_date"},
-                            ],
-                        }
-                    ],
-                }
-            }
-
-        monkeypatch.setattr(exp_module, "load_export_config", mock_load_export)
-
-        # 执行导出
-        filename = export_job(job["id"], storage)
-        job_dir = storage.get_job_dir(job["id"])
-        output_path = job_dir / filename
-        assert output_path.exists()
-
-        # 验证输出文件
-        out_wb = load_workbook(str(output_path))
-        out_ws = out_wb["记录汇总"]
-        # 原内容保留
-        assert out_ws["A1"].value == "原有标题"
-        assert out_ws["Z1"].value == "额外内容"
-        # 新写入的数据
-        assert out_ws["B1"].value == "测试标题"
-        assert out_ws.cell(row=3, column=1).value == "序号"
-        assert out_ws.cell(row=4, column=1).value == 1
-        assert out_ws.cell(row=4, column=2).value == "24.7.10"
-        # 额外 Sheet 保留
-        assert "自定义Sheet" in out_wb.sheetnames
-        assert out_wb["自定义Sheet"]["A1"].value == "自定义数据"
-
-        # 源模板未被修改
-        assert template.stat().st_size == original_size
-
-    def test_export_template_not_exists_raises(self, storage, monkeypatch):
-        """模板不存在时报错。"""
-        job = storage.create_job()
-        storage.save_result(job["id"], SAMPLE_RESULT)
-        job["status"] = "READY"
-        storage.save_job(job)
-
-        # 通过 monkeypatch 修改配置
-        import lite_app.exporter as exp_module
-
-        def mock_load_export():
-            return {
-                "excel": {
-                    "template_path": "/nonexistent/path/template.xlsx",
-                    "keep_vba": False,
-                    "output_name": "out-{job_id}.xlsx",
-                    "cells": [],
-                    "tables": [],
-                }
-            }
-
-        monkeypatch.setattr(exp_module, "load_export_config", mock_load_export)
-        with pytest.raises(ExportError, match="不存在"):
-            export_job(job["id"], storage)
+        filename = export_job(job_with_result["id"], storage)
+        worksheet = load_workbook(job_dir / filename)["配方明细"]
+        assert worksheet["G2"].value == "60"
+        assert worksheet["G2"].value != "999"
 
     def test_output_in_job_dir(self, job_with_result, storage):
         filename = export_job(job_with_result["id"], storage)
-        job_dir = storage.get_job_dir(job_with_result["id"])
-        output_path = job_dir / filename
+        output_path = storage.get_job_dir(job_with_result["id"]) / filename
         assert output_path.exists()
-        assert output_path.parent == job_dir
+        assert output_path.parent == storage.get_job_dir(job_with_result["id"]) / "export"

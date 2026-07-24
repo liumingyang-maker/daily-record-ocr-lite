@@ -1,0 +1,29 @@
+# 固定模板识别配置示例
+# 用于拍摄固定印刷生产记录表的场景
+
+template:
+  id: daily_record_v2
+  canonical_size: [1800, 2500]
+
+  anchors:
+    - type: text
+      value: "每日生产记录"
+      expected_region: [0.20, 0.02, 0.80, 0.12]
+
+  record_blocks:
+    - id: block_1
+      rect: [0.03, 0.12, 0.97, 0.37]
+    - id: block_2
+      rect: [0.03, 0.39, 0.97, 0.64]
+    - id: block_3
+      rect: [0.03, 0.66, 0.97, 0.92]
+
+  fields:
+    - key: date
+      rect_in_record: [0.05, 0.02, 0.20, 0.10]
+    - key: product
+      rect_in_record: [0.22, 0.02, 0.55, 0.10]
+    - key: materials
+      rect_in_record: [0.05, 0.15, 0.95, 0.60]
+    - key: process
+      rect_in_record: [0.05, 0.65, 0.95, 0.95]

@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags: ["v1.0.0"]
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Verify tag is the tested master commit
+        run: |
+          git fetch origin master
+          test "$GITHUB_REF_NAME" = "v1.0.0"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master
+      - name: Install development dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Release source gate
+        run: python scripts/verify_release.py
+
+  real-ocr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PADDLE_PDX_MODEL_SOURCE: BOS
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Cache Paddle models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.paddlex
+            ~/.paddleocr
+          key: paddle-ppocrv6-medium-${{ runner.os }}-py311-v1
+      - name: Install real OCR dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-ocr.txt
+          python -m pip install pytest pytest-asyncio
+      - name: Paddle runtime check
+        run: python -c "import paddle; paddle.utils.run_check()"
+      - name: Real inference (must include a passing test)
+        run: |
+          python -m pytest -m real_ocr -q -s --junitxml=real-ocr-junit.xml
+          python scripts/assert_junit_passed.py real-ocr-junit.xml
+
+  windows-install:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install CPU OCR product path
+        shell: powershell
+        run: .\install\install-windows.ps1 -OcrMode Cpu
+      - name: Verify runtime, application health, and doctor gate
+        shell: powershell
+        run: |
+          .\.venv\Scripts\python.exe -c "import paddle; paddle.utils.run_check()"
+          .\.venv\Scripts\python.exe -c "from fastapi.testclient import TestClient; from lite_app.main import app; r=TestClient(app).get('/health'); assert r.status_code == 200; assert r.json()['version'] == '1.0.0'"
+          .\.venv\Scripts\python.exe scripts\doctor.py --json --gate
+
+  publish:
+    needs: [core, real-ocr, windows-install]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build bundle and checksum from gated source
+        run: python scripts/create_release_bundle.py --version 1.0.0
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          name: daily-record-ocr-lite v1.0.0
+          body_path: docs/RELEASE_NOTES_V1.0.0.md
+          fail_on_unmatched_files: true
+          files: |
+            dist/daily-record-ocr-lite-v1.0.0-source.zip
+            dist/SHA256SUMS.txt
+            dist/INSTALL_WITH_AI.txt
+            dist/RELEASE_NOTES.md

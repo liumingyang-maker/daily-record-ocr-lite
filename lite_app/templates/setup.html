@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}首次启动向导 - 手写记录 OCR{% endblock %}
+{% block content %}
+<section class="settings-card">
+    <h2>首次启动向导</h2>
+    <p class="hint">
+        当前配置状态：<strong>{{ status.state }}</strong>。真实识别必须同时通过 OCR
+        和视觉模型测试；Mock 只能用于显式演示。
+    </p>
+</section>
+
+<section class="settings-card">
+    <h3>Step 1 · 系统状态</h3>
+    <div class="settings-grid">
+        <div><strong>应用版本</strong><br>{{ system.app_version }}</div>
+        <div><strong>Python</strong><br>{{ system.python }}</div>
+        <div><strong>操作系统</strong><br>{{ system.platform }}</div>
+        <div><strong>Paddle</strong><br>{{ system.paddle }}</div>
+        <div><strong>PaddleOCR</strong><br>{{ system.paddleocr }}</div>
+        <div><strong>OCR Provider</strong><br>{{ system.ocr.provider }}</div>
+        <div><strong>模型</strong><br>{{ system.ocr.det_model }} / {{ system.ocr.rec_model }}</div>
+        <div><strong>模型已加载</strong><br>{{ "是" if system.ocr.loaded else "否" }}</div>
+    </div>
+</section>
+
+<section class="settings-card">
+    <h3>Step 2 · 视觉模型</h3>
+    <p class="hint">Preset 只预填兼容地址；模型名和 API Key 由你提供。</p>
+    <div class="settings-grid">
+        <div class="form-group"><label for="vision-preset">Preset</label>
+            <select id="vision-preset">
+                <option value="custom">OpenAI-compatible / 自定义</option>
+                <option value="ollama">Ollama 本地</option>
+                <option value="bailian">阿里云百炼兼容模式</option>
+            </select>
+        </div>
+        <div class="form-group"><label for="vision-base-url">Base URL</label>
+            <input id="vision-base-url" value="{{ settings.vision.base_url }}" placeholder="https://…/v1">
+        </div>
+        <div class="form-group"><label for="vision-endpoint">Endpoint</label>
+            <input id="vision-endpoint" value="{{ settings.vision.endpoint }}">
+        </div>
+        <div class="form-group"><label for="vision-model">Model</label>
+            <input id="vision-model" value="{{ settings.vision.model }}" placeholder="填写实际视觉模型名">
+        </div>
+        <div class="form-group"><label for="vision-key">API Key</label>
+            <input id="vision-key" type="password" autocomplete="new-password"
+                   placeholder="{% if settings.vision.api_key_configured %}已配置（留空不修改）{% else %}尚未配置{% endif %}">
+        </div>
+    </div>
+    <button class="btn btn-primary" id="save-vision">保存视觉配置</button>
+</section>
+
+<section class="settings-card">
+    <h3>Step 3 · 测试视觉连接</h3>
+    <p class="warning-text">测试会发送一张内置小图，远程 API 可能产生少量费用。</p>
+    <button class="btn" id="test-vision">测试视觉模型</button>
+</section>
+
+<section class="settings-card">
+    <h3>Step 4 · OCR 测试</h3>
+    <div class="settings-grid">
+        <div class="form-group"><label for="ocr-tier">PP-OCRv6 tier</label>
+            <select id="ocr-tier">
+                {% for tier in ["tiny", "small", "medium"] %}
+                <option value="{{ tier }}" {% if settings.ocr.tier == tier %}selected{% endif %}>{{ tier }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group"><label for="ocr-device">Device</label>
+            <input id="ocr-device" value="{{ settings.ocr.device }}" placeholder="cpu / gpu:0">
+        </div>
+        <div class="form-group"><label for="ocr-score">最小置信度</label>
+            <input id="ocr-score" type="number" min="0" max="1" step="0.01"
+                   value="{{ settings.ocr.minimum_score }}">
+        </div>
+    </div>
+    <div class="settings-actions">
+        <button class="btn btn-primary" id="save-ocr">保存 OCR 配置</button>
+        <button class="btn" id="test-ocr">识别内置清晰样例</button>
+    </div>
+    <img id="ocr-overlay" alt="OCR 检测框叠加图" hidden>
+</section>
+
+<section class="settings-card">
+    <h3>Step 5 · 完成</h3>
+    <p id="ready-state">尚未完成本次 OCR 与视觉模型测试。</p>
+    <p id="ready-success" hidden><strong>系统已就绪</strong>，可以返回首页处理真实图片。</p>
+    <div class="settings-actions">
+        <a class="btn btn-primary" href="/">返回首页</a>
+        <a class="btn" href="/settings">打开完整设置</a>
+        <button class="btn" id="enable-demo">进入演示模式</button>
+    </div>
+    <pre class="settings-output" id="setup-output"></pre>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+const output = document.getElementById('setup-output');
+let visionHealthy = false;
+let ocrHealthy = false;
+const presets = {
+  custom: {base_url: '', endpoint: '/chat/completions'},
+  ollama: {base_url: 'http://127.0.0.1:11434/v1', endpoint: '/chat/completions'},
+  bailian: {base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', endpoint: '/chat/completions'}
+};
+function updateReady() {
+  const ready = visionHealthy && ocrHealthy;
+  document.getElementById('ready-success').hidden = !ready;
+  document.getElementById('ready-state').hidden = ready;
+}
+async function call(url, method, payload) {
+  output.textContent = '执行中…';
+  const response = await fetch(url, {
+    method,
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload || {})
+  });
+  const data = await response.json();
+  output.textContent = JSON.stringify(data, null, 2);
+  return {response, data};
+}
+document.getElementById('vision-preset').onchange = event => {
+  const preset = presets[event.target.value];
+  document.getElementById('vision-base-url').value = preset.base_url;
+  document.getElementById('vision-endpoint').value = preset.endpoint;
+};
+document.getElementById('save-vision').onclick = async () => {
+  const payload = {
+    provider: 'openai_compatible',
+    base_url: document.getElementById('vision-base-url').value,
+    endpoint: document.getElementById('vision-endpoint').value,
+    model: document.getElementById('vision-model').value
+  };
+  const key = document.getElementById('vision-key').value;
+  if (key) payload.api_key = key;
+  const result = await call('/api/settings/vision', 'PUT', payload);
+  visionHealthy = false;
+  updateReady();
+  return result;
+};
+document.getElementById('test-vision').onclick = async () => {
+  const {response, data} = await call('/api/settings/test-vision', 'POST', {});
+  visionHealthy = response.ok && data.status === 'OK' &&
+    data.vision_capability && data.json_response_capability;
+  updateReady();
+};
+document.getElementById('save-ocr').onclick = async () => {
+  const result = await call('/api/settings/ocr', 'PUT', {
+    provider: 'paddleocr_v6',
+    tier: document.getElementById('ocr-tier').value,
+    device: document.getElementById('ocr-device').value,
+    minimum_score: Number(document.getElementById('ocr-score').value)
+  });
+  ocrHealthy = false;
+  updateReady();
+  return result;
+};
+document.getElementById('test-ocr').onclick = async () => {
+  const {response, data} = await call('/api/settings/test-ocr', 'POST', {});
+  ocrHealthy = response.ok && data.status === 'OK' && data.token_count > 0;
+  const overlay = document.getElementById('ocr-overlay');
+  if (data.overlay_url) {
+    overlay.src = data.overlay_url;
+    overlay.hidden = false;
+  }
+  updateReady();
+};
+document.getElementById('enable-demo').onclick = async () => {
+  if (!window.confirm('演示结果与上传图片无关。确认进入演示模式？')) return;
+  const {response} = await call('/api/settings/demo/enable', 'POST', {});
+  if (response.ok) window.location.href = '/';
+};
+</script>
+{% endblock %}

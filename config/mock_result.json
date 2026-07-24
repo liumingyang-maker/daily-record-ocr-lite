@@ -1,41 +1,83 @@
 {
-  "page_heading": "生产配方记录",
-  "records": [
+  "schema_version": "record-v1",
+  "pages": [
     {
-      "source_image_indexes": [1],
-      "record_date": "24.7.10",
-      "title": "PA66改性配方",
-      "materials": [
-        {"name": "PA66", "amount": "60", "unit": "kg", "confidence": 0.95},
-        {"name": "GF30", "amount": "30", "unit": "kg", "confidence": 0.92},
-        {"name": "抗氧剂1010", "amount": "0.3", "unit": "", "confidence": 0.85},
-        {"name": "润滑剂", "amount": "0.5", "unit": "", "confidence": 0.80}
+      "page_id": "page_001",
+      "source_image_index": 1,
+      "company": {
+        "raw_value": "演示公司",
+        "standard_value": "演示公司",
+        "confidence": 0.95,
+        "bbox": [0.08, 0.04, 0.42, 0.10],
+        "evidence_token_ids": ["p1_t001"],
+        "match_source": "demo",
+        "review_status": "AUTO_ACCEPT"
+      },
+      "product_sections": [
+        {
+          "section_id": "section_001",
+          "product_or_series": {
+            "value": "PA66 演示系列",
+            "confidence": 0.93,
+            "evidence_token_ids": ["p1_t002"],
+            "bbox": [0.08, 0.12, 0.35, 0.18]
+          },
+          "product_type": "series",
+          "section_bbox": [0.05, 0.10, 0.95, 0.90],
+          "formulas": [
+            {
+              "formula_id": "demo__page_001__formula_001",
+              "formula_no": "①",
+              "formula_sequence": 1,
+              "record_date": {
+                "value": "2026-07-24",
+                "confidence": 0.92,
+                "evidence_token_ids": ["p1_t003"],
+                "bbox": [0.08, 0.20, 0.25, 0.24]
+              },
+              "record_bbox": [0.05, 0.18, 0.95, 0.55],
+              "materials": [
+                {
+                  "material_id": "material_001",
+                  "name": {
+                    "value": "PA66",
+                    "confidence": 0.96,
+                    "evidence_token_ids": ["p1_t004"],
+                    "bbox": [0.10, 0.28, 0.22, 0.33]
+                  },
+                  "amount": {
+                    "value": "60",
+                    "confidence": 0.94,
+                    "evidence_token_ids": ["p1_t005"],
+                    "bbox": [0.10, 0.36, 0.16, 0.41]
+                  },
+                  "unit": {
+                    "value": "",
+                    "confidence": 1.0,
+                    "evidence_token_ids": [],
+                    "bbox": null
+                  },
+                  "warnings": []
+                }
+              ],
+              "process_parameters": [],
+              "notes": {
+                "value": "",
+                "confidence": 1.0,
+                "evidence_token_ids": [],
+                "bbox": null
+              },
+              "warnings": [],
+              "confidence": 0.93
+            }
+          ],
+          "warnings": []
+        }
       ],
-      "process_parameters": [
-        {"name": "主机转速", "value": "50", "unit": "Hz", "confidence": 0.90},
-        {"name": "一区温度", "value": "260", "unit": "℃", "confidence": 0.88},
-        {"name": "二区温度", "value": "270", "unit": "℃", "confidence": 0.88}
-      ],
-      "notes": "注意干燥4小时",
-      "confidence": 0.90,
       "warnings": []
-    },
-    {
-      "source_image_indexes": [2],
-      "record_date": "24.7.11",
-      "title": "PP增强配方",
-      "materials": [
-        {"name": "PP", "amount": "70", "unit": "kg", "confidence": 0.93},
-        {"name": "滑石粉", "amount": "20", "unit": "kg", "confidence": 0.91},
-        {"name": "相容剂", "amount": "5", "unit": "", "confidence": 0.87}
-      ],
-      "process_parameters": [
-        {"name": "螺杆转速", "value": "45", "unit": "Hz", "confidence": 0.89}
-      ],
-      "notes": "",
-      "confidence": 0.88,
-      "warnings": ["第二张图片右下角字迹模糊，数量可能不准确"]
     }
   ],
-  "warnings": ["第二张图片右下角字迹模糊，数量可能不准确"]
+  "warnings": [
+    "演示模式固定结果，不代表对上传图片的真实识别。"
+  ]
 }

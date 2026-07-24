@@ -17,11 +17,11 @@ preprocess:
   background: white
 
 vision:
-  provider: "${VISION_PROVIDER:-mock}"
-  base_url: "${VISION_BASE_URL:-http://127.0.0.1:11434/v1}"
+  provider: "${VISION_PROVIDER:-}"
+  base_url: "${VISION_BASE_URL:-}"
   endpoint: "${VISION_ENDPOINT:-/chat/completions}"
   api_key: "${VISION_API_KEY:-}"
-  model: "${VISION_MODEL:-qwen-vl}"
+  model: "${VISION_MODEL:-}"
   timeout_seconds: 120
   temperature: 0
   image_detail: high

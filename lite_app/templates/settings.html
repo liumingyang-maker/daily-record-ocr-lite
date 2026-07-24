@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}设置 - 手写记录 OCR{% endblock %}
+{% block content %}
+<section class="settings-card">
+    <h2>视觉模型</h2>
+    <div class="settings-grid">
+        <div class="form-group"><label for="vision-provider">Provider</label>
+            <select id="vision-provider"><option value="openai_compatible">openai_compatible</option></select>
+        </div>
+        <div class="form-group"><label for="vision-base-url">Base URL</label>
+            <input id="vision-base-url" value="{{ settings.vision.base_url }}" placeholder="https://…/v1">
+        </div>
+        <div class="form-group"><label for="vision-endpoint">Endpoint</label>
+            <input id="vision-endpoint" value="{{ settings.vision.endpoint }}">
+        </div>
+        <div class="form-group"><label for="vision-model">Model</label>
+            <input id="vision-model" value="{{ settings.vision.model }}">
+        </div>
+        <div class="form-group"><label for="vision-key">API Key</label>
+            <input id="vision-key" type="password" autocomplete="new-password"
+                   placeholder="{% if settings.vision.api_key_configured %}已配置（留空不修改）{% else %}尚未配置{% endif %}">
+        </div>
+    </div>
+    <div class="settings-actions">
+        <button class="btn btn-primary" id="save-vision">保存视觉配置</button>
+        <button class="btn" id="test-vision">测试视觉连接</button>
+    </div>
+</section>
+
+<section class="settings-card">
+    <h2>OCR</h2>
+    <div class="settings-grid">
+        <div class="form-group"><label for="ocr-provider">Provider</label>
+            <select id="ocr-provider"><option value="paddleocr_v6">paddleocr_v6</option></select>
+        </div>
+        <div class="form-group"><label for="ocr-tier">模型档位</label>
+            <select id="ocr-tier">
+                {% for tier in ["tiny", "small", "medium"] %}
+                <option value="{{ tier }}" {% if settings.ocr.tier == tier %}selected{% endif %}>{{ tier }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group"><label for="ocr-device">Device</label>
+            <input id="ocr-device" value="{{ settings.ocr.device }}" placeholder="cpu / gpu:0">
+        </div>
+        <div class="form-group"><label for="ocr-score">最小置信度</label>
+            <input id="ocr-score" type="number" min="0" max="1" step="0.01" value="{{ settings.ocr.minimum_score }}">
+        </div>
+    </div>
+    <div class="settings-actions">
+        <button class="btn btn-primary" id="save-ocr">保存 OCR 配置</button>
+        <button class="btn" id="test-ocr">测试 OCR</button>
+        <button class="btn" id="disable-demo">退出演示模式</button>
+    </div>
+    <pre class="settings-output" id="settings-output">状态：{{ status.state }}</pre>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+const output = document.getElementById('settings-output');
+async function call(url, method, payload) {
+  output.textContent = '执行中…';
+  const response = await fetch(url, {
+    method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload || {})
+  });
+  const data = await response.json();
+  output.textContent = JSON.stringify(data, null, 2);
+  if (!response.ok) throw new Error(data.detail || '请求失败');
+  return data;
+}
+document.getElementById('save-vision').onclick = () => {
+  const payload = {
+    provider: document.getElementById('vision-provider').value,
+    base_url: document.getElementById('vision-base-url').value,
+    endpoint: document.getElementById('vision-endpoint').value,
+    model: document.getElementById('vision-model').value
+  };
+  const key = document.getElementById('vision-key').value;
+  if (key) payload.api_key = key;
+  return call('/api/settings/vision', 'PUT', payload);
+};
+document.getElementById('test-vision').onclick =
+  () => call('/api/settings/test-vision', 'POST', {});
+document.getElementById('save-ocr').onclick = () => call('/api/settings/ocr', 'PUT', {
+  provider: document.getElementById('ocr-provider').value,
+  tier: document.getElementById('ocr-tier').value,
+  device: document.getElementById('ocr-device').value,
+  minimum_score: Number(document.getElementById('ocr-score').value)
+});
+document.getElementById('test-ocr').onclick =
+  () => call('/api/settings/test-ocr', 'POST', {});
+document.getElementById('disable-demo').onclick =
+  () => call('/api/settings/demo/disable', 'POST', {}).then(() => window.location.reload());
+</script>
+{% endblock %}

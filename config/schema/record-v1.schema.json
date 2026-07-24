@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/liumingyang-maker/daily-record-ocr-lite/config/schema/record-v1.schema.json",
+  "title": "daily-record-ocr-lite record-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "pages", "warnings"],
+  "properties": {
+    "schema_version": {"const": "record-v1"},
+    "job_id": {"type": "string"},
+    "recognition_run_id": {"type": "string"},
+    "updated_at": {"type": "string"},
+    "summary": {
+      "type": "object",
+      "additionalProperties": {"type": "integer", "minimum": 0}
+    },
+    "pages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/page"}
+    },
+    "warnings": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "$defs": {
+    "bbox": {
+      "type": "array",
+      "prefixItems": [
+        {"type": "number", "minimum": 0, "maximum": 1},
+        {"type": "number", "minimum": 0, "maximum": 1},
+        {"type": "number", "minimum": 0, "maximum": 1},
+        {"type": "number", "minimum": 0, "maximum": 1}
+      ],
+      "items": false,
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "evidenceField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "confidence", "evidence_token_ids", "bbox"],
+      "properties": {
+        "value": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "evidence_token_ids": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "bbox": {
+          "anyOf": [
+            {"$ref": "#/$defs/bbox"},
+            {"type": "null"}
+          ]
+        },
+        "field_id": {"type": "string"},
+        "status": {
+          "enum": [
+            "AUTO_ACCEPT",
+            "NEED_REVIEW",
+            "CONFLICT",
+            "EMPTY",
+            "MANUAL_CONFIRMED",
+            "MANUAL_CONFIRMED_EMPTY"
+          ]
+        },
+        "review_status": {"type": "string"},
+        "source": {"type": "string"},
+        "candidates": {
+          "type": "array",
+          "items": {"type": "object"}
+        },
+        "source_image_index": {"type": "integer", "minimum": 1},
+        "record_bbox": {
+          "anyOf": [
+            {"$ref": "#/$defs/bbox"},
+            {"type": "null"}
+          ]
+        },
+        "recheck_count": {"type": "integer", "minimum": 0, "maximum": 1},
+        "recheck": {"type": "object"},
+        "updated_at": {"type": "string"}
+      }
+    },
+    "company": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_value",
+        "standard_value",
+        "confidence",
+        "bbox",
+        "evidence_token_ids",
+        "match_source",
+        "review_status"
+      ],
+      "properties": {
+        "raw_value": {"type": "string"},
+        "standard_value": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "bbox": {
+          "anyOf": [
+            {"$ref": "#/$defs/bbox"},
+            {"type": "null"}
+          ]
+        },
+        "evidence_token_ids": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "match_source": {"type": "string"},
+        "review_status": {
+          "enum": [
+            "AUTO_ACCEPT",
+            "NEED_REVIEW",
+            "MANUAL_CONFIRMED",
+            "MANUAL_CONFIRMED_EMPTY"
+          ]
+        }
+      }
+    },
+    "material": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["material_id", "name", "amount", "unit", "warnings"],
+      "properties": {
+        "material_id": {"type": "string", "minLength": 1},
+        "name": {"$ref": "#/$defs/evidenceField"},
+        "amount": {"$ref": "#/$defs/evidenceField"},
+        "unit": {"$ref": "#/$defs/evidenceField"},
+        "warnings": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "processParameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["parameter_id", "name", "value", "unit", "warnings"],
+      "properties": {
+        "parameter_id": {"type": "string", "minLength": 1},
+        "name": {"$ref": "#/$defs/evidenceField"},
+        "value": {"$ref": "#/$defs/evidenceField"},
+        "unit": {"$ref": "#/$defs/evidenceField"},
+        "warnings": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "formula": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "formula_id",
+        "formula_no",
+        "formula_sequence",
+        "record_date",
+        "record_bbox",
+        "materials",
+        "process_parameters",
+        "notes",
+        "warnings",
+        "confidence"
+      ],
+      "properties": {
+        "formula_id": {"type": "string", "minLength": 1},
+        "formula_no": {"type": "string"},
+        "formula_sequence": {"type": "integer", "minimum": 1},
+        "record_date": {"$ref": "#/$defs/evidenceField"},
+        "record_bbox": {
+          "anyOf": [
+            {"$ref": "#/$defs/bbox"},
+            {"type": "null"}
+          ]
+        },
+        "materials": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/material"}
+        },
+        "process_parameters": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/processParameter"}
+        },
+        "notes": {"$ref": "#/$defs/evidenceField"},
+        "warnings": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "section_id",
+        "product_or_series",
+        "product_type",
+        "section_bbox",
+        "formulas",
+        "warnings"
+      ],
+      "properties": {
+        "section_id": {"type": "string", "minLength": 1},
+        "product_or_series": {"$ref": "#/$defs/evidenceField"},
+        "product_type": {"type": "string"},
+        "section_bbox": {
+          "anyOf": [
+            {"$ref": "#/$defs/bbox"},
+            {"type": "null"}
+          ]
+        },
+        "formulas": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/formula"}
+        },
+        "warnings": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "page_id",
+        "source_image_index",
+        "company",
+        "product_sections",
+        "warnings"
+      ],
+      "properties": {
+        "page_id": {"type": "string", "minLength": 1},
+        "source_image_index": {"type": "integer", "minimum": 1},
+        "company": {"$ref": "#/$defs/company"},
+        "product_sections": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/section"}
+        },
+        "warnings": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    }
+  }
+}

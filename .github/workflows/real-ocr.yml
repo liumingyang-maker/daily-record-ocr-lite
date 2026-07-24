@@ -1,0 +1,50 @@
+name: Real OCR
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  paddle-inference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PADDLE_PDX_MODEL_SOURCE: BOS
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Cache Paddle models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.paddlex
+            ~/.paddleocr
+          key: paddle-ppocrv6-medium-${{ runner.os }}-py311-v1
+      - name: Install real OCR dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-ocr.txt
+          python -m pip install pytest pytest-asyncio
+      - name: Paddle runtime check
+        run: python -c "import paddle; paddle.utils.run_check()"
+      - name: Real PP-OCRv6 inference (must not be all skipped)
+        run: |
+          python -m pytest -m real_ocr -q -s --junitxml=real-ocr-junit.xml
+          python scripts/assert_junit_passed.py real-ocr-junit.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-ocr-junit
+          path: real-ocr-junit.xml

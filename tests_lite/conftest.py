@@ -2,7 +2,6 @@
 
 import os
 import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -10,6 +9,8 @@ import pytest
 _test_dir = tempfile.mkdtemp(prefix="ocr_test_")
 os.environ["JOBS_DIR"] = os.path.join(_test_dir, "jobs")
 os.environ["VISION_PROVIDER"] = "mock"
+os.environ["OCR_PROVIDER"] = "mock"
+os.environ["DEMO_MODE"] = "true"
 
 
 @pytest.fixture(autouse=True)

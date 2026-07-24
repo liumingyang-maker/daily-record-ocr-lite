@@ -1,16 +1,20 @@
 """Pipeline 模块测试。"""
 
+import copy
+import json
+from pathlib import Path
+
 import pytest
 
+from lite_app.config import load_schema_config
+from lite_app.image_utils import ImageProcessError
 from lite_app.pipeline import (
     PipelineError,
+    analyze_job,
     build_prompts,
     extract_json,
     validate_result,
-    analyze_job,
 )
-from lite_app.image_utils import ImageProcessError
-from lite_app.config import load_schema_config
 
 
 class TestExtractJson:
@@ -54,78 +58,40 @@ class TestValidateResult:
         config = load_schema_config()
         return config["schema"]
 
-    def test_valid_result(self, schema):
-        result = {
-            "page_heading": "test",
-            "records": [
-                {
-                    "source_image_indexes": [1],
-                    "record_date": "24.7.10",
-                    "title": "配方",
-                    "materials": [
-                        {"name": "PA66", "amount": "60", "unit": "kg", "confidence": 0.95}
-                    ],
-                    "process_parameters": [],
-                    "notes": "",
-                    "confidence": 0.9,
-                    "warnings": [],
-                }
-            ],
-            "warnings": [],
-        }
-        errors = validate_result(result, schema)
+    @pytest.fixture
+    def valid_result(self):
+        root = Path(__file__).resolve().parents[1]
+        return json.loads((root / "config" / "mock_result.json").read_text("utf-8"))
+
+    def test_valid_result(self, schema, valid_result):
+        errors = validate_result(valid_result, schema)
         assert errors == []
 
     def test_missing_field(self, schema):
-        result = {"page_heading": "test", "records": []}
+        result = {"schema_version": "record-v1", "pages": []}
         errors = validate_result(result, schema)
         assert len(errors) > 0
         assert any("warnings" in e for e in errors)
 
-    def test_confidence_out_of_range(self, schema):
-        result = {
-            "page_heading": "",
-            "records": [
-                {
-                    "source_image_indexes": [1],
-                    "record_date": "",
-                    "title": "",
-                    "materials": [
-                        {"name": "x", "amount": "1", "unit": "", "confidence": 1.2}
-                    ],
-                    "process_parameters": [],
-                    "notes": "",
-                    "confidence": 0.5,
-                    "warnings": [],
-                }
-            ],
-            "warnings": [],
-        }
+    def test_confidence_out_of_range(self, schema, valid_result):
+        result = copy.deepcopy(valid_result)
+        result["pages"][0]["product_sections"][0]["formulas"][0]["materials"][0][
+            "amount"
+        ]["confidence"] = 1.2
         errors = validate_result(result, schema)
         assert len(errors) > 0
         assert any("confidence" in e for e in errors)
 
-    def test_error_includes_path(self, schema):
-        result = {
-            "page_heading": "",
-            "records": [
-                {
-                    "source_image_indexes": [1],
-                    "record_date": "",
-                    "title": "",
-                    "materials": [
-                        {"name": "x", "amount": "1", "unit": "", "confidence": 2.0}
-                    ],
-                    "process_parameters": [],
-                    "notes": "",
-                    "confidence": 0.5,
-                    "warnings": [],
-                }
-            ],
-            "warnings": [],
-        }
+    def test_error_includes_path(self, schema, valid_result):
+        result = copy.deepcopy(valid_result)
+        result["pages"][0]["product_sections"][0]["formulas"][0]["materials"][0][
+            "amount"
+        ]["confidence"] = 2.0
         errors = validate_result(result, schema)
-        assert any("records.0.materials.0.confidence" in e for e in errors)
+        expected = (
+            "pages.0.product_sections.0.formulas.0.materials.0.amount.confidence"
+        )
+        assert any(expected in error for error in errors)
 
 
 class TestBuildPrompts:
@@ -156,7 +122,8 @@ class TestAnalyzeJob:
         # 验证结果文件存在
         loaded = storage.load_result(job_id)
         assert loaded is not None
-        assert "page_heading" in loaded
+        # 新格式使用 pages[]，旧格式使用 page_heading
+        assert "pages" in loaded or "page_heading" in loaded
 
     @pytest.mark.asyncio
     async def test_failed_on_bad_image(self, storage, tmp_path):

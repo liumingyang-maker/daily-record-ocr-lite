@@ -5,19 +5,22 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import secrets
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from .config import get_config
+from .status import JobStatus
 
 logger = logging.getLogger(__name__)
+_JOB_ID_PATTERN = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{6}$")
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _generate_job_id() -> str:
@@ -41,7 +44,11 @@ def sanitize_filename(name: str) -> str:
     return name
 
 
-def _atomic_write_json(path: Path, data: Any) -> None:
+class RequiredDataError(RuntimeError):
+    """A required persisted artifact is missing, unreadable, or malformed."""
+
+
+def write_json_atomic(path: Path, data: Any) -> None:
     """原子写入 JSON：先写临时文件再替换。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(
@@ -50,6 +57,8 @@ def _atomic_write_json(path: Path, data: Any) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp_path, str(path))
     except BaseException:
         # 清理临时文件
@@ -58,6 +67,63 @@ def _atomic_write_json(path: Path, data: Any) -> None:
         except OSError:
             pass
         raise
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(path.parent), suffix=".tmp", prefix=".text_"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def write_bytes_atomic(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(path.parent), suffix=".tmp", prefix=".bytes_"
+    )
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def read_json_required(path: Path) -> Any:
+    if not path.exists():
+        raise RequiredDataError(f"必需文件不存在: {path}")
+    try:
+        with path.open(encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RequiredDataError(f"必需文件无法读取: {path}: {exc}") from exc
+
+
+def read_json_optional(path: Path) -> Any | None:
+    if not path.exists():
+        return None
+    return read_json_required(path)
+
+
+_atomic_write_json = write_json_atomic
 
 
 class JobStorage:
@@ -71,8 +137,12 @@ class JobStorage:
 
     def _job_dir(self, job_id: str) -> Path:
         """获取任务目录，并验证安全性。"""
+        if not _JOB_ID_PATTERN.fullmatch(str(job_id)):
+            raise ValueError(f"非法任务 ID: {job_id}")
         root = self.jobs_dir.resolve()
         candidate = (root / job_id).resolve()
+        if candidate == root:
+            raise ValueError(f"非法任务 ID: {job_id}")
         try:
             candidate.relative_to(root)
         except ValueError as exc:
@@ -88,7 +158,7 @@ class JobStorage:
         now = _now_iso()
         job_data = {
             "id": job_id,
-            "status": "UPLOADED",
+            "status": JobStatus.UPLOADED,
             "created_at": now,
             "updated_at": now,
             "rotation": rotation,
@@ -100,7 +170,13 @@ class JobStorage:
             "error": "",
             "export_file": None,
         }
-        _atomic_write_json(job_dir / "job.json", job_data)
+        write_json_atomic(job_dir / "job.json", job_data)
+        self._append_status_event(
+            job_dir,
+            from_status=None,
+            to_status=JobStatus.UPLOADED,
+            message="任务已创建",
+        )
         logger.info("创建任务: %s", job_id)
         return job_data
 
@@ -117,8 +193,41 @@ class JobStorage:
         """保存任务数据。"""
         job_id = job_data["id"]
         job_dir = self._job_dir(job_id)
+        previous = read_json_optional(job_dir / "job.json")
+        old_status = previous.get("status") if isinstance(previous, dict) else None
+        new_status = job_data.get("status")
         job_data["updated_at"] = _now_iso()
-        _atomic_write_json(job_dir / "job.json", job_data)
+        write_json_atomic(job_dir / "job.json", job_data)
+        if old_status != new_status and new_status:
+            self._append_status_event(
+                job_dir,
+                from_status=old_status,
+                to_status=str(new_status),
+                message=str(job_data.get("status_message", "")),
+            )
+
+    @staticmethod
+    def _append_status_event(
+        job_dir: Path,
+        from_status: str | None,
+        to_status: str,
+        message: str,
+    ) -> None:
+        path = job_dir / "review" / "job_events.json"
+        events = read_json_optional(path)
+        if not isinstance(events, list):
+            events = []
+        events.append(
+            {
+                "event": "status_changed",
+                "from_status": from_status,
+                "to_status": to_status,
+                "reason": message,
+                "message": message,
+                "timestamp": _now_iso(),
+            }
+        )
+        write_json_atomic(path, events)
 
     def update_status(
         self, job_id: str, status: str, message: str = ""
@@ -143,11 +252,12 @@ class JobStorage:
         job_dir = self._job_dir(job_id)
         safe_name = sanitize_filename(original_name)
         source_name = f"source_{index:02d}_{safe_name}"
-        file_path = job_dir / source_name
-        file_path.write_bytes(content)
+        relative_path = Path("source") / source_name
+        file_path = job_dir / relative_path
+        write_bytes_atomic(file_path, content)
         return {
             "original_name": original_name,
-            "source": source_name,
+            "source": relative_path.as_posix(),
             "prepared": "",
             "size_bytes": len(content),
         }
@@ -155,7 +265,7 @@ class JobStorage:
     def save_result(self, job_id: str, result: dict[str, Any]) -> None:
         """保存识别结果。"""
         job_dir = self._job_dir(job_id)
-        _atomic_write_json(job_dir / "result.json", result)
+        write_json_atomic(job_dir / "result.json", result)
 
     def load_result(self, job_id: str) -> dict[str, Any] | None:
         """加载识别结果。"""
@@ -169,7 +279,7 @@ class JobStorage:
     def save_raw_response(self, job_id: str, text: str) -> None:
         """保存原始模型响应。"""
         job_dir = self._job_dir(job_id)
-        (job_dir / "raw_response.txt").write_text(text, encoding="utf-8")
+        write_text_atomic(job_dir / "raw_response.txt", text)
 
     def list_jobs(self) -> list[dict[str, Any]]:
         """列出所有任务，按创建时间倒序。"""
@@ -195,15 +305,19 @@ class JobStorage:
 
     def file_exists(self, job_id: str, filename: str) -> bool:
         """检查任务目录中文件是否存在。"""
-        safe = sanitize_filename(filename)
-        job_dir = self._job_dir(job_id)
-        return (job_dir / safe).exists()
+        try:
+            self.get_file_path(job_id, filename)
+        except (FileNotFoundError, ValueError):
+            return False
+        return True
 
     def get_file_path(self, job_id: str, filename: str) -> Path:
         """获取任务目录中文件的安全路径。"""
-        safe = sanitize_filename(filename)
         job_dir = self._job_dir(job_id)
-        file_path = (job_dir / safe).resolve()
+        relative = Path(str(filename).replace("\\", "/"))
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"非法文件路径: {filename}")
+        file_path = (job_dir / relative).resolve()
         # 再次确认在任务目录下
         try:
             file_path.relative_to(job_dir.resolve())

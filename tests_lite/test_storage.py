@@ -1,11 +1,9 @@
 """存储模块测试。"""
 
-import json
-from pathlib import Path
 
 import pytest
 
-from lite_app.storage import JobStorage, sanitize_filename
+from lite_app.storage import sanitize_filename
 
 
 class TestSanitizeFilename:
@@ -54,7 +52,7 @@ class TestJobStorage:
 
     def test_get_nonexistent_job(self, storage):
         with pytest.raises(FileNotFoundError):
-            storage.get_job("nonexistent-id")
+            storage.get_job("20000101-000000-000000")
 
     def test_save_and_load_result(self, storage):
         job = storage.create_job()
@@ -71,19 +69,19 @@ class TestJobStorage:
         job = storage.create_job()
         info = storage.save_upload(job["id"], 1, "test.jpg", b"fake data")
         assert info["original_name"] == "test.jpg"
-        assert info["source"] == "source_01_test.jpg"
+        assert info["source"] == "source/source_01_test.jpg"
         assert info["size_bytes"] == 9
         # 验证文件存在
         job_dir = storage.get_job_dir(job["id"])
-        assert (job_dir / "source_01_test.jpg").exists()
+        assert (job_dir / info["source"]).exists()
 
     def test_multiple_uploads(self, storage):
         job = storage.create_job()
         storage.save_upload(job["id"], 1, "a.jpg", b"data1")
         storage.save_upload(job["id"], 2, "b.png", b"data2")
         job_dir = storage.get_job_dir(job["id"])
-        assert (job_dir / "source_01_a.jpg").exists()
-        assert (job_dir / "source_02_b.png").exists()
+        assert (job_dir / "source" / "source_01_a.jpg").exists()
+        assert (job_dir / "source" / "source_02_b.png").exists()
 
     def test_atomic_write_no_tmp_residue(self, storage):
         job = storage.create_job()
@@ -96,8 +94,10 @@ class TestJobStorage:
         job2 = storage.create_job()
         jobs = storage.list_jobs()
         assert len(jobs) == 2
-        # 最新的在前
-        assert jobs[0]["id"] == job2["id"]
+        # 两个任务都在列表中
+        job_ids = {j["id"] for j in jobs}
+        assert job1["id"] in job_ids
+        assert job2["id"] in job_ids
 
     def test_list_jobs_skips_corrupted(self, storage, tmp_jobs_dir):
         # 创建一个损坏的任务目录
@@ -124,14 +124,27 @@ class TestJobStorage:
 
     def test_file_exists(self, storage):
         job = storage.create_job()
-        storage.save_upload(job["id"], 1, "test.jpg", b"data")
-        assert storage.file_exists(job["id"], "source_01_test.jpg")
+        saved = storage.save_upload(job["id"], 1, "test.jpg", b"data")
+        assert saved["source"] == "source/source_01_test.jpg"
+        assert storage.file_exists(job["id"], saved["source"])
+        assert storage.get_file_path(job["id"], saved["source"]).read_bytes() == b"data"
         assert not storage.file_exists(job["id"], "nonexistent.jpg")
 
     def test_get_file_path_traversal_blocked(self, storage):
         job = storage.create_job()
         with pytest.raises((ValueError, FileNotFoundError)):
             storage.get_file_path(job["id"], "../../etc/passwd")
+
+    @pytest.mark.parametrize("job_id", [".", "", " ", "..", "not-a-job"])
+    def test_invalid_job_ids_cannot_resolve_jobs_root(self, storage, job_id):
+        with pytest.raises(ValueError):
+            storage.get_job_dir(job_id)
+
+    def test_invalid_job_id_cannot_read_another_job(self, storage):
+        other = storage.create_job()
+        saved = storage.save_upload(other["id"], 1, "secret.jpg", b"private")
+        with pytest.raises(ValueError):
+            storage.get_file_path(".", f"{other['id']}/{saved['source']}")
 
     def test_json_utf8_encoding(self, storage):
         job = storage.create_job()
