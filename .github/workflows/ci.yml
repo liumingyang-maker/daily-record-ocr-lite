@@ -33,6 +33,6 @@ jobs:
       - name: Verify schemas and application import
         run: |
           python -c "import json, pathlib; from lite_app.contracts import validate_record_result; root=pathlib.Path('.'); result=json.loads((root/'config/mock_result.json').read_text(encoding='utf-8')); assert validate_record_result(result).ready; [json.loads(path.read_text(encoding='utf-8')) for path in (root/'config/schema').glob('*.json')]"
-          python -c "from lite_app.main import app; assert app.version == '1.0.0'"
+          python -c "from lite_app.main import app; assert app.version == '1.0.1'"
       - name: Doctor (SETUP_REQUIRED is expected without credentials)
         run: python scripts/doctor.py --json --gate

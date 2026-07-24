@@ -57,7 +57,7 @@ def run_doctor(
             }
         )
 
-    version_ok = _pyproject_version(root) == __version__ == "1.0.0"
+    version_ok = _pyproject_version(root) == __version__ == "1.0.1"
     add(
         "version",
         "PASS" if version_ok else "FAIL",

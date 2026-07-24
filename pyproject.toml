@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "daily-record-ocr-lite"
-version = "1.0.0"
+version = "1.0.1"
 description = "Accuracy-first handwritten production-record OCR with PP-OCRv6 and vision models"
 readme = "README.md"
 requires-python = ">=3.11"

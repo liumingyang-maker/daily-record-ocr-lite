@@ -24,7 +24,7 @@ INSTALL_WITH_AI = """daily-record-ocr-lite AI 安装入口
 """
 
 
-def create_bundle(output_dir: Path, version: str = "1.0.0") -> tuple[Path, ...]:
+def create_bundle(output_dir: Path, version: str = "1.0.1") -> tuple[Path, ...]:
     output_dir.mkdir(parents=True, exist_ok=True)
     bundle = output_dir / f"daily-record-ocr-lite-v{version}-source.zip"
     with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -46,7 +46,9 @@ def create_bundle(output_dir: Path, version: str = "1.0.0") -> tuple[Path, ...]:
     install.write_text(INSTALL_WITH_AI, encoding="utf-8")
     release_notes = output_dir / "RELEASE_NOTES.md"
     release_notes.write_text(
-        (ROOT / "docs" / "RELEASE_NOTES_V1.0.0.md").read_text(encoding="utf-8"),
+        (ROOT / "docs" / f"RELEASE_NOTES_V{version}.md").read_text(
+            encoding="utf-8"
+        ),
         encoding="utf-8",
     )
     return bundle, checksum, install, release_notes
@@ -68,7 +70,7 @@ def _source_files() -> list[Path]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", type=Path, default=ROOT / "dist")
-    parser.add_argument("--version", default="1.0.0")
+    parser.add_argument("--version", default="1.0.1")
     args = parser.parse_args(argv)
     for artifact in create_bundle(args.output_dir, args.version):
         print(artifact)

@@ -1,4 +1,4 @@
-"""Release Gate verifier for v1.0.0."""
+"""Release Gate verifier for v1.0.1."""
 
 from __future__ import annotations
 
@@ -43,8 +43,8 @@ def verify(*, quick: bool = False, allow_dirty: bool = False) -> dict:
 
     from lite_app import __version__
 
-    if __version__ != "1.0.0":
-        failures.append(f"lite_app.__version__={__version__}，期望 1.0.0")
+    if __version__ != "1.0.1":
+        failures.append(f"lite_app.__version__={__version__}，期望 1.0.1")
 
     doctor = run_doctor()
     if doctor["state"] == "BROKEN":

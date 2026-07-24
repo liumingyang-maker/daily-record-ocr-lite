@@ -3,7 +3,7 @@
 [![CI](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/ci.yml)
 [![Real OCR](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/real-ocr.yml/badge.svg?branch=master)](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/real-ocr.yml)
 
-当前稳定版本：`v1.0.0`
+当前稳定版本：`v1.0.1`
 
 把中文手写生产/配方记录经 PP-OCRv6 与视觉模型双引擎识别、人工复核，并导出为
 公司—产品—配方结构的 Excel。
@@ -118,7 +118,7 @@ data/jobs/<job-id>/
 - 故障排查：[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)
 - 支持环境：[`docs/SUPPORTED_ENVIRONMENTS.md`](docs/SUPPORTED_ENVIRONMENTS.md)
 - AI 升级：[`docs/AI_AGENT_UPGRADE.md`](docs/AI_AGENT_UPGRADE.md)
-- v1.0.0 说明：[`docs/RELEASE_NOTES_V1.0.0.md`](docs/RELEASE_NOTES_V1.0.0.md)
+- v1.0.1 说明：[`docs/RELEASE_NOTES_V1.0.1.md`](docs/RELEASE_NOTES_V1.0.1.md)
 
 ## 已知限制
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1
+
+- 修复 qwen3.7-plus 返回 HTTP 200 时被误判为 `FAILED_JSON_CAPABILITY`。
+- 增加 Markdown JSON 围栏和说明文字内嵌 JSON 对象兼容。
+- 分离视觉能力、JSON 响应能力和严格 JSON 能力。
+- 阿里云兼容端点上的 qwen3.7-plus 默认关闭思考并使用 `json_object`。
+- 增加脱敏响应预览；不包含 OCR 性能、Mac 适配或 Pipeline 重构。
+
 ## 1.0.0
 
 - 建立严格 `record-v1`、`recheck-v1`、`settings-v1` 数据契约。
