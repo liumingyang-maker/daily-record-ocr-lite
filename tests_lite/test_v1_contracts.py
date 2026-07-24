@@ -280,7 +280,8 @@ def test_windows_updater_targets_latest_stable_tag_safely():
     )
 
     assert '[string]$Ref = "latest"' in script
-    assert "--sort=-v:refname" in script
+    assert "git ls-remote --tags --refs --sort=-v:refname origin" in script
+    assert "git tag --list" not in script
     assert r"'^v\d+\.\d+\.\d+$'" in script
     assert '"refs/tags/$TargetRef"' in script
     assert "git checkout --detach $TargetRef" in script
@@ -288,6 +289,13 @@ def test_windows_updater_targets_latest_stable_tag_safely():
     assert "git reset" not in script
     assert "git clean" not in script
     assert "Remove-Item" not in script
+
+    already_latest = script.split(
+        "if ($PreviousCommit -eq $TargetCommit)", 1
+    )[1].split("git show-ref", 1)[0]
+    assert "scripts\\doctor.py" in already_latest
+    assert "--json --gate" in already_latest
+    assert already_latest.index("scripts\\doctor.py") < already_latest.index("exit 0")
 
 
 def test_readme_and_ai_upgrade_guide_target_latest_stable_release():

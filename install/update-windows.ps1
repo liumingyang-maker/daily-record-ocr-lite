@@ -33,7 +33,17 @@ if ($LASTEXITCODE -ne 0) {
 
 $TargetRef = $Ref
 if ($Ref -eq "latest") {
-    $TargetRef = git tag --list "v[0-9]*" --sort=-v:refname |
+    $RemoteTagRefs = git ls-remote --tags --refs --sort=-v:refname origin "v*"
+    if ($LASTEXITCODE -ne 0) {
+        throw "无法读取 origin 的稳定版本标签。"
+    }
+    $TargetRef = $RemoteTagRefs |
+        ForEach-Object {
+            $Columns = $_ -split "\s+"
+            if ($Columns.Count -ge 2) {
+                $Columns[1] -replace "^refs/tags/", ""
+            }
+        } |
         Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
         Select-Object -First 1
     if (-not $TargetRef) {
@@ -47,9 +57,18 @@ if ($LASTEXITCODE -ne 0 -or -not $TargetCommit) {
 }
 $TargetCommit = $TargetCommit.Trim()
 if ($PreviousCommit -eq $TargetCommit) {
-    Write-Host "已经是目标稳定版本 $TargetRef；无需重复安装。"
-    Write-Host "数据备份位于 $Backup"
-    exit 0
+    $DoctorPython = Join-Path $Root ".venv\Scripts\python.exe"
+    $DoctorScript = Join-Path $Root "scripts\doctor.py"
+    if (Test-Path $DoctorPython) {
+        & $DoctorPython $DoctorScript --json --gate
+        if ($LASTEXITCODE -ne 0) {
+            throw "已经是目标版本，但 doctor 健康检查失败。"
+        }
+        Write-Host "已经是目标稳定版本 $TargetRef；无需重复安装。"
+        Write-Host "数据备份位于 $Backup"
+        exit 0
+    }
+    Write-Host "已经是目标版本，但缺少 .venv；继续修复安装。"
 }
 
 git show-ref --verify --quiet "refs/tags/$TargetRef"
