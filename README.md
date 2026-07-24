@@ -2,38 +2,48 @@
 
 将手机拍摄的中文手写生产/配方笔记识别为结构化数据，允许人工校对，并写入 Excel。
 
-## 核心设计：双引擎识别
+[![CI](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/ci.yml/badge.svg?branch=feature/accuracy-first-dual-engine)](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/ci.yml)
+
+## 核心设计：双引擎识别 + 空间关联融合
 
 本项目使用 **PP-OCRv6 + 视觉大模型** 双引擎互相验证：
 
 - PP-OCRv6 提供文字、坐标和置信度
-- 视觉大模型接收原图 + OCR 证据，理解空间关系
-- 多来源候选融合，数字冲突严格标记
+- 视觉大模型接收原图 + OCR 证据（含坐标），理解空间关系
+- **空间关联融合**：通过 evidence_token_ids → bbox IoU → 中心距离三策略关联 OCR 与 VLM 候选
+- **严格数字冲突检测**：OCR≠VLM 时强制 CONFLICT，历史候选不能覆盖
+- **识别缓存**：OCR 和 VLM 阶段均检查缓存，相同图片+模型+prompt 版本不重复调用
+- **Draft202012 Schema 校验**：VLM 输出在 pipeline 中实时校验
 - 历史物料/配方匹配辅助纠错
 - 冲突字段局部裁图复核
-- 字段级人工确认
+- 字段级人工确认（Confirm All 检查未解决冲突）
+- 失败标记 DEGRADED，不静默回退
 
 ## 架构
 
 ```
-上传图片 → VLM/OCR 双图预处理 → PP-OCRv6 整图识别
-    → 视觉大模型（带 OCR 证据）→ 历史匹配
-    → 候选融合 → 冲突局部复核 → 字段级人工确认
-    → Excel 5-Sheet 导出（含识别审查+修正日志）
+上传图片 → VLM/OCR 双图预处理 → [缓存检查]
+    → PP-OCRv6 整图识别 → [写入OCR缓存]
+    → 视觉大模型（带 OCR 证据）→ [Schema校验] → [写入VLM缓存]
+    → 历史匹配 → 空间关联融合 → 冲突检测
+    → 局部复核 → 字段级人工确认
+    → 公司—产品—配方分组 → Excel 5-Sheet 导出
 ```
 
 核心模块：
 
-- `lite_app/ocr/` — OCRProvider 抽象 + PaddleOCRv6 + Mock + 单例管理器
+- `lite_app/ocr/` — OCRProvider 抽象 + PaddleOCRv6（tier→模型名映射）+ Mock + 单例 + Overlay
 - `lite_app/vision/` — VisionProvider 抽象 + mock / openai_compatible
 - `lite_app/layout/` — 行聚类、原料-数量横向配对、记录分组
-- `lite_app/knowledge/` — sqlite3 知识库 + 历史匹配器
-- `lite_app/fusion/` — 候选融合引擎 + 冲突检测
+- `lite_app/knowledge/` — sqlite3 知识库 + 历史匹配器 + 公司/产品别名
+- `lite_app/fusion/` — 候选融合引擎 + 严格数字冲突检测
+- `lite_app/grouping/` — 公司—产品—配方业务分组 + 三视图 + 分组Excel导出
 - `lite_app/review/` — 局部复核 + 修正日志
-- `lite_app/pipeline_v2.py` — 双引擎集成 pipeline
-- `lite_app/image_utils_v2.py` — VLM/OCR 双图预处理
+- `lite_app/cache.py` — 识别缓存（图片哈希+模型+prompt版本）
+- `lite_app/pipeline_v2.py` — 双引擎集成 pipeline（含缓存+Schema校验+空间关联）
+- `lite_app/image_utils_v2.py` — VLM/OCR 双图预处理（可选 OpenCV CLAHE）
 - `lite_app/exporter.py` — Excel 5-Sheet 导出
-- `lite_app/main.py` — FastAPI 页面与 API
+- `lite_app/main.py` — FastAPI 页面与 API（37 路由）
 
 ## 安装要求
 
@@ -78,9 +88,19 @@ python scripts/verify_install.py
 uvicorn lite_app.main:app --host 127.0.0.1 --port 8765
 ```
 
+## PP-OCRv6 模型配置
+
+`config/recognition.yaml` 中 `ocr.tier` 映射真实模型名：
+
+| tier | 检测模型 | 识别模型 |
+|------|---------|---------|
+| tiny | PP-OCRv6_mobile_det | PP-OCRv6_mobile_rec |
+| small | PP-OCRv6_mobile_det | PP-OCRv6_server_rec |
+| medium | PP-OCRv6_server_det | PP-OCRv6_server_rec |
+
 ## 默认 Mock 模式
 
-未配置任何 API Key 时，默认使用 mock provider。它会读取 `config/mock_result.json` 返回预设结果，可以在没有模型的情况下完整体验上传、校对、导出流程。
+未配置任何 API Key 时，默认使用 mock provider。读取 `config/mock_result.json`（pages[] 格式）返回预设结果，包含公司/产品/多配方结构，可完整体验分组和导出流程。
 
 ## 接入 OpenAI-compatible 视觉模型
 
@@ -96,63 +116,47 @@ VISION_MODEL=qwen-vl
 
 支持任何兼容 OpenAI Chat Completions 接口的视觉模型服务（Ollama、vLLM、OpenAI、Azure 等）。
 
-## 自定义 Provider
+## 识别结果页面
 
-在 `lite_app/providers.py` 中继承 `VisionProvider`：
+上传后默认跳转到 `/jobs/{id}/result`（分组结果页），提供三种视图：
 
-```python
-class MyVisionProvider(VisionProvider):
-    async def analyze(self, image_paths, system_prompt, user_prompt, json_schema) -> str:
-        # 调用自定义服务
-        return '{"page_heading":"","records":[],"warnings":[]}'
-```
+- **按公司**：公司 → 产品/系列 → 配方（默认）
+- **按图片**：图片 → 页面公司 → 配方
+- **仅看待确认**：只显示有冲突或待复核的配方
 
-然后在 `build_provider()` 中注册名称即可。无需修改识别流程、页面和导出器。
-
-## 修改识别 Schema
-
-编辑 `config/record_schema.yaml`：
-
-- `system_prompt` — 系统提示词
-- `instructions` — 用户提示词中的识别规则
-- `schema` — JSON Schema（Draft 2020-12），用于校验模型输出
-
-## 固定 Excel 模板配置
-
-编辑 `config/export.yaml`：
-
-1. 将你的模板文件放到 `config/` 或其他本地路径
-2. 设置 `template_path: config/my_template.xlsx`
-3. 根据真实 Sheet 名、起始行和列字母调整 `cells` 和 `tables` 映射
-4. 合并单元格只能写左上角主单元格
-5. 模板不会被修改，输出另存到任务目录
-6. 若模板是 `.xlsm` 且需保留宏，设置 `keep_vba: true`
-
-不设置 `template_path` 时，自动创建包含"记录汇总"、"配方明细"、"工艺参数"三个 Sheet 的新工作簿。
+点击配方查看材料/工艺表，点击字段查看 OCR/VLM/历史候选证据。
 
 ## 任务文件保存位置
 
-所有任务数据保存在 `data/jobs/` 下，每个任务一个独立目录：
-
 ```
 data/jobs/20260723-221530-a1b2c3/
-├── job.json          # 任务元数据
-├── source_01_*.jpg   # 原始上传
-├── prepared_01.jpg   # 处理后图片
-├── raw_response.txt  # 模型原始响应
-├── result.json       # 识别结果
-└── recognized-*.xlsx # 导出文件
+├── job.json                    # 任务元数据（含 cache_hits、timings_ms）
+├── source_01_*.jpg             # 原始上传
+├── prepared_vlm_01.jpg         # VLM 预处理图
+├── prepared_ocr_01.jpg         # OCR 预处理图（灰度+CLAHE）
+├── ocr/
+│   ├── page_01_base.json       # OCR 结果（含坐标）
+│   └── page_01_overlay.jpg     # OCR 检测框可视化
+├── vision/
+│   ├── raw_response.txt        # VLM 原始响应
+│   └── structured_result.json  # VLM 结构化结果
+├── fusion/
+│   └── result.json             # 融合结果（final_value 为唯一导出源）
+├── review/
+│   └── business_entities.json  # 公司—产品—配方分组
+└── recognized-*.xlsx           # 导出文件
 ```
 
 ## 常见错误排查
 
 | 错误 | 原因和解决 |
 |------|-----------|
+| DEGRADED 状态 | 双引擎识别失败，检查 OCR/VLM 配置后重新识别 |
 | 视觉模型接口超时 | 检查模型服务是否运行，或增大 `timeout_seconds` |
 | HTTP 401 | API Key 错误，检查 `.env` 中 `VISION_API_KEY` |
 | 无法连接视觉模型服务 | 检查 `VISION_BASE_URL` 地址是否正确 |
 | 文件不是可识别的图片 | 上传的文件不是有效图片格式 |
-| Excel 模板不存在 | 检查 `export.yaml` 中 `template_path` 路径 |
+| Confirm 返回 REVIEW_REQUIRED | 存在未解决冲突或关键空字段，需先处理 |
 | Schema 校验不通过 | 在详情页查看具体错误，手动修正 JSON |
 
 ## 测试
@@ -162,11 +166,16 @@ pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-测试不调用外网，使用 mock provider 和 httpx.MockTransport。
+- 164 个测试通过，5 个 real_ocr 跳过（需安装 paddleocr）
+- CI: Python 3.11 + 3.12 全绿
+- 测试不调用外网，使用 mock provider 和 httpx.MockTransport
 
-## Legacy 实现说明
+运行真实 OCR 测试：
 
-本项目是轻量重写版，不依赖 PaddleOCR、OpenCV、SQLAlchemy 等重型组件。若仓库中存在旧实现代码，其依赖在 `requirements-legacy.txt` 中，默认安装不会安装这些包。
+```bash
+pip install -r requirements-ocr.txt
+python -m pytest -m real_ocr -v
+```
 
 ## 数据隐私
 
@@ -174,3 +183,4 @@ python -m pytest -q
 - 只有使用远程模型时，处理后的图片才会发送给所配置的视觉模型服务
 - 使用本地模型（如 Ollama）时，数据不出本机
 - 不收集任何遥测数据
+- API Key 不在日志/页面/响应中输出
