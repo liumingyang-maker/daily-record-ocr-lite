@@ -50,6 +50,10 @@ docs/superpowers/plans/2026-07-24-qwen-five-minute-timeout.md
 - 设计提交：`4bf06ba`
 - 计划提交：`bc8be24`
 - 实现提交：`c43e377`
+- PR：未创建；只允许创建 Draft/诊断 PR
+- CI：未运行；创建 Draft PR 后运行
+- Tag：不创建
+- Release：不创建
 - 审计日期：2026-07-24
 
 ## 变更
@@ -63,12 +67,21 @@ docs/superpowers/plans/2026-07-24-qwen-five-minute-timeout.md
 
 未修改 OCR、预热、多核、Pipeline、Schema、Prompt、配置页面或平台安装层。
 
+禁止项执行情况：
+
+- 未用 marker 探针或 HTTP 200 冒充正式识别成功。
+- 未用 Mock 代替真实 Vision 或 OCR。
+- 未修改或提交本机配置、图片、任务数据、日志或原始响应。
+- 真实正式任务 Gate 失败时不合并、不打 Tag、不发布。
+
 ## TDD
 
 - 基线：目标测试 `1 passed`；非 real_ocr 为 `249 passed, 5 deselected`。
 - RED：`assert 120 == 300`，结果 `1 failed, 3 passed`。
 - GREEN：目标测试 `4 passed`。
-- 全量非 real_ocr：`252 passed, 5 deselected`。
+- 独立审查加固：新增“非阿里云 qwen3.7-plus 保留原超时”契约，目标测试
+  `5 passed`。
+- 全量非 real_ocr：`253 passed, 5 deselected`。
 - Ruff：`All checks passed!`
 - `git diff --check`：通过。
 
@@ -108,8 +121,39 @@ FinalResult 或 Excel。因此不能判断模型是否理解字段任务，只�
 - 审计报告不包含 API Key、Authorization Header 或原始模型内容。
 - 桌面真实任务数据保留在本机忽略目录。
 
+## 独立 GPT 双轴复核
+
+### 任务书/设计符合性
+
+- 阻塞（已接受）：真实正式任务两次均由远端无响应断开，没有 Vision 结构、
+  FinalResult 或 Excel；因此只建议创建诊断 PR，不建议合并或发布。
+- 严重/重要：无。
+- P2（已修复）：缺少“非阿里云端点 + qwen3.7-plus 保持原超时”的负向契约。
+  已补充测试并验证目标 `5 passed`、全量 `253 passed, 5 deselected`。
+
+### 项目规范
+
+- 阻塞（已接受）：真实正式任务 Gate 未通过，禁止合并或发布。
+- 重要（已修复）：报告原先未回填独立 GPT 发现，也未明确 PR、CI、Tag 和 Release
+  状态；本节及元数据现已补齐。
+- P2（已修复）：同一非阿里云 Qwen 负向契约已补充。
+- Secret 与本机产物：未发现进入分支 diff。
+
+## Release 资产
+
+不适用。本任务未通过真实正式任务 Gate，不创建 Tag、GitHub Release 或 Release 资产，
+现有 `v1.0.1` Release 保持不变。
+
+## 遗留风险与下一步
+
+- Token Plan 正式请求在约 11–13 秒由远端主动断开，延长客户端超时不能阻止该行为。
+- 当前没有模型收到并完成正式字段任务的证据，不能评价模型字段理解能力。
+- 下一步应使用可稳定承载正式请求的端点重新执行同一完整任务；只有生成结构化结果、
+  FinalResult 并具备导出条件后，才重新评估合并。
+
 ## 当前结论
 
 五分钟超时行为的代码与自动化 Gate 通过，但真实正式任务 Gate 失败，且失败发生在远端
-无响应断开，不是客户端超时。可以创建带有失败证据的诊断 PR 供审查，但在正式任务
-成功前不建议合并，更不得发布。
+无响应断开，不是客户端超时。独立 GPT 双轴审查的代码测试 P2 和审计字段重要问题均
+已修复；真实 Gate 阻塞仍然存在。可以创建带有失败证据的 Draft/诊断 PR 供 CI 和审查，
+但在正式任务成功前不建议合并，更不得发布。

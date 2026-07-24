@@ -52,6 +52,18 @@ def test_other_models_keep_configured_timeout():
     assert provider.timeout == 120
 
 
+def test_qwen37_plus_on_other_hosts_keeps_configured_timeout():
+    provider = OpenAICompatibleVisionProvider(
+        {
+            "base_url": "https://vision.example.com/v1",
+            "model": "qwen3.7-plus",
+            "timeout_seconds": 120,
+        }
+    )
+
+    assert provider.timeout == 120
+
+
 @pytest.mark.asyncio
 async def test_qwen37_plus_uses_dashscope_json_object_mode(tmp_path):
     captured = {}
