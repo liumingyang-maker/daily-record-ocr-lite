@@ -50,9 +50,11 @@ docs/superpowers/plans/2026-07-24-qwen-five-minute-timeout.md
 - 设计提交：`4bf06ba`
 - 计划提交：`bc8be24`
 - 实现提交：`c43e377`
+- 按量实测证据提交：`ddf086544b0e99530e4fe43e56fdcc44ee9870c3`
 - PR：`https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/4`（Draft/诊断）
-- CI：`core (3.11)`、`core (3.12)`、`paddle-inference`、`install` 全部
-  `SUCCESS`；不能替代失败的真实正式任务 Gate
+- CI：代码与首轮审计 Head `a0a9ca0` 的 `core (3.11)`、`core (3.12)`、
+  `paddle-inference`、`install` 全部 `SUCCESS`；后续仅文档提交的实时 CI 以 PR 页面
+  为准。任一 CI 成功都不能替代失败的真实正式任务 Gate
 - Tag：不创建
 - Release：不创建
 - 审计日期：2026-07-24
@@ -220,8 +222,9 @@ Plan 作为正式视觉端点，也不再针对该路径增加超时、重试或
 
 B 与 C 都在响应头之前失败，且 B 已移除完整 OCR/Layout/Schema Prompt；因此现有证据
 不支持“模型不知道业务任务”或“完整 Prompt 导致失败”的单一解释。真实图/约 300 KB
-请求体与链路稳定性仍是主要候选；A 的一次成功和一次握手失败同时证明端点存在间歇性
-连接问题。没有服务端 HTTP 状态或 request_id，不能进一步归因到模型推理阶段。
+请求体与端到端链路问题都是待验证候选，现有样本不足以给二者排序；A 的一次成功和一次
+握手失败表明调用链存在间歇性连接失败。没有服务端 HTTP 状态或 request_id，不能进一步
+归因到模型推理阶段。
 
 ### Gate 与 PR 决策
 
