@@ -54,3 +54,6 @@ Thumbs.db
 
 # Legacy
 *.db
+
+# Diagnostics output
+data/diagnostics/
