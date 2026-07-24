@@ -8,6 +8,30 @@
 把中文手写生产/配方记录经 PP-OCRv6 与视觉模型双引擎识别、人工复核，并导出为
 公司—产品—配方结构的 Excel。
 
+## 快速更新到最新稳定版
+
+普通用户默认更新到最新稳定 Release Tag，不拉取尚未发布的 `master`。
+
+Windows Git 安装目录中运行：
+
+```powershell
+.\install\update-windows.ps1
+```
+
+也可以把下面整段直接复制给 AI：
+
+```text
+请读取 AGENTS.md 和 docs/AI_AGENT_UPGRADE.md，把当前 daily-record-ocr-lite 安装安全更新到最新稳定 Release Tag。
+更新前记录当前 commit/tag 并备份 data/；不得执行 git reset、git clean、删除用户配置或回显 API Key。
+如果这是 Git 安装，自动选择最高的稳定 v主版本.次版本.修订版本 Tag；不得默认更新到 master 或预发布 Tag。
+如果已是最新版，不要重复安装，只执行健康检查并报告。
+实际更新后运行非 real_ocr 测试、至少一次真实 OCR 推理和 doctor --full。
+最后输出 UPGRADE_REPORT，包括旧版本、新版本、备份位置、测试数量、真实 OCR、doctor 状态和回滚点。
+```
+
+完整步骤见 [`docs/AI_AGENT_UPGRADE.md`](docs/AI_AGENT_UPGRADE.md)。`master` 仅供用户
+明确要求抢先体验时使用，不是普通更新的默认目标。
+
 ## 让 AI 安装
 
 把仓库链接和下面这段话发给你的安装 AI：
