@@ -96,9 +96,7 @@ def run_doctor(
         "rapidfuzz",
         "numpy",
     ]
-    missing_core = [
-        module for module in core_modules if importlib.util.find_spec(module) is None
-    ]
+    missing_core = [module for module in core_modules if importlib.util.find_spec(module) is None]
     add(
         "core_packages",
         "FAIL" if missing_core else "PASS",
@@ -108,9 +106,7 @@ def run_doctor(
     )
 
     ocr_modules = ["paddle", "paddleocr", "cv2"]
-    missing_ocr = [
-        module for module in ocr_modules if importlib.util.find_spec(module) is None
-    ]
+    missing_ocr = [module for module in ocr_modules if importlib.util.find_spec(module) is None]
     if missing_ocr:
         setup_required = True
     add(
@@ -168,11 +164,7 @@ def run_doctor(
     add(
         "vision",
         "PASS" if vision_configured and not demo_mode else "WARN",
-        (
-            "真实视觉模型已配置"
-            if vision_configured and not demo_mode
-            else "真实视觉模型尚未就绪"
-        ),
+        ("真实视觉模型已配置" if vision_configured and not demo_mode else "真实视觉模型尚未就绪"),
         details={
             "provider": vision.get("provider", ""),
             "model": vision.get("model", ""),
@@ -255,9 +247,7 @@ def run_doctor(
             service.record_health("vision", False)
             add("vision_connection", "FAIL", str(exc), critical=True)
 
-    broken = any(
-        check["status"] == "FAIL" and check["critical"] for check in checks
-    )
+    broken = any(check["status"] == "FAIL" and check["critical"] for check in checks)
     try:
         current_setup_state = service.status().get("state")
     except Exception:
@@ -372,6 +362,16 @@ def _port_available(port: int) -> bool:
         sock.close()
 
 
+def _safe_print(value: str) -> None:
+    """Print without crashing on legacy Windows console encodings."""
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        value.encode(encoding)
+    except (LookupError, UnicodeEncodeError):
+        value = value.encode(encoding, errors="backslashreplace").decode(encoding)
+    print(value)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="检查 daily-record-ocr-lite 安装")
     parser.add_argument("--json", action="store_true", dest="as_json")
@@ -401,11 +401,11 @@ def main(argv: list[str] | None = None) -> int:
             ],
         }
     if args.as_json:
-        print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+        _safe_print(json.dumps(report, ensure_ascii=True, sort_keys=True))
     else:
-        print(f"daily-record-ocr-lite doctor: {report['state']}")
+        _safe_print(f"daily-record-ocr-lite doctor: {report['state']}")
         for check in report["checks"]:
-            print(f"[{check['status']}] {check['id']}: {check['message']}")
+            _safe_print(f"[{check['status']}] {check['id']}: {check['message']}")
     if args.gate:
         return 2 if report["state"] == "BROKEN" else 0
     return int(report["exit_code"])

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import json
+import sys
 
 from scripts.doctor import main, run_doctor
 
 
-def test_doctor_core_checks_are_healthy_without_real_providers(
-    tmp_path, monkeypatch
-):
+def test_doctor_core_checks_are_healthy_without_real_providers(tmp_path, monkeypatch):
     monkeypatch.setenv("DEMO_MODE", "false")
     monkeypatch.setenv("OCR_PROVIDER", "paddleocr_v6")
     monkeypatch.setenv("VISION_PROVIDER", "")
@@ -54,16 +54,12 @@ def test_doctor_provider_load_failure_is_broken(tmp_path, monkeypatch):
     )
     report = run_doctor(data_dir=tmp_path)
     assert report["state"] == "BROKEN"
-    check = next(
-        item for item in report["checks"] if item["id"] == "ocr_provider_load"
-    )
+    check = next(item for item in report["checks"] if item["id"] == "ocr_provider_load")
     assert check["status"] == "FAIL"
     assert check["critical"] is True
 
 
-def test_doctor_gate_never_fails_open_on_unexpected_exception(
-    monkeypatch, capsys
-):
+def test_doctor_gate_never_fails_open_on_unexpected_exception(monkeypatch, capsys):
     monkeypatch.setattr(
         "scripts.doctor.run_doctor",
         lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("unexpected")),
@@ -72,3 +68,36 @@ def test_doctor_gate_never_fails_open_on_unexpected_exception(
     report = json.loads(capsys.readouterr().out)
     assert report["schema_version"] == "doctor-v1"
     assert report["state"] == "BROKEN"
+
+
+def test_doctor_output_is_safe_on_legacy_windows_encoding(monkeypatch):
+    report = {
+        "schema_version": "doctor-v1",
+        "state": "SETUP_REQUIRED",
+        "exit_code": 1,
+        "checks": [
+            {
+                "id": "vision",
+                "status": "WARN",
+                "message": "视觉模型尚未配置",
+                "critical": False,
+                "details": {},
+            }
+        ],
+    }
+    monkeypatch.setattr("scripts.doctor.run_doctor", lambda **_kwargs: report)
+
+    machine_buffer = io.BytesIO()
+    machine_stdout = io.TextIOWrapper(machine_buffer, encoding="cp1252")
+    monkeypatch.setattr(sys, "stdout", machine_stdout)
+    assert main(["--json", "--gate"]) == 0
+    machine_stdout.flush()
+    serialized = machine_buffer.getvalue().decode("cp1252")
+    assert json.loads(serialized)["checks"][0]["message"] == "视觉模型尚未配置"
+
+    human_buffer = io.BytesIO()
+    human_stdout = io.TextIOWrapper(human_buffer, encoding="cp1252")
+    monkeypatch.setattr(sys, "stdout", human_stdout)
+    assert main(["--gate"]) == 0
+    human_stdout.flush()
+    assert "\\u89c6\\u89c9" in human_buffer.getvalue().decode("cp1252")
