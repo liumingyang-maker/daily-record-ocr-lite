@@ -11,6 +11,47 @@ from PIL import Image
 from lite_app.vision.openai_compatible import OpenAICompatibleVisionProvider
 
 
+def test_qwen37_plus_uses_at_least_five_minute_timeout():
+    provider = OpenAICompatibleVisionProvider(
+        {
+            "base_url": (
+                "https://token-plan.cn-beijing.maas.aliyuncs.com/"
+                "compatible-mode/v1"
+            ),
+            "endpoint": "/chat/completions",
+            "api_key": "test-key",
+            "model": "qwen3.7-plus",
+            "timeout_seconds": 120,
+        }
+    )
+
+    assert provider.timeout == 300
+
+
+def test_qwen37_plus_preserves_longer_timeout():
+    provider = OpenAICompatibleVisionProvider(
+        {
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen3.7-plus",
+            "timeout_seconds": 420,
+        }
+    )
+
+    assert provider.timeout == 420
+
+
+def test_other_models_keep_configured_timeout():
+    provider = OpenAICompatibleVisionProvider(
+        {
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen-plus",
+            "timeout_seconds": 120,
+        }
+    )
+
+    assert provider.timeout == 120
+
+
 @pytest.mark.asyncio
 async def test_qwen37_plus_uses_dashscope_json_object_mode(tmp_path):
     captured = {}

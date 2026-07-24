@@ -32,7 +32,15 @@ class OpenAICompatibleVisionProvider(VisionProvider):
         self.url = self.base_url + endpoint
         self.api_key = config.get("api_key", "")
         self.model = config.get("model", "")
+        self.is_alibaba_qwen37 = (
+            (urlparse(self.base_url).hostname or "").lower().endswith(
+                ".aliyuncs.com"
+            )
+            and self.model.lower() == "qwen3.7-plus"
+        )
         self.timeout = int(config.get("timeout_seconds", 180))
+        if self.is_alibaba_qwen37:
+            self.timeout = max(self.timeout, 300)
         self.temperature = config.get("temperature", 0)
         self.image_detail = config.get("image_detail", "high")
         self.use_json_schema = config.get("use_json_schema", False)
@@ -85,12 +93,7 @@ class OpenAICompatibleVisionProvider(VisionProvider):
         if self.extra_body:
             body.update(self.extra_body)
 
-        if (
-            (urlparse(self.base_url).hostname or "").lower().endswith(
-                ".aliyuncs.com"
-            )
-            and self.model.lower() == "qwen3.7-plus"
-        ):
+        if self.is_alibaba_qwen37:
             body["response_format"] = {"type": "json_object"}
             body["enable_thinking"] = False
 
