@@ -237,7 +237,59 @@ def test_vision_connection_test_reports_capabilities(
     assert result["http_status"] == 200
     assert result["vision_capability"] is True
     assert result["json_response_capability"] is True
+    assert result["strict_json_capability"] is True
+    assert result["response_preview"] == '{"marker": "VISION-7319"}'
+    assert result["error_category"] is None
     assert isinstance(result["latency_ms"], int)
+
+
+def test_vision_connection_test_accepts_markdown_json(
+    v1_client, monkeypatch: pytest.MonkeyPatch
+):
+    client, _, _ = v1_client
+    from lite_app import main, pipeline_v2
+
+    class FakeVisionProvider:
+        async def analyze(self, *_args, **_kwargs):
+            return '```json\n{"marker":"VISION-7319"}\n```'
+
+    monkeypatch.setattr(main, "_demo_enabled", lambda: False)
+    monkeypatch.setattr(
+        pipeline_v2,
+        "build_vision_provider",
+        lambda _config: FakeVisionProvider(),
+    )
+    result = client.post("/api/settings/test-vision", json={}).json()
+    assert result["status"] == "OK"
+    assert result["vision_capability"] is True
+    assert result["json_response_capability"] is True
+    assert result["strict_json_capability"] is False
+    assert result["error_category"] is None
+    assert len(result["response_preview"]) <= 500
+
+
+def test_vision_connection_test_separates_wrong_marker_from_json_failure(
+    v1_client, monkeypatch: pytest.MonkeyPatch
+):
+    client, _, _ = v1_client
+    from lite_app import main, pipeline_v2
+
+    class FakeVisionProvider:
+        async def analyze(self, *_args, **_kwargs):
+            return '{"marker":"VISION-0000"}'
+
+    monkeypatch.setattr(main, "_demo_enabled", lambda: False)
+    monkeypatch.setattr(
+        pipeline_v2,
+        "build_vision_provider",
+        lambda _config: FakeVisionProvider(),
+    )
+    result = client.post("/api/settings/test-vision", json={}).json()
+    assert result["status"] == "FAILED_VISION_CAPABILITY"
+    assert result["vision_capability"] is False
+    assert result["json_response_capability"] is True
+    assert result["strict_json_capability"] is True
+    assert result["error_category"] == "VISION_CAPABILITY"
 
 
 def test_ocr_connection_test_reports_tokens_and_overlay(

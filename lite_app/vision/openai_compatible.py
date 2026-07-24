@@ -8,6 +8,7 @@ import logging
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -83,6 +84,15 @@ class OpenAICompatibleVisionProvider(VisionProvider):
 
         if self.extra_body:
             body.update(self.extra_body)
+
+        if (
+            (urlparse(self.base_url).hostname or "").lower().endswith(
+                ".aliyuncs.com"
+            )
+            and self.model.lower() == "qwen3.7-plus"
+        ):
+            body["response_format"] = {"type": "json_object"}
+            body["enable_thinking"] = False
 
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.api_key:

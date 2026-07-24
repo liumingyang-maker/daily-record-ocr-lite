@@ -22,13 +22,16 @@ env/
 .env
 
 # Task data
-data/jobs/*/
+data/jobs/**
 !data/jobs/.gitkeep
 data/cache/
 data/settings.json
 data/secrets.env
 data/setup_health.json
 data/last-doctor.json
+data/connection-test.png
+data/*.log
+data/*response*.json
 backups/
 
 # Knowledge DB

@@ -311,12 +311,20 @@ async def disable_demo(request: Request):
 @app.post("/api/settings/test-vision")
 async def test_vision_settings(request: Request):
     _guard_local_json_write(request)
+    vision = _get_settings().effective_settings()["vision"]
     if _demo_enabled():
         return {
             "status": "DEMO_MODE",
+            "provider": vision.get("provider", ""),
+            "model": vision.get("model", ""),
+            "latency_ms": 0,
+            "http_status": None,
             "message": "演示模式使用固定结果；未发起真实视觉模型请求。",
             "vision_capability": False,
             "json_response_capability": False,
+            "strict_json_capability": False,
+            "response_preview": "",
+            "error_category": None,
         }
     from .pipeline_v2 import build_vision_provider
     from .vision.probe import (
@@ -324,10 +332,10 @@ async def test_vision_settings(request: Request):
         PROBE_SYSTEM_PROMPT,
         PROBE_USER_PROMPT,
         create_probe_image,
-        validate_probe_response,
+        evaluate_probe_response,
+        safe_response_preview,
     )
 
-    vision = _get_settings().effective_settings()["vision"]
     provider = build_vision_provider(vision)
     _get_settings().data_dir.mkdir(parents=True, exist_ok=True)
     test_image = _get_settings().data_dir / "connection-test.png"
@@ -361,23 +369,36 @@ async def test_vision_settings(request: Request):
                 "http_status": None,
                 "vision_capability": False,
                 "json_response_capability": False,
+                "strict_json_capability": False,
+                "response_preview": "",
                 "error_category": category,
                 "error_type": type(exc).__name__,
             },
         )
     finally:
         test_image.unlink(missing_ok=True)
-    json_capability = validate_probe_response(raw)
-    _get_settings().record_health("vision", json_capability)
+    capabilities = evaluate_probe_response(raw)
+    _get_settings().record_health("vision", capabilities.vision_capability)
+    if capabilities.vision_capability:
+        status = "OK"
+        error_category = None
+    elif capabilities.json_response_capability:
+        status = "FAILED_VISION_CAPABILITY"
+        error_category = "VISION_CAPABILITY"
+    else:
+        status = "FAILED_JSON_CAPABILITY"
+        error_category = "JSON_CAPABILITY"
     return {
-        "status": "OK" if json_capability else "FAILED_JSON_CAPABILITY",
+        "status": status,
         "provider": vision.get("provider", ""),
         "model": vision.get("model", ""),
         "latency_ms": int((time.monotonic() - started) * 1000),
         "http_status": 200,
-        "vision_capability": json_capability,
-        "json_response_capability": json_capability,
-        "error_category": None,
+        "vision_capability": capabilities.vision_capability,
+        "json_response_capability": capabilities.json_response_capability,
+        "strict_json_capability": capabilities.strict_json_capability,
+        "response_preview": safe_response_preview(raw, vision.get("api_key", "")),
+        "error_category": error_category,
     }
 
 
