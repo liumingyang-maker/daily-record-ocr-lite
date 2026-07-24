@@ -272,6 +272,59 @@ def test_windows_updater_reuses_hardened_installer():
     assert "& $Installer @InstallArguments" in script
 
 
+def test_windows_updater_targets_latest_stable_tag_safely():
+    from lite_app.config import PROJECT_ROOT
+
+    script = (PROJECT_ROOT / "install" / "update-windows.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+
+    assert '[string]$Ref = "latest"' in script
+    assert "git ls-remote --tags --refs --sort=-v:refname origin" in script
+    assert "git tag --list" not in script
+    assert r"'^v\d+\.\d+\.\d+$'" in script
+    assert '"refs/tags/$TargetRef"' in script
+    assert "git checkout --detach $TargetRef" in script
+    assert "git pull --ff-only origin $TargetRef" in script
+    assert "git reset" not in script
+    assert "git clean" not in script
+    assert "Remove-Item" not in script
+
+    already_latest = script.split(
+        "if ($PreviousCommit -eq $TargetCommit)", 1
+    )[1].split("git show-ref", 1)[0]
+    assert "scripts\\doctor.py" in already_latest
+    assert "--json --gate" in already_latest
+    assert already_latest.index("scripts\\doctor.py") < already_latest.index("exit 0")
+
+
+def test_readme_and_ai_upgrade_guide_target_latest_stable_release():
+    from lite_app.config import PROJECT_ROOT
+
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    guide = (PROJECT_ROOT / "docs" / "AI_AGENT_UPGRADE.md").read_text(
+        encoding="utf-8"
+    )
+
+    for required in (
+        "最新稳定 Release Tag",
+        "AGENTS.md",
+        "docs/AI_AGENT_UPGRADE.md",
+        "UPGRADE_REPORT",
+    ):
+        assert required in readme
+    for required in (
+        r"^v[0-9]+\.[0-9]+\.[0-9]+$",
+        "git fetch --tags origin",
+        "git checkout --detach",
+        'python -m pytest -m "not real_ocr" -q',
+        "python -m pytest -m real_ocr -q -s",
+        "python scripts/doctor.py --full --json",
+        "UPGRADE_REPORT",
+    ):
+        assert required in guide
+
+
 def test_environment_overrides_persisted_settings(tmp_path, monkeypatch):
     import lite_app.config as config_module
 

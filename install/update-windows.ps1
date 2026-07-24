@@ -1,5 +1,5 @@
 ﻿param(
-    [string]$Ref = "master",
+    [string]$Ref = "latest",
     [ValidateSet("Cpu", "Gpu")]
     [string]$OcrMode = "Cpu",
     [string]$PaddleInstallCommand = "",
@@ -9,6 +9,14 @@
 $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $Root
+$PreviousCommit = (git rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw "无法读取当前 Git commit。"
+}
+$PreviousLabel = (git describe --tags --exact-match 2>$null)
+if (-not $PreviousLabel) {
+    $PreviousLabel = $PreviousCommit
+}
 if (git status --porcelain) {
     throw "工作区有未提交改动；为避免覆盖，更新已停止。"
 }
@@ -19,8 +27,64 @@ if (Test-Path "data") {
     Copy-Item -Recurse -Force -Path "data\*" -Destination $Backup
 }
 git fetch --tags origin
-git checkout $Ref
-git pull --ff-only origin $Ref
+if ($LASTEXITCODE -ne 0) {
+    throw "无法从 origin 获取版本标签。"
+}
+
+$TargetRef = $Ref
+if ($Ref -eq "latest") {
+    $RemoteTagRefs = git ls-remote --tags --refs --sort=-v:refname origin "v*"
+    if ($LASTEXITCODE -ne 0) {
+        throw "无法读取 origin 的稳定版本标签。"
+    }
+    $TargetRef = $RemoteTagRefs |
+        ForEach-Object {
+            $Columns = $_ -split "\s+"
+            if ($Columns.Count -ge 2) {
+                $Columns[1] -replace "^refs/tags/", ""
+            }
+        } |
+        Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
+        Select-Object -First 1
+    if (-not $TargetRef) {
+        throw "没有找到稳定 Release Tag（格式 v主版本.次版本.修订版本）。"
+    }
+}
+
+$TargetCommit = (git rev-list -n 1 $TargetRef 2>$null)
+if ($LASTEXITCODE -ne 0 -or -not $TargetCommit) {
+    throw "无法解析更新目标: $TargetRef"
+}
+$TargetCommit = $TargetCommit.Trim()
+if ($PreviousCommit -eq $TargetCommit) {
+    $DoctorPython = Join-Path $Root ".venv\Scripts\python.exe"
+    $DoctorScript = Join-Path $Root "scripts\doctor.py"
+    if (Test-Path $DoctorPython) {
+        & $DoctorPython $DoctorScript --json --gate
+        if ($LASTEXITCODE -ne 0) {
+            throw "已经是目标版本，但 doctor 健康检查失败。"
+        }
+        Write-Host "已经是目标稳定版本 $TargetRef；无需重复安装。"
+        Write-Host "数据备份位于 $Backup"
+        exit 0
+    }
+    Write-Host "已经是目标版本，但缺少 .venv；继续修复安装。"
+}
+
+git show-ref --verify --quiet "refs/tags/$TargetRef"
+$IsTag = $LASTEXITCODE -eq 0
+if ($IsTag) {
+    git checkout --detach $TargetRef
+} else {
+    git checkout $TargetRef
+    if ($LASTEXITCODE -ne 0) {
+        throw "无法切换到更新目标: $TargetRef"
+    }
+    git pull --ff-only origin $TargetRef
+}
+if ($LASTEXITCODE -ne 0) {
+    throw "无法更新到目标: $TargetRef"
+}
 
 $Installer = Join-Path $Root "install\install-windows.ps1"
 $InstallArguments = @{ OcrMode = $OcrMode }
@@ -31,4 +95,6 @@ if ($SkipOcr) {
     $InstallArguments["SkipOcr"] = $true
 }
 & $Installer @InstallArguments
-Write-Host "更新完成；数据备份位于 $Backup"
+Write-Host "更新完成：$PreviousLabel -> $TargetRef"
+Write-Host "回滚点：$PreviousCommit"
+Write-Host "数据备份位于 $Backup"
