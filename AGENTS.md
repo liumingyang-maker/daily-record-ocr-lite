@@ -44,3 +44,11 @@ python scripts/doctor.py --full --json
 OCR provider/tier/device、真实 OCR 测试通过数、Vision 配置/连接状态、doctor 状态、
 应用 URL、Demo 是否关闭、未完成项及下一步。失败时同时提供失败命令、退出码、
 最后一段错误（脱敏）、已尝试修复和用户需要采取的动作。
+
+## 审计报告与 GPT 复核
+
+1. 每个发布、热修复或合并任务完成前，必须在 `docs/audits/` 生成独立审计报告。
+2. 报告必须包含范围、禁止项、Commit/PR/Tag、测试与 CI、真实能力验收、Secret 扫描、Release 资产和遗留风险。
+3. 报告必须交给独立 GPT，分别按项目规范和任务书进行审查；不得只由实施者自审。
+4. GPT 的发现必须回填报告，并标记为已修复、已接受或阻塞；存在未处理的严重问题时不得声称完成。
+5. 审计报告不得包含 API Key、Authorization Header、原始私密响应或用户本机配置内容。
