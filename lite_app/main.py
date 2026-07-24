@@ -53,19 +53,22 @@ async def lifespan(app: FastAPI):
 
 
 async def _process_job_background(job_id: str) -> None:
-    """后台处理单个任务：双引擎 pipeline，失败时回退旧 pipeline。"""
+    """后台处理单个任务：双引擎 pipeline。失败时标记 FAILED/DEGRADED，不回退旧 pipeline。"""
     storage = _get_storage()
     try:
         from .pipeline_v2 import analyze_job_v2
         await analyze_job_v2(job_id, storage)
     except Exception as e:
-        logger.warning("任务 %s 双引擎识别失败，回退旧 pipeline: %s", job_id, e)
+        logger.error("任务 %s 双引擎识别失败: %s", job_id, e)
+        # 标记为 DEGRADED，明确提示未完成双引擎验证
         try:
-            await analyze_job(job_id, storage)
-        except (PipelineError, VisionProviderError) as e2:
-            logger.warning("任务 %s 识别失败: %s", job_id, e2)
+            job = storage.get_job(job_id)
+            job["status"] = "DEGRADED"
+            job["error"] = f"双引擎识别失败: {e}"
+            job["status_message"] = "双引擎识别未完成，结果不可靠。请检查 OCR/VLM 配置后重新识别。"
+            storage.save_job(job)
         except Exception:
-            logger.exception("任务 %s 未知错误", job_id)
+            logger.exception("任务 %s 状态更新失败", job_id)
 
 
 app = FastAPI(title="daily-record-ocr-lite", lifespan=lifespan)
@@ -522,12 +525,47 @@ async def update_field(job_id: str, field_id: str, request: Request):
 
 @app.post("/api/jobs/{job_id}/confirm")
 async def confirm_job(job_id: str):
-    """确认所有字段，标记任务为 READY。"""
+    """确认所有字段。检查未确认 CONFLICT 和关键 EMPTY 字段，不能无条件 READY。"""
     storage = _get_storage()
     try:
         job = storage.get_job(job_id)
     except (FileNotFoundError, ValueError):
         raise HTTPException(status_code=404, detail="任务不存在。")
+
+    # 检查融合结果中的冲突和空字段
+    job_dir = storage.get_job_dir(job_id)
+    fusion_path = job_dir / "fusion" / "result.json"
+    unresolved_conflicts = []
+    critical_empties = []
+
+    if fusion_path.exists():
+        try:
+            fusion_data = json.loads(fusion_path.read_text(encoding="utf-8"))
+            for f in fusion_data.get("fields", []):
+                if f.get("status") == "CONFLICT":
+                    unresolved_conflicts.append(f.get("field_id", ""))
+                elif f.get("status") == "EMPTY" and f.get("field_type") in ("amount", "text"):
+                    # 关键 EMPTY：名称或数量为空
+                    if "_name" in f.get("field_id", "") or "_amount" in f.get("field_id", ""):
+                        critical_empties.append(f.get("field_id", ""))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    if unresolved_conflicts:
+        return {
+            "status": "REVIEW_REQUIRED",
+            "error": f"存在 {len(unresolved_conflicts)} 个未解决冲突字段，不能确认。",
+            "unresolved_conflicts": unresolved_conflicts[:10],
+            "critical_empties": critical_empties[:10],
+        }
+
+    if critical_empties:
+        return {
+            "status": "REVIEW_REQUIRED",
+            "error": f"存在 {len(critical_empties)} 个关键空字段（名称/数量），不能确认。",
+            "unresolved_conflicts": [],
+            "critical_empties": critical_empties[:10],
+        }
 
     job["status"] = "READY"
     job["status_message"] = "所有字段已确认。"

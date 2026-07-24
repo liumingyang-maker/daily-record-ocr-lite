@@ -51,11 +51,29 @@ class PaddleOCRv6Provider(OCRProvider):
                 ) from e
 
             try:
+                # PP-OCRv6 tier → 真实模型名称映射
+                model_map = {
+                    "tiny": {
+                        "text_detection_model_name": "PP-OCRv6_mobile_det",
+                        "text_recognition_model_name": "PP-OCRv6_mobile_rec",
+                    },
+                    "small": {
+                        "text_detection_model_name": "PP-OCRv6_mobile_det",
+                        "text_recognition_model_name": "PP-OCRv6_server_rec",
+                    },
+                    "medium": {
+                        "text_detection_model_name": "PP-OCRv6_server_det",
+                        "text_recognition_model_name": "PP-OCRv6_server_rec",
+                    },
+                }
+                tier_models = model_map.get(self._tier, model_map["medium"])
+
                 self._model = PaddleOCR(
                     use_doc_orientation_classify=False,
                     use_doc_unwarping=False,
                     use_textline_orientation=self._use_textline_orientation,
                     device=self._device,
+                    **tier_models,
                 )
             except Exception as e:
                 raise RuntimeError(
