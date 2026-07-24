@@ -90,6 +90,7 @@ def test_visual_probe_contract_does_not_disclose_the_answer():
         PROBE_SCHEMA,
         PROBE_SYSTEM_PROMPT,
         PROBE_USER_PROMPT,
+        evaluate_probe_response,
         validate_probe_response,
     )
 
@@ -104,6 +105,51 @@ def test_visual_probe_contract_does_not_disclose_the_answer():
     assert PROBE_MARKER not in text_only_contract
     assert validate_probe_response(json.dumps({"marker": PROBE_MARKER})) is True
     assert validate_probe_response('{"marker": "VISION-0000"}') is False
+
+    pure = evaluate_probe_response('{"marker":"VISION-7319"}')
+    assert pure.strict_json_capability is True
+    assert pure.json_response_capability is True
+    assert pure.vision_capability is True
+
+    fenced = evaluate_probe_response(
+        '```json\n{"marker":"VISION-7319"}\n```'
+    )
+    assert fenced.strict_json_capability is False
+    assert fenced.json_response_capability is True
+    assert fenced.vision_capability is True
+
+
+def test_visual_probe_extracts_an_object_without_repairing_its_marker():
+    from lite_app.vision.probe import (
+        evaluate_probe_response,
+        safe_response_preview,
+    )
+
+    explained = evaluate_probe_response(
+        'Here is the JSON result:\n{"marker":"VISION-7319"}\nDone.'
+    )
+    assert explained.strict_json_capability is False
+    assert explained.json_response_capability is True
+    assert explained.vision_capability is True
+
+    wrong = evaluate_probe_response('```json\n{"marker":"VISION-0000"}\n```')
+    assert wrong.strict_json_capability is False
+    assert wrong.json_response_capability is True
+    assert wrong.vision_capability is False
+    assert wrong.parsed == {"marker": "VISION-0000"}
+
+    invalid = evaluate_probe_response("not JSON")
+    assert invalid.strict_json_capability is False
+    assert invalid.json_response_capability is False
+    assert invalid.vision_capability is False
+
+    preview = safe_response_preview(
+        '{"marker":"VISION-7319"}\nAuthorization: Bearer sk-secret',
+        "sk-secret",
+    )
+    assert "sk-secret" not in preview
+    assert "Bearer" not in preview
+    assert len(preview) <= 500
 
 
 def test_record_v1_ids_are_rewritten_locally_and_reused_by_projection():
