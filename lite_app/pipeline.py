@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -105,7 +104,6 @@ def _extract_from_fence(text: str) -> dict[str, Any] | None:
 def _extract_from_brace(text: str) -> dict[str, Any] | None:
     """遍历所有 { 位置，用 raw_decode 尝试提取首个合法顶层对象。"""
     decoder = json.JSONDecoder()
-    last_error: Exception | None = None
     for i, char in enumerate(text):
         if char != "{":
             continue
@@ -115,8 +113,7 @@ def _extract_from_brace(text: str) -> dict[str, Any] | None:
                 return result
             if isinstance(result, list):
                 raise PipelineError("模型返回了 JSON 数组，但需要的是 JSON 对象。")
-        except json.JSONDecodeError as e:
-            last_error = e
+        except json.JSONDecodeError:
             continue
     return None
 

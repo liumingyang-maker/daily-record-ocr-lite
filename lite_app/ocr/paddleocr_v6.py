@@ -12,6 +12,18 @@ from .base import OCRPage, OCRProvider, OCRToken
 
 logger = logging.getLogger(__name__)
 
+TIER_MODELS = {
+    tier: {
+        "text_detection_model_name": f"PP-OCRv6_{tier}_det",
+        "text_recognition_model_name": f"PP-OCRv6_{tier}_rec",
+    }
+    for tier in ("tiny", "small", "medium")
+}
+
+
+class OCRResultParseError(RuntimeError):
+    """PaddleOCR returned a shape the installed adapter cannot interpret."""
+
 
 class PaddleOCRv6Provider(OCRProvider):
     """PP-OCRv6 真实 OCR Provider。模型只初始化一次并复用。"""
@@ -23,6 +35,8 @@ class PaddleOCRv6Provider(OCRProvider):
         minimum_score: float = 0.45,
         use_textline_orientation: bool = True,
     ) -> None:
+        if tier not in TIER_MODELS:
+            raise ValueError(f"不支持的 PP-OCRv6 tier: {tier}")
         self._device = device
         self._tier = tier
         self._minimum_score = minimum_score
@@ -51,29 +65,18 @@ class PaddleOCRv6Provider(OCRProvider):
                 ) from e
 
             try:
-                # PP-OCRv6 tier → 真实模型名称映射
-                model_map = {
-                    "tiny": {
-                        "text_detection_model_name": "PP-OCRv6_mobile_det",
-                        "text_recognition_model_name": "PP-OCRv6_mobile_rec",
-                    },
-                    "small": {
-                        "text_detection_model_name": "PP-OCRv6_mobile_det",
-                        "text_recognition_model_name": "PP-OCRv6_server_rec",
-                    },
-                    "medium": {
-                        "text_detection_model_name": "PP-OCRv6_server_det",
-                        "text_recognition_model_name": "PP-OCRv6_server_rec",
-                    },
-                }
-                tier_models = model_map.get(self._tier, model_map["medium"])
-
+                engine_options = {}
+                if self._device.lower().split(":", 1)[0] == "cpu":
+                    # Paddle 3.3.x can crash in the oneDNN/PIR executor during
+                    # PP-OCR inference. Prefer correctness over CPU acceleration.
+                    engine_options["enable_mkldnn"] = False
                 self._model = PaddleOCR(
                     use_doc_orientation_classify=False,
                     use_doc_unwarping=False,
                     use_textline_orientation=self._use_textline_orientation,
                     device=self._device,
-                    **tier_models,
+                    **engine_options,
+                    **TIER_MODELS[self._tier],
                 )
             except Exception as e:
                 raise RuntimeError(
@@ -117,77 +120,80 @@ class PaddleOCRv6Provider(OCRProvider):
             tokens=tokens,
             average_confidence=round(avg_conf, 4),
             provider="paddleocr_v6",
-            model=f"pp-ocrv6-{self._tier}",
+            model=f"PP-OCRv6_{self._tier}",
             elapsed_ms=elapsed,
             warnings=warnings,
         )
 
     def _parse_result(self, result: Any, img_width: int, img_height: int) -> list[OCRToken]:
         """解析 PaddleOCR 3.x predict() 返回结构。"""
+        if isinstance(result, (list, tuple)):
+            if not result:
+                return []
+            page_result = result[0]
+        else:
+            page_result = result
+
+        data: Any = page_result
+        if not isinstance(data, dict) and hasattr(page_result, "json"):
+            data = page_result.json
+            if callable(data):
+                data = data()
+        if isinstance(data, dict) and isinstance(data.get("res"), dict):
+            data = data["res"]
+
+        if isinstance(data, dict):
+            rec_texts = data.get("rec_texts")
+            rec_scores = data.get("rec_scores")
+            rec_polys = data.get("rec_polys", data.get("dt_polys"))
+        else:
+            rec_texts = getattr(page_result, "rec_texts", None)
+            rec_scores = getattr(page_result, "rec_scores", None)
+            rec_polys = getattr(
+                page_result,
+                "rec_polys",
+                getattr(page_result, "dt_polys", None),
+            )
+
+        if rec_texts is None or rec_scores is None:
+            raise OCRResultParseError(
+                f"无法解析 PaddleOCR 返回结构: {type(page_result).__name__}"
+            )
+        if len(rec_texts) != len(rec_scores):
+            raise OCRResultParseError(
+                f"PaddleOCR 文本与置信度数量不一致: {len(rec_texts)} != {len(rec_scores)}"
+            )
+        if rec_texts and rec_polys is None:
+            raise OCRResultParseError("PaddleOCR 返回文本但缺少 rec_polys/dt_polys")
+
         tokens: list[OCRToken] = []
-
-        try:
-            # PaddleOCR 3.x 返回格式适配
-            if isinstance(result, list) and len(result) > 0:
-                page_result = result[0]
-            else:
-                page_result = result
-
-            # 尝试获取 rec_texts, rec_scores, rec_polys
-            rec_texts = None
-            rec_scores = None
-            rec_polys = None
-
-            if hasattr(page_result, "rec_texts"):
-                rec_texts = page_result.rec_texts
-                rec_scores = page_result.rec_scores
-                rec_polys = page_result.rec_polys
-            elif isinstance(page_result, dict):
-                rec_texts = page_result.get("rec_texts", [])
-                rec_scores = page_result.get("rec_scores", [])
-                rec_polys = page_result.get("rec_polys", [])
-            elif hasattr(page_result, "__getitem__"):
-                # 可能是嵌套结构
-                if "rec_texts" in page_result:
-                    rec_texts = page_result["rec_texts"]
-                    rec_scores = page_result["rec_scores"]
-                    rec_polys = page_result["rec_polys"]
-
-            if rec_texts is None:
-                logger.warning("无法解析 PaddleOCR 返回结构: %s", type(page_result))
-                return tokens
-
-            for i, (text, score) in enumerate(zip(rec_texts, rec_scores)):
-                polygon = []
-                bbox = [0.0, 0.0, 0.0, 0.0]
-
-                if rec_polys is not None and i < len(rec_polys):
-                    poly = rec_polys[i]
-                    # poly 可能是 numpy array 或 list
-                    if hasattr(poly, "tolist"):
-                        poly = poly.tolist()
-                    polygon = [[float(p[0]), float(p[1])] for p in poly]
-                    xs = [p[0] for p in polygon]
-                    ys = [p[1] for p in polygon]
-                    bbox = [min(xs), min(ys), max(xs), max(ys)]
-                
-                center_x = (bbox[0] + bbox[2]) / 2 if bbox[2] > 0 else 0
-                center_y = (bbox[1] + bbox[3]) / 2 if bbox[3] > 0 else 0
-
-                tokens.append(OCRToken(
-                    id=f"p1_t{i+1:03d}",
+        for index, (text, score) in enumerate(zip(rec_texts, rec_scores), 1):
+            poly = rec_polys[index - 1]
+            if hasattr(poly, "tolist"):
+                poly = poly.tolist()
+            try:
+                polygon = [[float(point[0]), float(point[1])] for point in poly]
+            except (TypeError, ValueError, IndexError) as exc:
+                raise OCRResultParseError(
+                    f"PaddleOCR 第 {index} 个 polygon 非法"
+                ) from exc
+            if not polygon:
+                raise OCRResultParseError(f"PaddleOCR 第 {index} 个 polygon 为空")
+            xs = [point[0] for point in polygon]
+            ys = [point[1] for point in polygon]
+            bbox = [min(xs), min(ys), max(xs), max(ys)]
+            tokens.append(
+                OCRToken(
+                    id=f"t{index:03d}",
                     text=str(text),
                     confidence=float(score),
                     polygon=polygon,
                     bbox=bbox,
-                    center_x=center_x,
-                    center_y=center_y,
+                    center_x=(bbox[0] + bbox[2]) / 2,
+                    center_y=(bbox[1] + bbox[3]) / 2,
                     line_index=None,
                     source_variant="base",
-                    raw={"text": text, "score": float(score)},
-                ))
-
-        except Exception as e:
-            logger.error("解析 PaddleOCR 结果出错: %s", e)
-
+                    raw={"text": str(text), "score": float(score)},
+                )
+            )
         return tokens

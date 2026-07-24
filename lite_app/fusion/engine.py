@@ -7,9 +7,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..knowledge.matcher import normalize_text
-
 logger = logging.getLogger(__name__)
+
+
+class FusionError(RuntimeError):
+    """Candidate fusion cannot produce a contract-safe result."""
+
 
 # 字段状态
 AUTO_ACCEPT = "AUTO_ACCEPT"
@@ -17,6 +20,14 @@ NEED_REVIEW = "NEED_REVIEW"
 CONFLICT = "CONFLICT"
 EMPTY = "EMPTY"
 MANUAL_CONFIRMED = "MANUAL_CONFIRMED"
+
+
+def _is_ocr_source(source: str) -> bool:
+    return source.startswith("ocr") or source.startswith("local_ocr")
+
+
+def _is_vlm_source(source: str) -> bool:
+    return source == "vlm" or source.startswith("local_vlm")
 
 
 @dataclass
@@ -107,8 +118,8 @@ class FusionEngine:
 
         # OCR 与 VLM 一致加分
         sources = {c.source for c in best_group}
-        has_ocr = any(s.startswith("ocr") for s in sources)
-        has_vlm = "vlm" in sources
+        has_ocr = any(_is_ocr_source(source) for source in sources)
+        has_vlm = any(_is_vlm_source(source) for source in sources)
 
         if has_ocr and has_vlm:
             base_conf = min(base_conf + self.agree_bonus, 0.98)
@@ -122,7 +133,7 @@ class FusionEngine:
             fused.final_source = best_group[0].source
 
         # 低 OCR 置信度惩罚
-        ocr_candidates = [c for c in best_group if c.source.startswith("ocr")]
+        ocr_candidates = [c for c in best_group if _is_ocr_source(c.source)]
         if ocr_candidates and max(c.confidence for c in ocr_candidates) < self.low_ocr_threshold:
             base_conf -= self.low_ocr_penalty
             fused.reasons.append("OCR 置信度偏低")
@@ -157,8 +168,8 @@ class FusionEngine:
         candidates = fused.raw_candidates
 
         # 提取 OCR 和 VLM 候选
-        ocr_candidates = [c for c in candidates if c.source.startswith("ocr")]
-        vlm_candidates = [c for c in candidates if c.source == "vlm"]
+        ocr_candidates = [c for c in candidates if _is_ocr_source(c.source)]
+        vlm_candidates = [c for c in candidates if _is_vlm_source(c.source)]
         history_candidates = [c for c in candidates if c.source.startswith("history")]
 
         ocr_val = ocr_candidates[0].value if ocr_candidates else ""
@@ -220,8 +231,8 @@ class FusionEngine:
         """型号字段融合。"""
         # 型号基本逻辑与文字类似，但数字部分严格
         candidates = fused.raw_candidates
-        ocr_candidates = [c for c in candidates if c.source.startswith("ocr")]
-        vlm_candidates = [c for c in candidates if c.source == "vlm"]
+        ocr_candidates = [c for c in candidates if _is_ocr_source(c.source)]
+        vlm_candidates = [c for c in candidates if _is_vlm_source(c.source)]
 
         ocr_val = ocr_candidates[0].value if ocr_candidates else ""
         vlm_val = vlm_candidates[0].value if vlm_candidates else ""
@@ -273,7 +284,7 @@ class FusionEngine:
             return fused
 
         # 优先 OCR
-        ocr_candidates = [c for c in candidates if c.source.startswith("ocr")]
+        ocr_candidates = [c for c in candidates if _is_ocr_source(c.source)]
         if ocr_candidates:
             fused.final_value = ocr_candidates[0].value
             fused.final_confidence = round(ocr_candidates[0].confidence, 4)

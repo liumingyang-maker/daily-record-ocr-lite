@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .knowledge.database import KnowledgeDB
+from .storage import read_json_optional, write_json_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,28 @@ def build_cache_key(
     """构建缓存键。"""
     parts = [image_hash[:16], stage, provider, model, prompt_version, preprocess_version]
     return ":".join(p for p in parts if p)
+
+
+class FileRecognitionCache:
+    """Job-independent cache blobs; SQLite may index these paths separately."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = Path(root)
+
+    def _path(self, stage: str, key: str) -> Path:
+        if stage not in {"ocr", "vision"}:
+            raise ValueError(f"不支持的缓存阶段: {stage}")
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        return self.root / stage / digest[:2] / f"{digest}.json"
+
+    def put_json(self, stage: str, key: str, value: dict[str, Any]) -> Path:
+        path = self._path(stage, key)
+        write_json_atomic(path, value)
+        return path
+
+    def get_json(self, stage: str, key: str) -> dict[str, Any] | None:
+        value = read_json_optional(self._path(stage, key))
+        return value if isinstance(value, dict) else None
 
 
 class RecognitionCache:

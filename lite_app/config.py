@@ -14,24 +14,50 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+_SETTINGS_ENVIRONMENT_OVERRIDES = {
+    "vision": {
+        "provider": "VISION_PROVIDER",
+        "base_url": "VISION_BASE_URL",
+        "endpoint": "VISION_ENDPOINT",
+        "model": "VISION_MODEL",
+    },
+    "ocr": {
+        "provider": "OCR_PROVIDER",
+        "tier": "OCR_TIER",
+        "device": "OCR_DEVICE",
+        "minimum_score": "OCR_MIN_SCORE",
+    },
+}
 
 
 def _load_dotenv() -> None:
     """加载项目根目录下的 .env 文件（不覆盖已有环境变量）。"""
-    env_file = PROJECT_ROOT / ".env"
-    if not env_file.exists():
-        return
-    for line in env_file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
+    for env_file in (PROJECT_ROOT / ".env",):
+        if not env_file.exists():
             continue
-        if "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip().strip("'\"")
-        if key and key not in os.environ:
-            os.environ[key] = value
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip("'\"")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+def _current_vision_api_key() -> str:
+    environment_value = os.environ.get("VISION_API_KEY", "")
+    if environment_value:
+        return environment_value
+    secrets_path = PROJECT_ROOT / "data" / "secrets.env"
+    if not secrets_path.exists():
+        return ""
+    for line in secrets_path.read_text(encoding="utf-8").splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip() == "VISION_API_KEY":
+            return value.strip()
+    return ""
 
 
 def _substitute_env(value: str) -> str:
@@ -54,6 +80,17 @@ def _resolve_value(obj: Any) -> Any:
     if isinstance(obj, list):
         return [_resolve_value(item) for item in obj]
     return obj
+
+
+def _apply_settings_environment_overrides(data: dict[str, Any]) -> None:
+    """Environment variables take precedence over persisted local settings."""
+    for section, fields in _SETTINGS_ENVIRONMENT_OVERRIDES.items():
+        if not isinstance(data.get(section), dict):
+            continue
+        for key, variable in fields.items():
+            value = os.environ.get(variable, "").strip()
+            if value:
+                data[section][key] = value
 
 
 class AppConfig:
@@ -125,6 +162,16 @@ def get_config() -> AppConfig:
     if not isinstance(raw, dict):
         raise ValueError(f"配置文件格式错误: {config_path}")
     data = _resolve_value(raw)
+    settings_path = PROJECT_ROOT / "data" / "settings.json"
+    if settings_path.exists():
+        import json
+
+        with settings_path.open(encoding="utf-8") as handle:
+            settings = json.load(handle)
+        if isinstance(settings.get("vision"), dict):
+            data["vision"].update(settings["vision"])
+    data["vision"]["api_key"] = _current_vision_api_key()
+    _apply_settings_environment_overrides(data)
     _validate_config(data, config_path)
     return AppConfig(data)
 
@@ -173,6 +220,15 @@ def load_schema_config() -> dict[str, Any]:
         data = yaml.safe_load(f)
     if not isinstance(data, dict):
         raise ValueError(f"Schema 配置文件格式错误: {path}")
+    schema_file = data.get("schema_file")
+    if schema_file:
+        schema_path = Path(schema_file)
+        if not schema_path.is_absolute():
+            schema_path = PROJECT_ROOT / schema_path
+        with schema_path.open(encoding="utf-8") as handle:
+            import json
+
+            data["schema"] = json.load(handle)
     return data
 
 
@@ -198,7 +254,20 @@ def load_recognition_config() -> dict[str, Any]:
         raw = yaml.safe_load(f)
     if not isinstance(raw, dict):
         return {}
-    return _resolve_value(raw)
+    data = _resolve_value(raw)
+    settings_path = PROJECT_ROOT / "data" / "settings.json"
+    if settings_path.exists():
+        import json
+
+        with settings_path.open(encoding="utf-8") as handle:
+            settings = json.load(handle)
+        if isinstance(settings.get("ocr"), dict):
+            data.setdefault("ocr", {}).update(settings["ocr"])
+        if isinstance(settings.get("vision"), dict):
+            data.setdefault("vision", {}).update(settings["vision"])
+    data.setdefault("vision", {})["api_key"] = _current_vision_api_key()
+    _apply_settings_environment_overrides(data)
+    return data
 
 
 def load_fusion_rules() -> dict[str, Any]:

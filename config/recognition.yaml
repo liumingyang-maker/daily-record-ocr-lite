@@ -7,10 +7,6 @@ upload:
   max_single_image_mb: 15
   max_total_upload_mb: 200
 
-vision:
-  batch_size: 3
-  preserve_upload_order: true
-
 preprocess:
   max_side_vlm: 2400
   max_side_ocr: 2600
@@ -35,7 +31,9 @@ ocr:
   warmup_on_start: false
 
 vision:
-  provider: "${VISION_PROVIDER:-mock}"
+  batch_size: 3
+  preserve_upload_order: true
+  provider: "${VISION_PROVIDER:-}"
   base_url: "${VISION_BASE_URL:-http://127.0.0.1:11434/v1}"
   endpoint: "${VISION_ENDPOINT:-/chat/completions}"
   api_key: "${VISION_API_KEY:-}"

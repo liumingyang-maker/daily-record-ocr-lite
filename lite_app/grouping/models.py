@@ -6,7 +6,6 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # ─── 稳定 ID 生成 ───────────────────────────────────────────
 
 
@@ -37,6 +36,7 @@ def make_provisional_id(prefix: str, raw_value: str) -> str:
 @dataclass
 class EvidenceField:
     """带证据的字段值。"""
+
     raw_value: str = ""
     standard_value: str = ""
     confidence: float = 0.0
@@ -52,6 +52,7 @@ class EvidenceField:
 @dataclass
 class FormulaBlock:
     """页面内的配方块（切分结果）。"""
+
     formula_id: str = ""
     formula_no_raw: str = ""  # ①, ②, 1., 配方1
     formula_no_normalized: str = ""  # 1, 2, 3
@@ -62,6 +63,7 @@ class FormulaBlock:
 @dataclass
 class ProductSection:
     """页面内的产品/系列区段。"""
+
     product_or_series: EvidenceField = field(default_factory=EvidenceField)
     product_type: str = "unknown"  # product, series, material_grade, category, unknown
     section_bbox: list[float] | None = None
@@ -71,6 +73,7 @@ class ProductSection:
 @dataclass
 class PageRecognition:
     """单页识别结果。"""
+
     page_id: str = ""
     source_image_index: int = 0
     source_filename: str = ""
@@ -87,6 +90,7 @@ class PageRecognition:
 @dataclass
 class CompanyGroup:
     """公司分组（跨页合并后的业务实体）。"""
+
     company_id: str = ""
     display_name: str = ""  # 标准名
     raw_names: list[str] = field(default_factory=list)  # 所有原文
@@ -100,6 +104,7 @@ class CompanyGroup:
 @dataclass
 class ProductGroup:
     """产品/系列分组。"""
+
     product_id: str = ""
     company_id: str = ""
     display_name: str = ""
@@ -113,6 +118,7 @@ class ProductGroup:
 @dataclass
 class MaterialField:
     """原料字段。"""
+
     field_id: str = ""
     name: EvidenceField = field(default_factory=EvidenceField)
     amount: EvidenceField = field(default_factory=EvidenceField)
@@ -122,6 +128,7 @@ class MaterialField:
 @dataclass
 class ProcessField:
     """工艺参数字段。"""
+
     field_id: str = ""
     name: EvidenceField = field(default_factory=EvidenceField)
     value: EvidenceField = field(default_factory=EvidenceField)
@@ -131,6 +138,7 @@ class ProcessField:
 @dataclass
 class Formula:
     """配方业务实体。"""
+
     formula_id: str = ""
     page_id: str = ""
     source_image_index: int = 0
@@ -148,7 +156,9 @@ class Formula:
     process_parameters: list[ProcessField] = field(default_factory=list)
     notes: EvidenceField = field(default_factory=EvidenceField)
 
-    review_status: str = "AUTO_ACCEPTED"  # AUTO_ACCEPTED, REVIEW_REQUIRED, MANUAL_CONFIRMED, INCOMPLETE
+    review_status: str = (
+        "AUTO_ACCEPTED"  # AUTO_ACCEPTED, REVIEW_REQUIRED, MANUAL_CONFIRMED, INCOMPLETE
+    )
     conflict_count: int = 0
     low_confidence_count: int = 0
     warnings: list[str] = field(default_factory=list)
@@ -157,6 +167,11 @@ class Formula:
 @dataclass
 class BusinessEntities:
     """任务级业务实体集合（扁平存储）。"""
+
+    schema_version: str = "business-entities-v1"
+    job_id: str = ""
+    recognition_run_id: str = ""
+    final_result_sha256: str = ""
     pages: list[PageRecognition] = field(default_factory=list)
     company_groups: list[CompanyGroup] = field(default_factory=list)
     product_groups: list[ProductGroup] = field(default_factory=list)
@@ -174,6 +189,10 @@ class BusinessEntities:
             return obj
 
         return {
+            "schema_version": self.schema_version,
+            "job_id": self.job_id,
+            "recognition_run_id": self.recognition_run_id,
+            "final_result_sha256": self.final_result_sha256,
             "pages": _convert(self.pages),
             "company_groups": _convert(self.company_groups),
             "product_groups": _convert(self.product_groups),
@@ -181,9 +200,14 @@ class BusinessEntities:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "BusinessEntities":
+    def from_dict(cls, data: dict[str, Any]) -> BusinessEntities:
         """从字典反序列化。"""
-        entities = cls()
+        entities = cls(
+            schema_version=str(data.get("schema_version", "")),
+            job_id=str(data.get("job_id", "")),
+            recognition_run_id=str(data.get("recognition_run_id", "")),
+            final_result_sha256=str(data.get("final_result_sha256", "")),
+        )
 
         for p in data.get("pages", []):
             page = PageRecognition(
@@ -201,39 +225,45 @@ class BusinessEntities:
                     section_bbox=ps.get("section_bbox"),
                 )
                 for fb in ps.get("formula_blocks", []):
-                    section.formula_blocks.append(FormulaBlock(
-                        formula_id=fb.get("formula_id", ""),
-                        formula_no_raw=fb.get("formula_no_raw", ""),
-                        formula_no_normalized=fb.get("formula_no_normalized", ""),
-                        formula_sequence=fb.get("formula_sequence", 0),
-                        bbox=fb.get("bbox"),
-                    ))
+                    section.formula_blocks.append(
+                        FormulaBlock(
+                            formula_id=fb.get("formula_id", ""),
+                            formula_no_raw=fb.get("formula_no_raw", ""),
+                            formula_no_normalized=fb.get("formula_no_normalized", ""),
+                            formula_sequence=fb.get("formula_sequence", 0),
+                            bbox=fb.get("bbox"),
+                        )
+                    )
                 page.product_sections.append(section)
             entities.pages.append(page)
 
         for cg in data.get("company_groups", []):
-            entities.company_groups.append(CompanyGroup(
-                company_id=cg.get("company_id", ""),
-                display_name=cg.get("display_name", ""),
-                raw_names=cg.get("raw_names", []),
-                confidence=cg.get("confidence", 0),
-                source_page_ids=cg.get("source_page_ids", []),
-                source_image_indexes=cg.get("source_image_indexes", []),
-                review_status=cg.get("review_status", "AUTO_ACCEPT"),
-                match_source=cg.get("match_source", ""),
-            ))
+            entities.company_groups.append(
+                CompanyGroup(
+                    company_id=cg.get("company_id", ""),
+                    display_name=cg.get("display_name", ""),
+                    raw_names=cg.get("raw_names", []),
+                    confidence=cg.get("confidence", 0),
+                    source_page_ids=cg.get("source_page_ids", []),
+                    source_image_indexes=cg.get("source_image_indexes", []),
+                    review_status=cg.get("review_status", "AUTO_ACCEPT"),
+                    match_source=cg.get("match_source", ""),
+                )
+            )
 
         for pg in data.get("product_groups", []):
-            entities.product_groups.append(ProductGroup(
-                product_id=pg.get("product_id", ""),
-                company_id=pg.get("company_id", ""),
-                display_name=pg.get("display_name", ""),
-                raw_names=pg.get("raw_names", []),
-                product_type=pg.get("product_type", "unknown"),
-                confidence=pg.get("confidence", 0),
-                source_page_ids=pg.get("source_page_ids", []),
-                review_status=pg.get("review_status", "AUTO_ACCEPT"),
-            ))
+            entities.product_groups.append(
+                ProductGroup(
+                    product_id=pg.get("product_id", ""),
+                    company_id=pg.get("company_id", ""),
+                    display_name=pg.get("display_name", ""),
+                    raw_names=pg.get("raw_names", []),
+                    product_type=pg.get("product_type", "unknown"),
+                    confidence=pg.get("confidence", 0),
+                    source_page_ids=pg.get("source_page_ids", []),
+                    review_status=pg.get("review_status", "AUTO_ACCEPT"),
+                )
+            )
 
         for f in data.get("formulas", []):
             formula = Formula(
@@ -254,19 +284,23 @@ class BusinessEntities:
                 warnings=f.get("warnings", []),
             )
             for m in f.get("materials", []):
-                formula.materials.append(MaterialField(
-                    field_id=m.get("field_id", ""),
-                    name=_parse_evidence(m.get("name", {})),
-                    amount=_parse_evidence(m.get("amount", {})),
-                    unit=_parse_evidence(m.get("unit", {})),
-                ))
+                formula.materials.append(
+                    MaterialField(
+                        field_id=m.get("field_id", ""),
+                        name=_parse_evidence(m.get("name", {})),
+                        amount=_parse_evidence(m.get("amount", {})),
+                        unit=_parse_evidence(m.get("unit", {})),
+                    )
+                )
             for pp in f.get("process_parameters", []):
-                formula.process_parameters.append(ProcessField(
-                    field_id=pp.get("field_id", ""),
-                    name=_parse_evidence(pp.get("name", {})),
-                    value=_parse_evidence(pp.get("value", {})),
-                    unit=_parse_evidence(pp.get("unit", {})),
-                ))
+                formula.process_parameters.append(
+                    ProcessField(
+                        field_id=pp.get("field_id", ""),
+                        name=_parse_evidence(pp.get("name", {})),
+                        value=_parse_evidence(pp.get("value", {})),
+                        unit=_parse_evidence(pp.get("unit", {})),
+                    )
+                )
             entities.formulas.append(formula)
 
         return entities
@@ -274,7 +308,9 @@ class BusinessEntities:
     def get_summary(self) -> dict[str, Any]:
         """计算任务摘要。"""
         auto_accepted = sum(1 for f in self.formulas if f.review_status == "AUTO_ACCEPTED")
-        review_required = sum(1 for f in self.formulas if f.review_status in ("REVIEW_REQUIRED", "INCOMPLETE"))
+        review_required = sum(
+            1 for f in self.formulas if f.review_status in ("REVIEW_REQUIRED", "INCOMPLETE")
+        )
         conflict_fields = sum(f.conflict_count for f in self.formulas)
 
         return {
@@ -317,17 +353,18 @@ class BusinessEntities:
 
             # 没有产品的配方直接挂公司下
             orphan_formulas = [
-                f for f in self.formulas
-                if f.company_id == cg.company_id and not f.product_id
+                f for f in self.formulas if f.company_id == cg.company_id and not f.product_id
             ]
             if orphan_formulas:
-                company_node["products"].append({
-                    "product_id": "",
-                    "display_name": "未分类产品/系列",
-                    "product_type": "unknown",
-                    "review_status": "AUTO_ACCEPT",
-                    "formulas": [_formula_summary(f) for f in orphan_formulas],
-                })
+                company_node["products"].append(
+                    {
+                        "product_id": "",
+                        "display_name": "未分类产品/系列",
+                        "product_type": "unknown",
+                        "review_status": "AUTO_ACCEPT",
+                        "formulas": [_formula_summary(f) for f in orphan_formulas],
+                    }
+                )
 
             tree.append(company_node)
         return tree

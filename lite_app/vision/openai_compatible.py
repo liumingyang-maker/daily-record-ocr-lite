@@ -11,7 +11,11 @@ from typing import Any
 
 import httpx
 
-from .base import VisionProvider, VisionProviderError
+from .base import (
+    VisionConfigurationError,
+    VisionConnectionError,
+    VisionProvider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +41,7 @@ class OpenAICompatibleVisionProvider(VisionProvider):
         self._transport = _transport
 
         if not self.base_url:
-            raise VisionProviderError("视觉模型地址 (base_url) 未配置")
+            raise VisionConfigurationError("视觉模型地址 (base_url) 未配置")
 
     async def analyze(
         self,
@@ -96,15 +100,15 @@ class OpenAICompatibleVisionProvider(VisionProvider):
             async with httpx.AsyncClient(**client_kwargs) as client:
                 resp = await client.post(self.url, json=body, headers=headers)
         except httpx.TimeoutException:
-            raise VisionProviderError(
+            raise VisionConnectionError(
                 f"视觉模型接口超时（{self.timeout}秒），请检查模型服务是否运行。"
             )
         except httpx.ConnectError:
-            raise VisionProviderError(
+            raise VisionConnectionError(
                 f"无法连接视觉模型服务: {self.base_url}，请检查地址是否正确。"
             )
         except Exception as e:
-            raise VisionProviderError(f"请求视觉模型失败: {e}")
+            raise VisionConnectionError(f"请求视觉模型失败: {e}")
 
         elapsed = time.time() - start
         logger.info("模型响应耗时: %.1f秒, 状态码: %d", elapsed, resp.status_code)
@@ -112,17 +116,17 @@ class OpenAICompatibleVisionProvider(VisionProvider):
         if resp.status_code < 200 or resp.status_code >= 300:
             body_text = resp.text[:500]
             if resp.status_code == 401:
-                raise VisionProviderError(
+                raise VisionConnectionError(
                     f"视觉模型接口返回 HTTP 401，请检查 API Key。响应: {body_text}"
                 )
-            raise VisionProviderError(
+            raise VisionConnectionError(
                 f"视觉模型接口返回 HTTP {resp.status_code}。响应: {body_text}"
             )
 
         try:
             data = resp.json()
         except Exception:
-            raise VisionProviderError(
+            raise VisionConnectionError(
                 f"视觉模型返回了非法 JSON 响应: {resp.text[:300]}"
             )
 
@@ -134,7 +138,7 @@ class OpenAICompatibleVisionProvider(VisionProvider):
             message = choices[0]["message"]
             content = message["content"]
         except (KeyError, IndexError, TypeError) as e:
-            raise VisionProviderError(
+            raise VisionConnectionError(
                 f"视觉模型响应格式不符合预期: {e}。"
                 f"响应: {json.dumps(data, ensure_ascii=False)[:500]}"
             )
@@ -150,7 +154,7 @@ class OpenAICompatibleVisionProvider(VisionProvider):
             if texts:
                 return "\n".join(texts)
 
-        raise VisionProviderError(
+        raise VisionConnectionError(
             f"无法从模型响应中提取文本内容。"
             f"响应: {json.dumps(data, ensure_ascii=False)[:500]}"
         )

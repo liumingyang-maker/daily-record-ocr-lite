@@ -1,14 +1,10 @@
 """P0 整改端到端测试：候选关联、冲突检测、缓存、局部复核。"""
 
 import json
-import pytest
-from pathlib import Path
-from unittest.mock import AsyncMock, patch
 
-from lite_app.fusion.engine import Candidate, FusionEngine, CONFLICT, AUTO_ACCEPT
+from lite_app.fusion.engine import AUTO_ACCEPT, CONFLICT, Candidate, FusionEngine
 from lite_app.ocr.base import OCRPage, OCRToken
-from lite_app.pipeline_v2 import _build_fusion_result, _find_ocr_candidate, _bbox_iou
-
+from lite_app.pipeline_v2 import _bbox_iou, _build_fusion_result
 
 # ─── P0-1: 空间关联 + 0.15/0.5 冲突测试 ─────────────────────
 
@@ -227,7 +223,7 @@ class TestRecognitionCache:
 
     def test_cache_set_and_get(self, tmp_path):
         """缓存写入后可读取。"""
-        from lite_app.cache import RecognitionCache, compute_image_hash, build_cache_key
+        from lite_app.cache import RecognitionCache
         from lite_app.knowledge.database import KnowledgeDB
 
         db = KnowledgeDB(tmp_path / "test_cache.sqlite3")
@@ -287,7 +283,7 @@ class TestFinalValueExport:
 
     def test_human_edit_reflected_in_fusion(self, tmp_path):
         """VLM 原始值 0.5，人工改为 0.15，融合结果必须反映 0.15。"""
-        from lite_app.fusion.engine import FusionEngine, Candidate, MANUAL_CONFIRMED
+        from lite_app.fusion.engine import MANUAL_CONFIRMED, Candidate, FusionEngine
 
         engine = FusionEngine({
             "rules": {"numeric": {"disagreement_status": "CONFLICT"}},
@@ -314,9 +310,9 @@ class TestFinalValueExport:
     def test_excel_uses_final_value_from_fusion(self, tmp_path):
         """Excel 导出必须读取 fusion/result.json 中的 final_value。"""
         from openpyxl import load_workbook
+
         from lite_app.grouping.exporter import export_grouped_excel
         from lite_app.grouping.service import build_business_entities
-        from lite_app.grouping.models import BusinessEntities
 
         # 构建包含人工修改值的业务实体
         vlm_result = {
@@ -360,7 +356,6 @@ class TestConfirmAllChecksConflicts:
 
     def test_confirm_blocked_by_conflict(self, tmp_path):
         """存在 CONFLICT 字段时 confirm 应返回 REVIEW_REQUIRED。"""
-        import json
         from lite_app.storage import JobStorage
 
         storage = JobStorage(jobs_dir=tmp_path / "jobs")
@@ -388,7 +383,6 @@ class TestConfirmAllChecksConflicts:
 
     def test_confirm_allowed_when_no_conflicts(self, tmp_path):
         """无 CONFLICT 时 confirm 应允许 READY。"""
-        import json
         from lite_app.storage import JobStorage
 
         storage = JobStorage(jobs_dir=tmp_path / "jobs")

@@ -1,21 +1,22 @@
 """OCR Provider 和融合引擎测试。"""
 
-import json
 import pytest
-from pathlib import Path
 from PIL import Image
 
-from lite_app.ocr.base import OCRPage, OCRToken
-from lite_app.ocr.mock import MockOCRProvider
-from lite_app.ocr.manager import OCRModelManager
 from lite_app.fusion.engine import (
-    FusionEngine, Candidate, FusedField,
-    AUTO_ACCEPT, NEED_REVIEW, CONFLICT, EMPTY,
+    AUTO_ACCEPT,
+    CONFLICT,
+    EMPTY,
+    NEED_REVIEW,
+    Candidate,
+    FusionEngine,
 )
 from lite_app.knowledge.database import KnowledgeDB
 from lite_app.knowledge.matcher import HistoryMatcher, normalize_text
-from lite_app.layout.geometry import cluster_lines, pair_materials_amounts, TextLine
-
+from lite_app.layout.geometry import TextLine, cluster_lines, pair_materials_amounts
+from lite_app.ocr.base import OCRPage, OCRToken
+from lite_app.ocr.manager import OCRModelManager
+from lite_app.ocr.mock import MockOCRProvider
 
 # ─── OCR Mock Provider ──────────────────────────────────────
 

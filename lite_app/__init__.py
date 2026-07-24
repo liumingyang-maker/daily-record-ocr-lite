@@ -1,1 +1,3 @@
-"""daily-record-ocr 轻量版应用包。"""
+"""daily-record-ocr-lite application package."""
+
+__version__ = "1.0.0"

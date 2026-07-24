@@ -155,9 +155,9 @@ function showEvidence(material) {
         <p><strong>来源：</strong>${material.amount.match_source || '-'}</p>
         <p><strong>证据 tokens：</strong>${(material.amount.evidence_token_ids || []).join(', ') || '-'}</p>
         <div class="action-buttons">
-            <button class="btn btn-small" onclick="acceptCandidate('${material.field_id}', 'ocr')">采用 OCR</button>
-            <button class="btn btn-small" onclick="acceptCandidate('${material.field_id}', 'vlm')">采用 VLM</button>
-            <button class="btn btn-small btn-primary" onclick="manualEdit('${material.field_id}')">手工填写</button>
+            <button class="btn btn-small" onclick="acceptCandidate('${material.field_id}__amount', 'ocr')">采用 OCR</button>
+            <button class="btn btn-small" onclick="acceptCandidate('${material.field_id}__amount', 'vlm')">采用 VLM</button>
+            <button class="btn btn-small btn-primary" onclick="manualEdit('${material.field_id}__amount')">手工填写</button>
         </div>`;
 }
 

@@ -36,7 +36,7 @@ def generate_overlay(
     try:
         font = ImageFont.truetype("arial.ttf", 14)
         font_small = ImageFont.truetype("arial.ttf", 11)
-    except (OSError, IOError):
+    except OSError:
         font = ImageFont.load_default()
         font_small = font
 

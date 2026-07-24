@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 from typing import Any
@@ -34,6 +36,17 @@ _FORMULA_NO_PATTERNS = [
 ]
 
 _CIRCLED_NUMBERS = "①②③④⑤⑥⑦⑧⑨⑩"
+
+
+def final_result_fingerprint(final: dict[str, Any]) -> str:
+    """Return a stable digest binding projections to one exact FinalResult."""
+    canonical = json.dumps(
+        final,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def normalize_formula_no(raw: str) -> str:
@@ -84,7 +97,11 @@ def build_business_entities(
     1. 新格式：pages[] 结构
     2. 旧格式：records[] 结构（兼容）
     """
-    entities = BusinessEntities()
+    entities = BusinessEntities(
+        job_id=job_id,
+        recognition_run_id=str(vlm_result.get("recognition_run_id", "")),
+        final_result_sha256=final_result_fingerprint(vlm_result),
+    )
 
     # 尝试新格式 pages[]
     pages_data = vlm_result.get("pages", [])
@@ -108,10 +125,11 @@ def build_business_entities(
 def _build_from_pages(job_id: str, entities: BusinessEntities, pages_data: list[dict]) -> None:
     """从 pages[] 格式构建。"""
     for i, page_data in enumerate(pages_data, 1):
-        page_id = make_page_id(i)
+        image_index = int(page_data.get("source_image_index", i))
+        page_id = make_page_id(image_index)
         page = PageRecognition(
             page_id=page_id,
-            source_image_index=page_data.get("source_image_index", i),
+            source_image_index=image_index,
             source_filename=page_data.get("source_filename", ""),
             company=_parse_evidence_field(page_data.get("company", {})),
             warnings=page_data.get("warnings", []),
@@ -127,14 +145,18 @@ def _build_from_pages(job_id: str, entities: BusinessEntities, pages_data: list[
 
             for f_data in ps_data.get("formulas", []):
                 formula_seq += 1
-                formula = _build_formula(job_id, page_id, page.source_image_index, formula_seq, f_data)
-                section.formula_blocks.append(FormulaBlock(
-                    formula_id=formula.formula_id,
-                    formula_no_raw=formula.formula_no_raw,
-                    formula_no_normalized=formula.formula_no_normalized,
-                    formula_sequence=formula_seq,
-                    bbox=formula.record_bbox,
-                ))
+                formula = _build_formula(
+                    job_id, page_id, page.source_image_index, formula_seq, f_data
+                )
+                section.formula_blocks.append(
+                    FormulaBlock(
+                        formula_id=formula.formula_id,
+                        formula_no_raw=formula.formula_no_raw,
+                        formula_no_normalized=formula.formula_no_normalized,
+                        formula_sequence=formula_seq,
+                        bbox=formula.record_bbox,
+                    )
+                )
                 entities.formulas.append(formula)
 
             page.product_sections.append(section)
@@ -142,7 +164,9 @@ def _build_from_pages(job_id: str, entities: BusinessEntities, pages_data: list[
         entities.pages.append(page)
 
 
-def _build_from_records(job_id: str, entities: BusinessEntities, records: list[dict], page_heading: str) -> None:
+def _build_from_records(
+    job_id: str, entities: BusinessEntities, records: list[dict], page_heading: str
+) -> None:
     """从旧格式 records[] 构建（兼容）。"""
     # 按 source_image_indexes 分组
     pages_map: dict[int, list[dict]] = {}
@@ -166,13 +190,15 @@ def _build_from_records(job_id: str, entities: BusinessEntities, records: list[d
 
         for seq, record in enumerate(pages_map[img_idx], 1):
             formula = _build_formula_from_record(job_id, page_id, img_idx, seq, record)
-            section.formula_blocks.append(FormulaBlock(
-                formula_id=formula.formula_id,
-                formula_no_raw=formula.formula_no_raw,
-                formula_no_normalized=formula.formula_no_normalized,
-                formula_sequence=seq,
-                bbox=formula.record_bbox,
-            ))
+            section.formula_blocks.append(
+                FormulaBlock(
+                    formula_id=formula.formula_id,
+                    formula_no_raw=formula.formula_no_raw,
+                    formula_no_normalized=formula.formula_no_normalized,
+                    formula_sequence=seq,
+                    bbox=formula.record_bbox,
+                )
+            )
             entities.formulas.append(formula)
 
         page.product_sections.append(section)
@@ -181,7 +207,7 @@ def _build_from_records(job_id: str, entities: BusinessEntities, records: list[d
 
 def _build_formula(job_id: str, page_id: str, img_idx: int, seq: int, data: dict) -> Formula:
     """从新格式构建配方。"""
-    formula_id = make_formula_id(job_id, page_id, seq)
+    formula_id = str(data.get("formula_id") or make_formula_id(job_id, page_id, seq))
     no_raw = data.get("formula_no", data.get("formula_no_raw", ""))
 
     formula = Formula(
@@ -198,25 +224,33 @@ def _build_formula(job_id: str, page_id: str, img_idx: int, seq: int, data: dict
     )
 
     for mi, m_data in enumerate(data.get("materials", []), 1):
-        formula.materials.append(MaterialField(
-            field_id=f"{formula_id}__material_{mi:03d}",
-            name=_parse_evidence_field(m_data.get("name", {})),
-            amount=_parse_evidence_field(m_data.get("amount", {})),
-            unit=_parse_evidence_field(m_data.get("unit", {})),
-        ))
+        material_id = str(m_data.get("material_id") or f"material_{mi:03d}")
+        formula.materials.append(
+            MaterialField(
+                field_id=f"{formula_id}__{material_id}",
+                name=_parse_evidence_field(m_data.get("name", {})),
+                amount=_parse_evidence_field(m_data.get("amount", {})),
+                unit=_parse_evidence_field(m_data.get("unit", {})),
+            )
+        )
 
     for pi, p_data in enumerate(data.get("process_parameters", []), 1):
-        formula.process_parameters.append(ProcessField(
-            field_id=f"{formula_id}__process_{pi:03d}",
-            name=_parse_evidence_field(p_data.get("name", {})),
-            value=_parse_evidence_field(p_data.get("value", {})),
-            unit=_parse_evidence_field(p_data.get("unit", {})),
-        ))
+        parameter_id = str(p_data.get("parameter_id") or f"parameter_{pi:03d}")
+        formula.process_parameters.append(
+            ProcessField(
+                field_id=f"{formula_id}__{parameter_id}",
+                name=_parse_evidence_field(p_data.get("name", {})),
+                value=_parse_evidence_field(p_data.get("value", {})),
+                unit=_parse_evidence_field(p_data.get("unit", {})),
+            )
+        )
 
     return formula
 
 
-def _build_formula_from_record(job_id: str, page_id: str, img_idx: int, seq: int, record: dict) -> Formula:
+def _build_formula_from_record(
+    job_id: str, page_id: str, img_idx: int, seq: int, record: dict
+) -> Formula:
     """从旧格式 record 构建配方。"""
     formula_id = make_formula_id(job_id, page_id, seq)
 
@@ -243,25 +277,57 @@ def _build_formula_from_record(job_id: str, page_id: str, img_idx: int, seq: int
         name_val = m.get("name", "")
         amount_val = m.get("amount", "")
         unit_val = m.get("unit", "")
-        formula.materials.append(MaterialField(
-            field_id=f"{formula_id}__material_{mi:03d}",
-            name=EvidenceField(raw_value=str(name_val) if not isinstance(name_val, dict) else name_val.get("value", ""),
-                             confidence=name_val.get("confidence", 0.8) if isinstance(name_val, dict) else 0.8),
-            amount=EvidenceField(raw_value=str(amount_val) if not isinstance(amount_val, dict) else amount_val.get("value", ""),
-                               confidence=amount_val.get("confidence", 0.8) if isinstance(amount_val, dict) else 0.8),
-            unit=EvidenceField(raw_value=str(unit_val) if not isinstance(unit_val, dict) else unit_val.get("value", "")),
-        ))
+        formula.materials.append(
+            MaterialField(
+                field_id=f"{formula_id}__material_{mi:03d}",
+                name=EvidenceField(
+                    raw_value=str(name_val)
+                    if not isinstance(name_val, dict)
+                    else name_val.get("value", ""),
+                    confidence=name_val.get("confidence", 0.8)
+                    if isinstance(name_val, dict)
+                    else 0.8,
+                ),
+                amount=EvidenceField(
+                    raw_value=str(amount_val)
+                    if not isinstance(amount_val, dict)
+                    else amount_val.get("value", ""),
+                    confidence=amount_val.get("confidence", 0.8)
+                    if isinstance(amount_val, dict)
+                    else 0.8,
+                ),
+                unit=EvidenceField(
+                    raw_value=str(unit_val)
+                    if not isinstance(unit_val, dict)
+                    else unit_val.get("value", "")
+                ),
+            )
+        )
 
     for pi, p in enumerate(record.get("process_parameters", []), 1):
         name_val = p.get("name", "")
         value_val = p.get("value", "")
         unit_val = p.get("unit", "")
-        formula.process_parameters.append(ProcessField(
-            field_id=f"{formula_id}__process_{pi:03d}",
-            name=EvidenceField(raw_value=str(name_val) if not isinstance(name_val, dict) else name_val.get("value", "")),
-            value=EvidenceField(raw_value=str(value_val) if not isinstance(value_val, dict) else value_val.get("value", "")),
-            unit=EvidenceField(raw_value=str(unit_val) if not isinstance(unit_val, dict) else unit_val.get("value", "")),
-        ))
+        formula.process_parameters.append(
+            ProcessField(
+                field_id=f"{formula_id}__parameter_{pi:03d}",
+                name=EvidenceField(
+                    raw_value=str(name_val)
+                    if not isinstance(name_val, dict)
+                    else name_val.get("value", "")
+                ),
+                value=EvidenceField(
+                    raw_value=str(value_val)
+                    if not isinstance(value_val, dict)
+                    else value_val.get("value", "")
+                ),
+                unit=EvidenceField(
+                    raw_value=str(unit_val)
+                    if not isinstance(unit_val, dict)
+                    else unit_val.get("value", "")
+                ),
+            )
+        )
 
     return formula
 

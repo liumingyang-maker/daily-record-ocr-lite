@@ -2,21 +2,23 @@
 
 import io
 import json
-import pytest
+import time
 from pathlib import Path
-from PIL import Image
 
+import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     """创建使用临时目录的测试客户端。"""
-    import os
     jobs_dir = tmp_path / "test_jobs"
     jobs_dir.mkdir()
     monkeypatch.setenv("JOBS_DIR", str(jobs_dir))
     monkeypatch.setenv("VISION_PROVIDER", "mock")
+    monkeypatch.setenv("OCR_PROVIDER", "mock")
+    monkeypatch.setenv("DEMO_MODE", "true")
 
     from lite_app.config import clear_config_cache
     clear_config_cache()
@@ -63,12 +65,11 @@ class TestFullFlow:
         """完整闭环：上传 -> 识别 -> 编辑 -> 导出 -> 下载。"""
         img_data = _make_test_image()
 
-        # 1. 上传两张图片
+        # 1. 上传一张图片（固定 Demo fixture 也只覆盖一页）
         resp = client.post(
             "/jobs",
             files=[
                 ("files", ("photo1.jpg", img_data, "image/jpeg")),
-                ("files", ("photo2.jpg", img_data, "image/jpeg")),
             ],
             data={"rotation": "0"},
             follow_redirects=False,
@@ -77,6 +78,14 @@ class TestFullFlow:
         location = resp.headers["location"]
         assert "/jobs/" in location
         job_id = self._extract_job_id(location)
+
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            state = client.get(f"/api/jobs/{job_id}").json()["status"]
+            if state in {"READY", "REVIEW_REQUIRED", "FAILED", "FAILED_SCHEMA"}:
+                break
+            time.sleep(0.02)
+        assert state == "REVIEW_REQUIRED"
 
         # 2. 访问任务详情
         resp = client.get(f"/jobs/{job_id}")
@@ -88,24 +97,18 @@ class TestFullFlow:
         assert resp.status_code == 200
 
         # 4. 保存修改后的 JSON
-        edited_result = {
-            "page_heading": "修改后的标题",
-            "records": [
-                {
-                    "source_image_indexes": [1],
-                    "record_date": "24.7.10",
-                    "title": "修改配方",
-                    "materials": [
-                        {"name": "PA66", "amount": "65", "unit": "kg", "confidence": 0.95}
-                    ],
-                    "process_parameters": [],
-                    "notes": "",
-                    "confidence": 0.9,
-                    "warnings": [],
-                }
-            ],
-            "warnings": [],
-        }
+        root = Path(__file__).resolve().parents[1]
+        edited_result = json.loads(
+            (root / "config" / "mock_result.json").read_text("utf-8")
+        )
+        page = edited_result["pages"][0]
+        page["company"]["raw_value"] = "修改后的标题"
+        page["company"]["standard_value"] = "修改后的标题"
+        formula = page["product_sections"][0]["formulas"][0]
+        formula["record_date"]["value"] = "24.7.10"
+        formula["materials"][0]["name"]["value"] = "PA66"
+        formula["materials"][0]["amount"]["value"] = "65"
+        formula["materials"][0]["unit"]["value"] = "kg"
         resp = client.post(
             f"/api/jobs/{job_id}/result",
             content=json.dumps(edited_result, ensure_ascii=False),
@@ -113,7 +116,7 @@ class TestFullFlow:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] == "READY"
+        assert data["status"] == "REVIEW_REQUIRED"
         assert data["validation_errors"] == []
 
         # 5. 导出 Excel
@@ -129,6 +132,7 @@ class TestFullFlow:
         storage = JobStorage()
         job = storage.get_job(job_id)
         assert job["export_file"] is not None
+        assert Path(job["export_file"]).name.startswith("DEMO-")
 
         resp = client.get(f"/jobs/{job_id}/files/{job['export_file']}")
         assert resp.status_code == 200

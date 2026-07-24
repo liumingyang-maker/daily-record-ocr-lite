@@ -1,621 +1,650 @@
-"""双引擎识别 Pipeline：OCR + VLM + 融合。"""
+"""Accuracy-first OCR + layout + vision + FinalResult pipeline."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
-from .config import get_config, load_schema_config
-from .fusion.engine import Candidate, FusionEngine, FusedField
+from .cache import FileRecognitionCache, compute_image_hash
+from .config import (
+    PROJECT_ROOT,
+    get_config,
+    load_fusion_rules,
+    load_recognition_config,
+    load_schema_config,
+)
+from .contracts import (
+    normalize_legacy_result,
+    validate_page_coverage,
+    validate_record_result,
+)
+from .final_result import FinalResultService, project_final_result
+from .fusion.association import (
+    FieldEvidence,
+    associate_field,
+    record_boundary_mismatch,
+)
+from .fusion.engine import Candidate, FusedField, FusionEngine
 from .image_utils_v2 import ImageProcessError, prepare_dual_images
 from .knowledge.database import KnowledgeDB
 from .knowledge.matcher import HistoryMatcher, normalize_text
-from .ocr.base import OCRPage
-from .ocr.manager import OCRModelManager
-from .storage import JobStorage
-from .vision.base import VisionProviderError
+from .layout.geometry import build_layout_evidence
+from .ocr.base import OCRPage, OCRToken, scope_token_ids
+from .ocr.manager import OCRModelManager, OCRUnavailableError
+from .readiness import evaluate_ready_gate
+from .settings import SettingsService
+from .status import JobStatus
+from .storage import JobStorage, write_json_atomic, write_text_atomic
+from .vision.base import VisionConfigurationError, VisionProviderError
 from .vision.mock import MockVisionProvider
 from .vision.openai_compatible import OpenAICompatibleVisionProvider
 
 logger = logging.getLogger(__name__)
 
 
-class PipelineError(Exception):
-    """Pipeline 处理错误。"""
-    pass
+class PipelineError(RuntimeError):
+    """A correctness-critical pipeline stage failed."""
+
+
+class SchemaValidationError(PipelineError):
+    """The structured vision result violates fatal record-v1 constraints."""
 
 
 def build_vision_provider(vision_config: dict[str, Any]):
-    """构建视觉模型 Provider。"""
-    provider_name = vision_config.get("provider", "mock")
+    provider_name = str(vision_config.get("provider", "")).strip()
     if provider_name == "mock":
-        from .config import PROJECT_ROOT
-        mock_path_str = vision_config.get("mock_result", "config/mock_result.json")
-        mock_path = Path(mock_path_str)
+        mock_path = Path(
+            vision_config.get("mock_result", "config/mock_result.json")
+        )
         if not mock_path.is_absolute():
             mock_path = PROJECT_ROOT / mock_path
         return MockVisionProvider(mock_path)
     if provider_name == "openai_compatible":
+        if not vision_config.get("model"):
+            raise VisionConfigurationError("视觉模型名称未配置")
+        if not vision_config.get("api_key"):
+            raise VisionConfigurationError("视觉模型 API Key 未配置")
         return OpenAICompatibleVisionProvider(vision_config)
-    raise PipelineError(f"未知的 Vision Provider: {provider_name}")
+    raise VisionConfigurationError("视觉模型尚未配置")
 
 
 def extract_json(text: str) -> dict[str, Any]:
-    """从模型响应中提取 JSON 对象。"""
     text = text.strip()
     try:
         result = json.loads(text)
+    except json.JSONDecodeError:
+        result = None
+    if isinstance(result, dict):
+        return result
+    if isinstance(result, list):
+        raise PipelineError("模型返回了 JSON 数组，但需要 JSON 对象")
+
+    import re
+
+    fence = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
+    if fence:
+        try:
+            result = json.loads(fence.group(1).strip())
+        except json.JSONDecodeError:
+            result = None
         if isinstance(result, dict):
             return result
-        if isinstance(result, list):
-            raise PipelineError("模型返回了 JSON 数组，但需要的是 JSON 对象。")
-    except json.JSONDecodeError:
-        pass
 
-    # Markdown fence
-    import re
-    fence_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
-    if fence_match:
-        try:
-            result = json.loads(fence_match.group(1).strip())
-            if isinstance(result, dict):
-                return result
-        except json.JSONDecodeError:
-            pass
-
-    # 遍历所有 { 位置
     decoder = json.JSONDecoder()
-    for i, char in enumerate(text):
-        if char != "{":
+    for index, character in enumerate(text):
+        if character != "{":
             continue
         try:
-            result, _ = decoder.raw_decode(text, i)
-            if isinstance(result, dict):
-                return result
+            result, _ = decoder.raw_decode(text, index)
         except json.JSONDecodeError:
             continue
+        if isinstance(result, dict):
+            return result
+    raise PipelineError(f"无法从视觉模型响应解析 JSON: {text[:200]}")
 
-    raise PipelineError(f"无法从模型响应中解析出 JSON 对象。响应前200字符: {text[:200]}")
 
-
-async def analyze_job_v2(job_id: str, storage: JobStorage | None = None) -> dict[str, Any]:
-    """
-    双引擎识别流程：
-    预处理 → OCR → VLM(带OCR证据) → 历史匹配 → 融合 → 状态更新
-    """
-    if storage is None:
-        storage = JobStorage()
-
+async def analyze_job_v2(
+    job_id: str,
+    storage: JobStorage | None = None,
+) -> dict[str, Any]:
+    storage = storage or JobStorage()
     cfg = get_config()
     job = storage.get_job(job_id)
     job_dir = storage.get_job_dir(job_id)
     timings: dict[str, int] = {}
+    demo_mode = _demo_mode()
+    recognition_run_id = uuid.uuid4().hex
 
     try:
-        # 清空旧错误
-        job["error"] = ""
-        job["validation_errors"] = []
-        job["status"] = "PREPROCESSING"
-        job["status_message"] = "正在处理图片..."
+        job.update(
+            {
+                "error": "",
+                "validation_errors": [],
+                "demo_mode": demo_mode,
+                "recognition_run_id": recognition_run_id,
+                "final_result_run_id": None,
+                "export_file": None,
+                "status": JobStatus.PREPROCESSING,
+                "status_message": "正在生成 OCR/Vision 双图...",
+            }
+        )
         storage.save_job(job)
 
-        # ─── 阶段1：预处理（双图）───────────────────────────
-        t0 = time.time()
-        rotation = job.get("rotation", "auto")
-        preprocess_cfg = cfg.preprocess
-        vlm_files: list[str] = []
-        ocr_files: list[str] = []
-
-        for i, img_info in enumerate(job["images"], 1):
-            source_path = job_dir / img_info["source"]
-            vlm_name = f"prepared_vlm_{i:02d}.jpg"
-            ocr_name = f"prepared_ocr_{i:02d}.jpg"
-
+        started = time.time()
+        vlm_paths: list[Path] = []
+        ocr_paths: list[Path] = []
+        for index, image in enumerate(job["images"], 1):
+            source = job_dir / image["source"]
+            vlm_path = job_dir / "preprocess" / f"page_{index:02d}_vision.jpg"
+            ocr_path = job_dir / "preprocess" / f"page_{index:02d}_ocr.jpg"
             info = prepare_dual_images(
-                source_path,
-                job_dir / vlm_name,
-                job_dir / ocr_name,
-                rotation=rotation,
-                config=preprocess_cfg,
+                source,
+                vlm_path,
+                ocr_path,
+                rotation=job.get("rotation", "auto"),
+                config=cfg.preprocess,
             )
-            img_info["prepared_vlm"] = vlm_name
-            img_info["prepared_ocr"] = ocr_name
-            img_info["prepared"] = vlm_name  # 兼容旧字段
-            img_info["width"] = info["vlm_width"]
-            img_info["height"] = info["vlm_height"]
-            vlm_files.append(vlm_name)
-            ocr_files.append(ocr_name)
-
-        timings["preprocess_ms"] = int((time.time() - t0) * 1000)
-        storage.save_job(job)
-
-        # ─── 阶段2：OCR ─────────────────────────────────────
-        job["status"] = "OCR_RUNNING"
-        job["status_message"] = "正在执行 OCR 识别..."
-        storage.save_job(job)
-
-        ocr_manager = OCRModelManager()
-        ocr_results: list[OCRPage] = []
-        ocr_dir = job_dir / "ocr"
-        ocr_dir.mkdir(exist_ok=True)
-
-        # 初始化缓存
-        from .cache import RecognitionCache, compute_image_hash, build_cache_key
-        from .config import PROJECT_ROOT as _PROJ_ROOT
-        _cache_db = KnowledgeDB(_PROJ_ROOT / "data" / "knowledge.sqlite3")
-        _cache_db.initialize()
-        rec_cache = RecognitionCache(_cache_db)
-        cache_enabled = cfg.get("cache", {}).get("enabled", True) if isinstance(cfg.get("cache"), dict) else True
-        cache_hits = {"ocr": 0, "vision": 0}
-
-        t0 = time.time()
-        for i, ocr_file in enumerate(ocr_files, 1):
-            ocr_path = job_dir / ocr_file
-            ocr_json_path = ocr_dir / f"page_{i:02d}_base.json"
-
-            # 检查 OCR 缓存
-            cached_page = None
-            if cache_enabled:
-                img_hash = compute_image_hash(ocr_path)
-                cache_key = build_cache_key(img_hash, "ocr", "paddleocr_v6", ocr_manager.provider_name)
-                cached = rec_cache.get(cache_key)
-                if cached and ocr_json_path.exists():
-                    try:
-                        ocr_data = json.loads(ocr_json_path.read_text(encoding="utf-8"))
-                        cached_page = _reconstruct_ocr_page(ocr_data)
-                        cache_hits["ocr"] += 1
-                        logger.info("OCR 缓存命中: page %d", i)
-                    except Exception:
-                        cached_page = None
-
-            if cached_page:
-                page_result = cached_page
-            else:
-                page_result = await ocr_manager.recognize_async(ocr_path)
-                page_result.image_index = i
-
-                # 保存 OCR 结果并写入缓存
-                ocr_json = {
-                    "image_index": page_result.image_index,
-                    "width": page_result.width,
-                    "height": page_result.height,
-                    "provider": page_result.provider,
-                    "model": page_result.model,
-                    "elapsed_ms": page_result.elapsed_ms,
-                    "average_confidence": page_result.average_confidence,
-                    "tokens": [
-                        {
-                            "id": t.id,
-                            "text": t.text,
-                            "confidence": t.confidence,
-                            "bbox": t.bbox,
-                            "center": [t.center_x, t.center_y],
-                        }
-                        for t in page_result.tokens
-                    ],
-                    "warnings": page_result.warnings,
+            image.update(
+                {
+                    "prepared": str(vlm_path.relative_to(job_dir)),
+                    "prepared_vlm": str(vlm_path.relative_to(job_dir)),
+                    "prepared_ocr": str(ocr_path.relative_to(job_dir)),
+                    "width": info["vlm_width"],
+                    "height": info["vlm_height"],
                 }
-                ocr_json_path.write_text(
-                    json.dumps(ocr_json, ensure_ascii=False, indent=2), encoding="utf-8"
-                )
-                if cache_enabled:
-                    rec_cache.set(cache_key, img_hash, "ocr", str(ocr_json_path), model=ocr_manager.provider_name)
+            )
+            vlm_paths.append(vlm_path)
+            ocr_paths.append(ocr_path)
+        timings["preprocess_ms"] = int((time.time() - started) * 1000)
+        storage.save_job(job)
 
-            ocr_results.append(page_result)
+        recognition = load_recognition_config()
+        ocr_config = dict(recognition.get("ocr", {}))
+        ocr_config["enabled"] = _as_bool(ocr_config.get("enabled", True))
+        manager = OCRModelManager()
+        manager.configure(ocr_config)
+        if ocr_config.get("provider") == "mock" and not demo_mode:
+            raise OCRUnavailableError("Mock OCR 只能在用户显式启用演示模式后使用")
 
-            # 生成 overlay 图
+        job["status"] = JobStatus.OCR_RUNNING
+        job["status_message"] = "正在运行 OCR..."
+        storage.save_job(job)
+        cache = FileRecognitionCache(PROJECT_ROOT / "data" / "cache")
+        cache_enabled = _as_bool(recognition.get("cache", {}).get("enabled", True))
+        cache_hits = {"ocr": 0, "vision": 0}
+        ocr_pages: list[OCRPage] = []
+        layout_by_page: dict[str, Any] = {}
+        ocr_dir = job_dir / "ocr"
+        layout_dir = job_dir / "layout"
+        ocr_dir.mkdir(parents=True, exist_ok=True)
+        layout_dir.mkdir(parents=True, exist_ok=True)
+
+        started = time.time()
+        for index, ocr_path in enumerate(ocr_paths, 1):
+            ocr_key = _build_ocr_cache_key(
+                ocr_path,
+                job.get("rotation", "auto"),
+                cfg.preprocess,
+                ocr_config,
+                manager.get_status(),
+            )
+            page, cache_hit = await _recognize_with_cache(
+                manager,
+                cache,
+                ocr_path,
+                index,
+                cache_enabled,
+                ocr_key,
+            )
+            if cache_hit:
+                cache_hits["ocr"] += 1
+            ocr_pages.append(page)
+            write_json_atomic(
+                ocr_dir / f"page_{index:02d}_base.json",
+                _ocr_page_to_dict(page),
+            )
+
+            page_layout = build_layout_evidence(page.tokens, page.height)
+            layout_by_page[str(index)] = page_layout
+            write_json_atomic(
+                layout_dir / f"page_{index:02d}_lines.json",
+                page_layout["lines"],
+            )
+            write_json_atomic(
+                layout_dir / f"page_{index:02d}_pairs.json",
+                page_layout["pairs"],
+            )
+            write_json_atomic(
+                layout_dir / f"page_{index:02d}_records.json",
+                page_layout["records"],
+            )
             try:
                 from .ocr.overlay import generate_overlay
-                overlay_path = ocr_dir / f"page_{i:02d}_overlay.jpg"
-                generate_overlay(ocr_path, page_result, overlay_path)
-            except Exception as e:
-                logger.warning("Overlay 生成失败 (page %d): %s", i, e)
 
-        timings["ocr_ms"] = int((time.time() - t0) * 1000)
+                generate_overlay(
+                    ocr_path,
+                    page,
+                    ocr_dir / f"page_{index:02d}_overlay.jpg",
+                    show_token_id=True,
+                )
+            except Exception as exc:
+                logger.warning("OCR overlay 生成失败（非关键）: %s", exc)
+        timings["ocr_ms"] = int((time.time() - started) * 1000)
 
-        # ─── 阶段3：VLM（带 OCR 证据）──────────────────────
-        job["status"] = "VISION_RUNNING"
+        vision_config = dict(cfg.vision)
+        vision_config.update(
+            SettingsService(PROJECT_ROOT / "data").effective_settings()["vision"]
+        )
+        if vision_config.get("provider") == "mock" and not demo_mode:
+            raise PipelineError("Mock Vision 只能在用户显式启用演示模式后使用")
+        vision_provider = build_vision_provider(vision_config)
+        job.update(
+            {
+                "provider": vision_config.get("provider", ""),
+                "model": vision_config.get("model", ""),
+                "ocr_engine": manager.get_status(),
+            }
+        )
+        job["status"] = JobStatus.VISION_RUNNING
         job["status_message"] = "正在调用视觉模型..."
         storage.save_job(job)
 
-        vision_cfg = cfg.vision
-        vision_provider = build_vision_provider(vision_cfg)
-        job["provider"] = vision_cfg.get("provider", "mock")
-        job["model"] = vision_cfg.get("model", "")
-
-        # 构建 OCR 证据
-        ocr_evidence = [page.to_evidence_json() for page in ocr_results]
-
-        # 构建提示词
         schema_config = load_schema_config()
-        system_prompt = schema_config.get("system_prompt", "")
-        instructions = schema_config.get("instructions", "")
-        schema = schema_config.get("schema", {})
-
-        # 在 user_prompt 中附加 OCR 证据
-        ocr_evidence_text = json.dumps(ocr_evidence, ensure_ascii=False, indent=1)
-        user_prompt = f"""{instructions}
-
-以下是 PP-OCRv6 识别出的文字证据（含坐标和置信度），请结合原图参考：
-
-{ocr_evidence_text}
-
-请严格按照 JSON Schema 返回结果。只返回 JSON，不要使用 Markdown 代码块。"""
-
-        # 调用 VLM（带缓存检查）
-        t0 = time.time()
-        image_paths = [job_dir / f for f in vlm_files]
-        vision_dir = job_dir / "vision"
-        vision_dir.mkdir(exist_ok=True)
-        raw_response_path = vision_dir / "raw_response.txt"
-
-        # VLM 缓存：基于所有图片哈希 + prompt版本 + 模型
-        vlm_cached = False
-        if cache_enabled:
-            import hashlib
-            combined_hash = hashlib.sha256()
-            for ip in image_paths:
-                combined_hash.update(compute_image_hash(ip).encode())
-            prompt_version = schema_config.get("prompt_version", "unknown")
-            vlm_cache_key = build_cache_key(
-                combined_hash.hexdigest()[:16], "vision",
-                vision_cfg.get("provider", ""), vision_cfg.get("model", ""),
-                prompt_version=prompt_version,
-            )
-            cached_vlm = rec_cache.get(vlm_cache_key)
-            if cached_vlm and raw_response_path.exists():
-                raw_response = raw_response_path.read_text(encoding="utf-8")
-                vlm_cached = True
-                cache_hits["vision"] += 1
-                logger.info("VLM 缓存命中")
-
-        if not vlm_cached:
-            raw_response = await vision_provider.analyze(
-                image_paths, system_prompt, user_prompt, schema
-            )
-            # 保存 VLM 原始响应并写入缓存
-            raw_response_path.write_text(raw_response, encoding="utf-8")
-            if cache_enabled:
-                rec_cache.set(vlm_cache_key, combined_hash.hexdigest(), "vision",
-                              str(raw_response_path), model=vision_cfg.get("model", ""),
-                              version=prompt_version)
-
-        timings["vision_ms"] = int((time.time() - t0) * 1000)
-
-        # 保存 VLM 原始响应（确保存在）
-        if not raw_response_path.exists():
-            raw_response_path.write_text(raw_response, encoding="utf-8")
-
-        # 解析 JSON
-        vlm_result = extract_json(raw_response)
-        (vision_dir / "structured_result.json").write_text(
-            json.dumps(vlm_result, ensure_ascii=False, indent=2), encoding="utf-8"
+        schema = schema_config["schema"]
+        ocr_evidence = [page.to_evidence_json() for page in ocr_pages]
+        layout_prompt = {
+            page_index: {
+                "lines": evidence["lines"],
+                "pairs": evidence["pairs"],
+                "records": evidence["records"],
+            }
+            for page_index, evidence in layout_by_page.items()
+        }
+        user_prompt = (
+            f"{schema_config.get('instructions', '')}\n\n"
+            "以下 OCR 与本地布局仅为辅助证据，可能有误：\n"
+            f"OCR={json.dumps(ocr_evidence, ensure_ascii=False)}\n"
+            f"LAYOUT={json.dumps(layout_prompt, ensure_ascii=False)}\n"
+            "只返回严格符合 JSON Schema 的 JSON。"
         )
+        vision_key = _hash_payload(
+            {
+                "images": [compute_image_hash(path) for path in vlm_paths],
+                "provider": vision_config.get("provider"),
+                "model": vision_config.get("model"),
+                "endpoint": (
+                    vision_config.get("base_url"),
+                    vision_config.get("endpoint"),
+                ),
+                "prompt_version": schema_config.get("prompt_version"),
+                "prompt": schema_config.get("system_prompt", "") + user_prompt,
+                "schema": schema,
+                "ocr": ocr_evidence,
+                "layout": layout_prompt,
+                "image_detail": vision_config.get("image_detail"),
+                "extra_body": vision_config.get("extra_body", {}),
+            }
+        )
+        started = time.time()
+        cached_vision = (
+            cache.get_json("vision", vision_key) if cache_enabled else None
+        )
+        vision_cache_hit = bool(
+            cached_vision and isinstance(cached_vision.get("raw_response"), str)
+        )
+        if vision_cache_hit:
+            raw_response = cached_vision["raw_response"]
+            cache_hits["vision"] += 1
+        else:
+            raw_response = await vision_provider.analyze(
+                vlm_paths,
+                schema_config.get("system_prompt", ""),
+                user_prompt,
+                schema,
+            )
+            if cache_enabled:
+                cache.put_json(
+                    "vision",
+                    vision_key,
+                    {"raw_response": raw_response},
+                )
+        timings["vision_ms"] = int((time.time() - started) * 1000)
+        vision_dir = job_dir / "vision"
+        write_text_atomic(vision_dir / "raw_response.txt", raw_response)
 
-        # ─── 阶段3.5：Schema 校验（Draft202012Validator）──────
-        from jsonschema import Draft202012Validator
-        schema_obj = schema_config.get("schema", {})
-        if schema_obj:
-            validator = Draft202012Validator(schema_obj)
-            validation_errors = []
-            for error in validator.iter_errors(vlm_result):
-                path = ".".join(str(p) for p in error.absolute_path)
-                validation_errors.append(f"{path}: {error.message}" if path else error.message)
-            job["validation_errors"] = validation_errors
-            if validation_errors:
-                logger.warning("任务 %s VLM 结果 Schema 校验有 %d 个问题", job_id, len(validation_errors))
+        structured = normalize_legacy_result(extract_json(raw_response), job_id)
+        write_json_atomic(vision_dir / "structured_result.json", structured)
+        validation = validate_record_result(structured)
+        validation.fatal.extend(
+            validate_page_coverage(structured, expected_pages=len(job["images"]))
+        )
+        write_json_atomic(
+            vision_dir / "schema_errors.json",
+            [issue.to_dict() for issue in validation.issues],
+        )
+        job["validation_errors"] = [
+            issue.to_dict() for issue in validation.issues
+        ]
+        if validation.fatal:
+            job["status"] = JobStatus.FAILED_SCHEMA
+            job["status_message"] = (
+                f"视觉结果存在 {len(validation.fatal)} 个致命 Schema 错误"
+            )
+            storage.save_job(job)
+            raise SchemaValidationError(job["status_message"])
 
-        # ─── 阶段4：历史匹配 ────────────────────────────────
-        job["status"] = "MATCHING_HISTORY"
+        job["status"] = JobStatus.MATCHING_HISTORY
         job["status_message"] = "正在匹配历史知识..."
         storage.save_job(job)
+        started = time.time()
+        history = _history_candidates(structured)
+        timings["history_ms"] = int((time.time() - started) * 1000)
 
-        t0 = time.time()
-        history_candidates: dict[str, list] = {}
-        try:
-            from .config import PROJECT_ROOT
-            db_path = PROJECT_ROOT / "data" / "knowledge.sqlite3"
-            kb = KnowledgeDB(db_path)
-            kb.initialize()
-            matcher = HistoryMatcher(kb)
-
-            # 对 VLM 结果中的物料名进行历史匹配
-            for record in vlm_result.get("records", []):
-                for mat in record.get("materials", []):
-                    name_val = mat.get("name", {})
-                    name_text = name_val.get("value", "") if isinstance(name_val, dict) else str(name_val)
-                    if name_text:
-                        matches = matcher.match_material(name_text, max_candidates=3)
-                        if matches:
-                            field_id = mat.get("field_id", f"{record.get('record_id', 'r')}_{name_text}")
-                            history_candidates[field_id] = matches
-            timings["history_ms"] = int((time.time() - t0) * 1000)
-        except Exception as e:
-            logger.warning("历史匹配跳过: %s", e)
-            timings["history_ms"] = 0
-
-        # ─── 阶段5：融合 ────────────────────────────────────
-        job["status"] = "FUSING"
-        job["status_message"] = "正在融合多来源候选..."
+        job["status"] = JobStatus.FUSING
+        job["status_message"] = "正在融合 OCR/VLM/History/Layout..."
         storage.save_job(job)
-
-        t0 = time.time()
-        fusion_result = _build_fusion_result(vlm_result, ocr_results, history_candidates)
-        timings["fusion_ms"] = int((time.time() - t0) * 1000)
-
-        # 保存融合结果
-        fusion_dir = job_dir / "fusion"
-        fusion_dir.mkdir(exist_ok=True)
-        (fusion_dir / "result.json").write_text(
-            json.dumps(fusion_result, ensure_ascii=False, indent=2), encoding="utf-8"
+        started = time.time()
+        layout_association = {
+            "pairs": {
+                page_index: evidence["pairs"]
+                for page_index, evidence in layout_by_page.items()
+            },
+            "records": {
+                page_index: evidence["records"]
+                for page_index, evidence in layout_by_page.items()
+            },
+        }
+        fusion = _build_fusion_result(
+            structured,
+            ocr_pages,
+            history,
+            layout_association,
         )
+        timings["fusion_ms"] = int((time.time() - started) * 1000)
+        write_json_atomic(job_dir / "fusion" / "candidates.json", fusion)
+        write_json_atomic(job_dir / "fusion" / "result.json", fusion)
 
-        # 同时保存为 result.json（兼容旧接口）
-        storage.save_result(job_id, vlm_result)
+        final = project_final_result(job_id, structured, fusion)
+        final["recognition_run_id"] = recognition_run_id
+        final_service = FinalResultService(job_dir)
+        final_service.replace(final)
 
-        # ─── 阶段6：构建业务分组 ─────────────────────────────
-        try:
-            from .grouping.service import build_business_entities
-            from .grouping.storage import save_business_entities
-            entities = build_business_entities(job_id, vlm_result)
-            save_business_entities(job_dir, entities)
-            logger.info("任务 %s 业务分组构建完成: %d 公司, %d 配方",
-                        job_id, len(entities.company_groups), len(entities.formulas))
-        except Exception as e:
-            logger.warning("任务 %s 业务分组构建失败（不影响主流程）: %s", job_id, e)
-
-        # 判断是否有冲突
-        conflicts = [f for f in fusion_result.get("fields", []) if f.get("status") == "CONFLICT"]
-        need_review = [f for f in fusion_result.get("fields", []) if f.get("status") == "NEED_REVIEW"]
-
-        if conflicts:
-            job["status"] = "REVIEW_REQUIRED"
-            job["status_message"] = f"识别完成，有 {len(conflicts)} 个冲突字段需要确认。"
-        elif need_review:
-            job["status"] = "REVIEW_REQUIRED"
-            job["status_message"] = f"识别完成，有 {len(need_review)} 个字段建议复核。"
-        else:
-            job["status"] = "READY"
-            job["status_message"] = "识别完成，所有字段自动通过。"
-
-        job["timings_ms"] = timings
+        job["schema_status"] = (
+            "REVIEW_REQUIRED" if validation.reviewable else "VALID"
+        )
         job["cache_hits"] = cache_hits
+        job["timings_ms"] = timings
+        job["vision_engine"] = {
+            "provider": vision_config.get("provider", ""),
+            "model": vision_config.get("model", ""),
+            "healthy": not demo_mode,
+            "cache_hit": vision_cache_hit,
+        }
+        job["final_result_run_id"] = recognition_run_id
+        gate = evaluate_ready_gate(job, final, job_dir)
+        if gate.ready:
+            job["status"] = JobStatus.READY
+            job["status_message"] = "真实双引擎识别完成"
+        else:
+            job["status"] = JobStatus.REVIEW_REQUIRED
+            job["status_message"] = "；".join(gate.reasons)
         storage.save_job(job)
-        logger.info("任务 %s 双引擎识别完成: %s (cache_hits=%s)", job_id, job["status"], cache_hits)
         return job
-
-    except (ImageProcessError, VisionProviderError, PipelineError) as e:
-        job["status"] = "FAILED"
-        job["error"] = str(e)
-        job["status_message"] = str(e)
-        job["timings_ms"] = timings
-        storage.save_job(job)
-        logger.error("任务 %s 失败: %s", job_id, e)
+    except SchemaValidationError:
         raise
-
-    except Exception as e:
-        job["status"] = "FAILED"
-        job["error"] = f"未知错误: {e}"
-        job["status_message"] = f"未知错误: {e}"
+    except (ImageProcessError, VisionProviderError, OCRUnavailableError, PipelineError) as exc:
+        job["status"] = JobStatus.FAILED
+        job["error"] = str(exc)
+        job["status_message"] = str(exc)
         job["timings_ms"] = timings
         storage.save_job(job)
-        logger.exception("任务 %s 未知错误", job_id)
-        raise PipelineError(f"识别过程出错: {e}")
+        raise
+    except Exception as exc:
+        job["status"] = JobStatus.FAILED
+        job["error"] = f"未知错误: {exc}"
+        job["status_message"] = job["error"]
+        job["timings_ms"] = timings
+        storage.save_job(job)
+        logger.exception("任务 %s 失败", job_id)
+        raise PipelineError(f"识别过程出错: {exc}") from exc
 
 
 def _build_fusion_result(
     vlm_result: dict[str, Any],
     ocr_results: list[OCRPage],
     history_candidates: dict[str, list],
+    layout: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """构建融合结果：通过 evidence_token_ids、bbox 重叠和空间距离关联 OCR 候选。"""
-    from .config import PROJECT_ROOT
-    import yaml
-
-    # 加载融合规则
-    rules_path = PROJECT_ROOT / "config" / "fusion_rules.yaml"
-    rules = {}
-    if rules_path.exists():
-        with open(rules_path, encoding="utf-8") as f:
-            rules = yaml.safe_load(f) or {}
-
-    engine = FusionEngine(rules)
+    engine = FusionEngine(load_fusion_rules())
     fields: list[dict[str, Any]] = []
 
-    # 构建 OCR token 索引：by id 和 by page
-    ocr_tokens_by_id: dict[str, Any] = {}
-    ocr_tokens_by_page: dict[int, list] = {}
-    for page in ocr_results:
-        page_tokens = []
-        for token in page.tokens:
-            ocr_tokens_by_id[token.id] = token
-            page_tokens.append(token)
-        ocr_tokens_by_page[page.image_index] = page_tokens
-
-    # 获取记录列表（兼容 pages[] 和 records[] 格式）
-    records = _extract_records_from_vlm(vlm_result)
-
-    for record in records:
-        record_id = record.get("record_id", record.get("formula_id", "r1"))
-        source_indexes = record.get("source_image_indexes", [1])
-        record_bbox = record.get("record_bbox") or record.get("bbox")
-
-        for mat_idx, mat in enumerate(record.get("materials", [])):
-            field_id = mat.get("field_id", f"{record_id}_m{mat_idx}")
-            name_obj = mat.get("name", {})
-            amount_obj = mat.get("amount", {})
-
-            # ─── 名称字段融合 ───
-            name_val, name_conf, name_evidence, name_bbox = _extract_field_info(name_obj)
-            name_candidates = []
-            if name_val:
-                name_candidates.append(Candidate(
-                    value=name_val,
-                    normalized_value=normalize_text(name_val),
-                    source="vlm",
-                    confidence=name_conf,
-                    evidence=name_evidence,
-                ))
-                # 通过空间关联找 OCR 候选
-                ocr_match = _find_ocr_candidate(
-                    name_evidence, name_bbox, name_val,
-                    source_indexes, ocr_tokens_by_id, ocr_tokens_by_page,
-                    ocr_results,
+    for record in _extract_records_from_vlm(vlm_result):
+        formula_id = str(
+            record.get("formula_id") or record.get("record_id") or "formula"
+        )
+        image_index = int((record.get("source_image_indexes") or [1])[0])
+        record_bbox = record.get("record_bbox")
+        for material_index, material in enumerate(record.get("materials", []), 1):
+            legacy_base = material.get("field_id")
+            material_id = material.get(
+                "material_id", f"material_{material_index:03d}"
+            )
+            base = legacy_base or f"{formula_id}__{material_id}"
+            separator = "_" if legacy_base else "__"
+            for field_name, field_type in (
+                ("name", "text"),
+                ("amount", "amount"),
+                ("unit", "text"),
+            ):
+                field_id = f"{base}{separator}{field_name}"
+                fields.append(
+                    _fuse_one(
+                        engine,
+                        field_id,
+                        field_type,
+                        material.get(field_name, {}),
+                        image_index,
+                        record_bbox,
+                        ocr_results,
+                        history_candidates.get(field_id, []),
+                        layout,
+                        material.get("name", {}) if field_name == "amount" else None,
+                    )
                 )
-                if ocr_match:
-                    name_candidates.append(Candidate(
-                        value=ocr_match.text,
-                        normalized_value=normalize_text(ocr_match.text),
-                        source="ocr_base",
-                        confidence=ocr_match.confidence,
-                        evidence=[ocr_match.id],
-                    ))
-                # 历史候选
-                if field_id in history_candidates:
-                    for hc in history_candidates[field_id][:2]:
-                        name_candidates.append(Candidate(
-                            value=hc["standard_name"],
-                            normalized_value=normalize_text(hc["standard_name"]),
-                            source="history_material",
-                            confidence=hc["score"] * 0.7,
-                            evidence=[f"history:{hc['match_type']}"],
-                        ))
-
-            fused_name = engine.fuse_field(f"{field_id}_name", "text", name_candidates)
-            fields.append(_fused_to_dict(fused_name))
-
-            # ─── 数量字段融合 ───
-            amount_val, amount_conf, amount_evidence, amount_bbox = _extract_field_info(amount_obj)
-            amount_candidates = []
-            if amount_val:
-                amount_candidates.append(Candidate(
-                    value=amount_val,
-                    normalized_value=amount_val,
-                    source="vlm",
-                    confidence=amount_conf,
-                    evidence=amount_evidence,
-                ))
-                # 通过空间关联找 OCR 候选
-                ocr_match = _find_ocr_candidate(
-                    amount_evidence, amount_bbox, amount_val,
-                    source_indexes, ocr_tokens_by_id, ocr_tokens_by_page,
-                    ocr_results,
+        for parameter_index, parameter in enumerate(
+            record.get("process_parameters", []), 1
+        ):
+            parameter_id = parameter.get(
+                "parameter_id", f"parameter_{parameter_index:03d}"
+            )
+            base = f"{formula_id}__{parameter_id}"
+            for field_name, field_type in (
+                ("name", "text"),
+                ("value", "amount"),
+                ("unit", "text"),
+            ):
+                fields.append(
+                    _fuse_one(
+                        engine,
+                        f"{base}__{field_name}",
+                        field_type,
+                        parameter.get(field_name, {}),
+                        image_index,
+                        record_bbox,
+                        ocr_results,
+                        [],
+                        layout,
+                        parameter.get("name", {}) if field_name == "value" else None,
+                    )
                 )
-                if ocr_match:
-                    amount_candidates.append(Candidate(
-                        value=ocr_match.text,
-                        normalized_value=ocr_match.text,
-                        source="ocr_base",
-                        confidence=ocr_match.confidence,
-                        evidence=[ocr_match.id],
-                    ))
 
-            fused_amount = engine.fuse_field(f"{field_id}_amount", "amount", amount_candidates)
-            fields.append(_fused_to_dict(fused_amount))
-
-        # ─── 工艺参数字段融合 ───
-        for pp_idx, pp in enumerate(record.get("process_parameters", [])):
-            pp_field_id = f"{record_id}_pp{pp_idx}"
-            pp_name_obj = pp.get("name", {})
-            pp_value_obj = pp.get("value", {})
-
-            pp_name_val, pp_name_conf, pp_name_ev, pp_name_bbox = _extract_field_info(pp_name_obj)
-            pp_val_val, pp_val_conf, pp_val_ev, pp_val_bbox = _extract_field_info(pp_value_obj)
-
-            # 工艺名称
-            pp_name_candidates = []
-            if pp_name_val:
-                pp_name_candidates.append(Candidate(
-                    value=pp_name_val, normalized_value=normalize_text(pp_name_val),
-                    source="vlm", confidence=pp_name_conf, evidence=pp_name_ev,
-                ))
-                ocr_m = _find_ocr_candidate(
-                    pp_name_ev, pp_name_bbox, pp_name_val,
-                    source_indexes, ocr_tokens_by_id, ocr_tokens_by_page, ocr_results,
-                )
-                if ocr_m:
-                    pp_name_candidates.append(Candidate(
-                        value=ocr_m.text, normalized_value=normalize_text(ocr_m.text),
-                        source="ocr_base", confidence=ocr_m.confidence, evidence=[ocr_m.id],
-                    ))
-            fused_pp_name = engine.fuse_field(f"{pp_field_id}_name", "text", pp_name_candidates)
-            fields.append(_fused_to_dict(fused_pp_name))
-
-            # 工艺数值
-            pp_val_candidates = []
-            if pp_val_val:
-                pp_val_candidates.append(Candidate(
-                    value=pp_val_val, normalized_value=pp_val_val,
-                    source="vlm", confidence=pp_val_conf, evidence=pp_val_ev,
-                ))
-                ocr_m = _find_ocr_candidate(
-                    pp_val_ev, pp_val_bbox, pp_val_val,
-                    source_indexes, ocr_tokens_by_id, ocr_tokens_by_page, ocr_results,
-                )
-                if ocr_m:
-                    pp_val_candidates.append(Candidate(
-                        value=ocr_m.text, normalized_value=ocr_m.text,
-                        source="ocr_base", confidence=ocr_m.confidence, evidence=[ocr_m.id],
-                    ))
-            fused_pp_val = engine.fuse_field(f"{pp_field_id}_value", "amount", pp_val_candidates)
-            fields.append(_fused_to_dict(fused_pp_val))
-
-    # 统计
-    total = len(fields)
-    auto_accept = sum(1 for f in fields if f["status"] == "AUTO_ACCEPT")
-    conflict = sum(1 for f in fields if f["status"] == "CONFLICT")
-    need_review = sum(1 for f in fields if f["status"] == "NEED_REVIEW")
-
+    summary = {
+        "total_fields": len(fields),
+        "auto_accept": sum(
+            field["status"] == "AUTO_ACCEPT" for field in fields
+        ),
+        "conflict": sum(field["status"] == "CONFLICT" for field in fields),
+        "need_review": sum(
+            field["status"] == "NEED_REVIEW" for field in fields
+        ),
+    }
     return {
-        "page_heading": vlm_result.get("page_heading", ""),
-        "records": vlm_result.get("records", []),
-        "warnings": vlm_result.get("warnings", []),
+        "schema_version": "fusion-v1",
         "fields": fields,
-        "summary": {
-            "total_fields": total,
-            "auto_accept": auto_accept,
-            "conflict": conflict,
-            "need_review": need_review,
-        },
+        "summary": summary,
     }
 
 
+def _fuse_one(
+    engine: FusionEngine,
+    field_id: str,
+    field_type: str,
+    field_object: Any,
+    image_index: int,
+    record_bbox: list[float] | None,
+    ocr_results: list[OCRPage],
+    history: list[Any],
+    layout: dict[str, Any] | None,
+    anchor_object: Any = None,
+) -> dict[str, Any]:
+    value, confidence, evidence_ids, bbox = _extract_field_info(field_object)
+    anchor_value, _, anchor_evidence_ids, anchor_bbox = _extract_field_info(
+        anchor_object
+    )
+    candidates: list[Candidate] = []
+    if value:
+        candidates.append(
+            Candidate(
+                value=value,
+                normalized_value=(
+                    value if field_type == "amount" else normalize_text(value)
+                ),
+                source="vlm",
+                confidence=confidence,
+                evidence=evidence_ids,
+            )
+        )
+    associations = associate_field(
+        FieldEvidence(
+            field_id=field_id,
+            field_type=field_type,
+            source_image_index=image_index,
+            field_bbox=bbox,
+            record_bbox=record_bbox,
+            evidence_token_ids=evidence_ids,
+            vlm_value=value,
+            anchor_token_ids=anchor_evidence_ids,
+            anchor_bbox=anchor_bbox,
+            anchor_value=anchor_value,
+        ),
+        ocr_results,
+        layout,
+    )
+    for association in associations:
+        candidates.append(
+            Candidate(
+                value=association.value,
+                normalized_value=(
+                    association.value
+                    if field_type == "amount"
+                    else normalize_text(association.value)
+                ),
+                source="ocr_base",
+                confidence=association.confidence,
+                evidence=association.token_ids,
+            )
+        )
+    for match in history[:2]:
+        standard = match.get("standard_name", match.get("value", ""))
+        if standard:
+            candidates.append(
+                Candidate(
+                    value=standard,
+                    normalized_value=normalize_text(standard),
+                    source="history_material",
+                    confidence=float(match.get("score", 0.0)) * 0.7,
+                    evidence=["history"],
+                )
+            )
+    fused = engine.fuse_field(field_id, field_type, candidates)
+    result = _fused_to_dict(fused)
+    result["bbox"] = associations[0].bbox if associations else bbox
+    result["source_image_index"] = image_index
+    if associations:
+        result["association"] = {
+            "method": associations[0].method,
+            "score": associations[0].association_score,
+            "reasons": associations[0].reasons,
+        }
+        if associations[0].requires_review:
+            result["status"] = "NEED_REVIEW"
+    if record_boundary_mismatch(image_index, record_bbox, ocr_results, layout):
+        result["status"] = "NEED_REVIEW"
+        result.setdefault("association", {}).setdefault("reasons", []).append(
+            "RECORD_BOUNDARY_MISMATCH"
+        )
+    return result
+
+
+def _history_candidates(structured: dict[str, Any]) -> dict[str, list]:
+    candidates: dict[str, list] = {}
+    try:
+        database = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+        database.initialize()
+        matcher = HistoryMatcher(database)
+        for record in _extract_records_from_vlm(structured):
+            formula_id = record.get("formula_id", "formula")
+            for index, material in enumerate(record.get("materials", []), 1):
+                material_id = material.get("material_id", f"material_{index:03d}")
+                name, _, _, _ = _extract_field_info(material.get("name", {}))
+                if not name:
+                    continue
+                matches = matcher.match_material(name, max_candidates=3)
+                if matches:
+                    candidates[
+                        f"{formula_id}__{material_id}__name"
+                    ] = matches
+    except Exception as exc:
+        logger.warning("历史匹配不可用（非关键）: %s", exc)
+    return candidates
+
+
 def _extract_records_from_vlm(vlm_result: dict[str, Any]) -> list[dict[str, Any]]:
-    """从 VLM 结果提取记录列表（兼容 pages[] 和 records[] 格式）。"""
-    # 新格式 pages[]
     pages = vlm_result.get("pages", [])
     if pages:
         records = []
         for page in pages:
-            img_idx = page.get("source_image_index", 1)
+            image_index = int(page.get("source_image_index", 1))
             for section in page.get("product_sections", []):
                 for formula in section.get("formulas", []):
                     record = dict(formula)
-                    record["source_image_indexes"] = [img_idx]
-                    record.setdefault("record_id", formula.get("formula_id", "r"))
+                    record["source_image_indexes"] = [image_index]
                     records.append(record)
         return records
-    # 旧格式 records[]
-    return vlm_result.get("records", [])
+    return list(vlm_result.get("records", []))
 
 
-def _extract_field_info(field_obj: Any) -> tuple[str, float, list[str], list[float] | None]:
-    """从字段对象提取 (value, confidence, evidence_token_ids, bbox)。"""
-    if not field_obj:
-        return ("", 0.0, [], None)
-    if isinstance(field_obj, str):
-        return (field_obj, 0.8, [], None)
-    if isinstance(field_obj, dict):
+def _extract_field_info(
+    field_object: Any,
+) -> tuple[str, float, list[str], list[float] | None]:
+    if not field_object:
+        return "", 0.0, [], None
+    if isinstance(field_object, str):
+        return field_object, 0.8, [], None
+    if isinstance(field_object, dict):
         return (
-            field_obj.get("value", ""),
-            field_obj.get("confidence", 0.8),
-            field_obj.get("evidence_token_ids", []),
-            field_obj.get("bbox"),
+            str(field_object.get("value", field_object.get("raw_value", ""))),
+            float(field_object.get("confidence", 0.8)),
+            list(field_object.get("evidence_token_ids", [])),
+            field_object.get("bbox"),
         )
-    return ("", 0.0, [], None)
+    return "", 0.0, [], None
 
 
 def _find_ocr_candidate(
@@ -627,80 +656,37 @@ def _find_ocr_candidate(
     ocr_tokens_by_page: dict[int, list],
     ocr_results: list[OCRPage],
 ) -> Any | None:
-    """
-    通过三种策略关联 OCR 候选：
-    1. evidence_token_ids 直接引用
-    2. bbox 重叠（归一化坐标）
-    3. 文本精确匹配（最后回退）
-    """
-    # 策略1：VLM 直接引用了 OCR token id
-    for tid in evidence_token_ids:
-        if tid in ocr_tokens_by_id:
-            return ocr_tokens_by_id[tid]
-
-    # 策略2：bbox 重叠匹配
-    if field_bbox and len(field_bbox) == 4:
-        best_token = None
-        best_iou = 0.0
-        for img_idx in source_image_indexes:
-            page = next((p for p in ocr_results if p.image_index == img_idx), None)
-            if not page:
-                continue
-            page_w, page_h = page.width, page.height
-            if page_w == 0 or page_h == 0:
-                continue
-            for token in page.tokens:
-                # 将 OCR 像素 bbox 转为归一化坐标
-                ocr_norm_bbox = [
-                    token.bbox[0] / page_w,
-                    token.bbox[1] / page_h,
-                    token.bbox[2] / page_w,
-                    token.bbox[3] / page_h,
-                ]
-                iou = _bbox_iou(field_bbox, ocr_norm_bbox)
-                if iou > best_iou:
-                    best_iou = iou
-                    best_token = token
-            # 如果 IoU 太低，尝试中心距离
-            if best_iou < 0.1:
-                field_cx = (field_bbox[0] + field_bbox[2]) / 2
-                field_cy = (field_bbox[1] + field_bbox[3]) / 2
-                best_dist = float("inf")
-                for token in page.tokens:
-                    tcx = token.center_x / page_w
-                    tcy = token.center_y / page_h
-                    dist = ((field_cx - tcx) ** 2 + (field_cy - tcy) ** 2) ** 0.5
-                    if dist < best_dist and dist < 0.05:  # 5% 页面尺寸内
-                        best_dist = dist
-                        best_token = token
-        if best_token and best_iou > 0.05:
-            return best_token
-
-    # 策略3：文本精确匹配（最后回退）
-    for img_idx in source_image_indexes:
-        page = next((p for p in ocr_results if p.image_index == img_idx), None)
-        if not page:
-            continue
-        for token in page.tokens:
-            if token.text == field_value:
-                return token
-
-    return None
+    """Compatibility wrapper for callers that expect one token."""
+    image_index = int((source_image_indexes or [1])[0])
+    associated = associate_field(
+        FieldEvidence(
+            field_id="compat",
+            field_type="text",
+            source_image_index=image_index,
+            field_bbox=field_bbox,
+            record_bbox=None,
+            evidence_token_ids=evidence_token_ids,
+            vlm_value=field_value,
+        ),
+        ocr_results,
+        None,
+    )
+    if not associated:
+        return None
+    token_id = associated[0].token_ids[0]
+    return ocr_tokens_by_id.get(token_id)
 
 
 def _bbox_iou(a: list[float], b: list[float]) -> float:
-    """计算两个归一化 bbox 的 IoU。"""
-    x1 = max(a[0], b[0])
-    y1 = max(a[1], b[1])
-    x2 = min(a[2], b[2])
-    y2 = min(a[3], b[3])
+    x1, y1 = max(a[0], b[0]), max(a[1], b[1])
+    x2, y2 = min(a[2], b[2]), min(a[3], b[3])
     if x2 <= x1 or y2 <= y1:
         return 0.0
-    inter = (x2 - x1) * (y2 - y1)
+    intersection = (x2 - x1) * (y2 - y1)
     area_a = (a[2] - a[0]) * (a[3] - a[1])
     area_b = (b[2] - b[0]) * (b[3] - b[1])
-    union = area_a + area_b - inter
-    return inter / union if union > 0 else 0.0
+    union = area_a + area_b - intersection
+    return intersection / union if union > 0 else 0.0
 
 
 def _fused_to_dict(fused: FusedField) -> dict[str, Any]:
@@ -714,40 +700,147 @@ def _fused_to_dict(fused: FusedField) -> dict[str, Any]:
         "reasons": fused.reasons,
         "candidates": [
             {
-                "value": c.value,
-                "source": c.source,
-                "confidence": c.confidence,
-                "evidence": c.evidence,
+                "value": candidate.value,
+                "source": candidate.source,
+                "confidence": candidate.confidence,
+                "evidence": candidate.evidence,
             }
-            for c in fused.raw_candidates
+            for candidate in fused.raw_candidates
         ],
     }
 
 
-def _reconstruct_ocr_page(ocr_data: dict[str, Any]) -> OCRPage:
-    """从保存的 JSON 数据重建 OCRPage 对象（缓存命中时使用）。"""
-    from .ocr.base import OCRToken
+def _ocr_page_to_dict(page: OCRPage) -> dict[str, Any]:
+    return {
+        "image_index": page.image_index,
+        "width": page.width,
+        "height": page.height,
+        "provider": page.provider,
+        "model": page.model,
+        "elapsed_ms": page.elapsed_ms,
+        "average_confidence": page.average_confidence,
+        "tokens": [
+            {
+                "id": token.id,
+                "text": token.text,
+                "confidence": token.confidence,
+                "bbox": token.bbox,
+                "polygon": token.polygon,
+                "center": [token.center_x, token.center_y],
+                "line_index": token.line_index,
+            }
+            for token in page.tokens
+        ],
+        "warnings": page.warnings,
+    }
+
+
+def _reconstruct_ocr_page(data: dict[str, Any]) -> OCRPage:
     tokens = []
-    for td in ocr_data.get("tokens", []):
-        bbox = td.get("bbox", [0, 0, 0, 0])
-        center = td.get("center", [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2])
-        tokens.append(OCRToken(
-            id=td.get("id", ""),
-            text=td.get("text", ""),
-            confidence=td.get("confidence", 0.0),
-            polygon=[[bbox[0], bbox[1]], [bbox[2], bbox[1]], [bbox[2], bbox[3]], [bbox[0], bbox[3]]],
-            bbox=bbox,
-            center_x=center[0],
-            center_y=center[1],
-        ))
+    for item in data.get("tokens", []):
+        bbox = item.get("bbox", [0, 0, 0, 0])
+        center = item.get(
+            "center",
+            [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2],
+        )
+        tokens.append(
+            OCRToken(
+                id=item.get("id", ""),
+                text=item.get("text", ""),
+                confidence=float(item.get("confidence", 0.0)),
+                polygon=item.get("polygon", []),
+                bbox=bbox,
+                center_x=center[0],
+                center_y=center[1],
+                line_index=item.get("line_index"),
+            )
+        )
     return OCRPage(
-        image_index=ocr_data.get("image_index", 1),
-        width=ocr_data.get("width", 0),
-        height=ocr_data.get("height", 0),
+        image_index=int(data.get("image_index", 1)),
+        width=int(data.get("width", 0)),
+        height=int(data.get("height", 0)),
         tokens=tokens,
-        average_confidence=ocr_data.get("average_confidence", 0.0),
-        provider=ocr_data.get("provider", ""),
-        model=ocr_data.get("model", ""),
-        elapsed_ms=ocr_data.get("elapsed_ms", 0),
-        warnings=ocr_data.get("warnings", []),
+        average_confidence=float(data.get("average_confidence", 0.0)),
+        provider=data.get("provider", ""),
+        model=data.get("model", ""),
+        elapsed_ms=int(data.get("elapsed_ms", 0)),
+        warnings=list(data.get("warnings", [])),
     )
+
+
+def _hash_payload(payload: Any) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _build_ocr_cache_key(
+    image_path: Path,
+    rotation: str,
+    preprocess: dict[str, Any],
+    ocr_config: dict[str, Any],
+    model_status: dict[str, Any],
+) -> str:
+    return _hash_payload(
+        {
+            "image": compute_image_hash(image_path),
+            "rotation": rotation,
+            "preprocess_version": "dual-image-v2",
+            "preprocess": preprocess,
+            "provider": ocr_config.get("provider"),
+            "tier": ocr_config.get("tier"),
+            "det_model": model_status.get("det_model"),
+            "rec_model": model_status.get("rec_model"),
+            "device": ocr_config.get("device"),
+            "minimum_score": ocr_config.get("minimum_score"),
+            "orientation": ocr_config.get("use_textline_orientation"),
+            "parser": "paddleocr-v6-parser-v2",
+        }
+    )
+
+
+async def _recognize_with_cache(
+    manager: Any,
+    cache: FileRecognitionCache,
+    image_path: Path,
+    image_index: int,
+    cache_enabled: bool,
+    cache_key: str,
+) -> tuple[OCRPage, bool]:
+    cached = cache.get_json("ocr", cache_key) if cache_enabled else None
+    if cached:
+        manager.ensure_loaded()
+        page = _reconstruct_ocr_page(cached)
+        cache_hit = True
+    else:
+        page = await manager.recognize_async(image_path)
+        scope_token_ids(page, 1)
+        if cache_enabled:
+            cache.put_json("ocr", cache_key, _ocr_page_to_dict(page))
+        cache_hit = False
+    scope_token_ids(page, image_index)
+    return page, cache_hit
+
+
+def _demo_mode() -> bool:
+    if _as_bool(os.environ.get("DEMO_MODE", "")):
+        return True
+    try:
+        from .settings import SettingsService
+
+        return bool(
+            SettingsService(PROJECT_ROOT / "data").load().get("demo_mode")
+        )
+    except Exception:
+        return False
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}

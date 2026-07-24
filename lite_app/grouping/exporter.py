@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
-from .models import BusinessEntities, Formula
+from ..excel_safety import safe_excel_value
+from .models import BusinessEntities
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,10 @@ def _write_header(ws, headers: list[str]) -> None:
         cell.fill = _HEADER_FILL
 
 
+def _write_value(ws, row: int, column: int, value) -> None:
+    ws.cell(row=row, column=column, value=safe_excel_value(value))
+
+
 def _get_company_name(entities: BusinessEntities, company_id: str) -> str:
     for cg in entities.company_groups:
         if cg.company_id == company_id:
@@ -67,14 +71,14 @@ def _write_summary_sheet(wb: Workbook, entities: BusinessEntities) -> None:
         company = _get_company_name(entities, f.company_id)
         product = _get_product_name(entities, f.product_id)
         no = f.formula_no_raw or f"未编号{f.formula_sequence}"
-        ws.cell(row=row, column=1, value=company)
-        ws.cell(row=row, column=2, value=product)
-        ws.cell(row=row, column=3, value=no)
-        ws.cell(row=row, column=4, value=f.record_date.raw_value)
-        ws.cell(row=row, column=5, value=len(f.materials))
-        ws.cell(row=row, column=6, value=len(f.process_parameters))
-        ws.cell(row=row, column=7, value=f.source_image_index)
-        ws.cell(row=row, column=8, value=f.review_status)
+        _write_value(ws, row, 1, company)
+        _write_value(ws, row, 2, product)
+        _write_value(ws, row, 3, no)
+        _write_value(ws, row, 4, f.record_date.raw_value)
+        _write_value(ws, row, 5, len(f.materials))
+        _write_value(ws, row, 6, len(f.process_parameters))
+        _write_value(ws, row, 7, f.source_image_index)
+        _write_value(ws, row, 8, f.review_status)
         if f.review_status == "REVIEW_REQUIRED":
             for col in range(1, 9):
                 ws.cell(row=row, column=col).fill = _CONFLICT_FILL
@@ -93,15 +97,15 @@ def _write_materials_sheet(wb: Workbook, entities: BusinessEntities) -> None:
         product = _get_product_name(entities, f.product_id)
         no = f.formula_no_raw or f"未编号{f.formula_sequence}"
         for mi, m in enumerate(f.materials, 1):
-            ws.cell(row=row, column=1, value=company)
-            ws.cell(row=row, column=2, value=product)
-            ws.cell(row=row, column=3, value=no)
-            ws.cell(row=row, column=4, value=f.record_date.raw_value)
-            ws.cell(row=row, column=5, value=mi)
-            ws.cell(row=row, column=6, value=m.name.raw_value)
-            ws.cell(row=row, column=7, value=m.amount.raw_value)
-            ws.cell(row=row, column=8, value=m.unit.raw_value)
-            ws.cell(row=row, column=9, value=f.source_image_index)
+            _write_value(ws, row, 1, company)
+            _write_value(ws, row, 2, product)
+            _write_value(ws, row, 3, no)
+            _write_value(ws, row, 4, f.record_date.raw_value)
+            _write_value(ws, row, 5, mi)
+            _write_value(ws, row, 6, m.name.raw_value)
+            _write_value(ws, row, 7, m.amount.raw_value)
+            _write_value(ws, row, 8, m.unit.raw_value)
+            _write_value(ws, row, 9, f.source_image_index)
             if m.amount.review_status == "CONFLICT":
                 for col in range(1, 10):
                     ws.cell(row=row, column=col).fill = _CONFLICT_FILL
@@ -120,15 +124,15 @@ def _write_process_sheet(wb: Workbook, entities: BusinessEntities) -> None:
         product = _get_product_name(entities, f.product_id)
         no = f.formula_no_raw or f"未编号{f.formula_sequence}"
         for pi, p in enumerate(f.process_parameters, 1):
-            ws.cell(row=row, column=1, value=company)
-            ws.cell(row=row, column=2, value=product)
-            ws.cell(row=row, column=3, value=no)
-            ws.cell(row=row, column=4, value=f.record_date.raw_value)
-            ws.cell(row=row, column=5, value=pi)
-            ws.cell(row=row, column=6, value=p.name.raw_value)
-            ws.cell(row=row, column=7, value=p.value.raw_value)
-            ws.cell(row=row, column=8, value=p.unit.raw_value)
-            ws.cell(row=row, column=9, value=f.source_image_index)
+            _write_value(ws, row, 1, company)
+            _write_value(ws, row, 2, product)
+            _write_value(ws, row, 3, no)
+            _write_value(ws, row, 4, f.record_date.raw_value)
+            _write_value(ws, row, 5, pi)
+            _write_value(ws, row, 6, p.name.raw_value)
+            _write_value(ws, row, 7, p.value.raw_value)
+            _write_value(ws, row, 8, p.unit.raw_value)
+            _write_value(ws, row, 9, f.source_image_index)
             row += 1
 
 
@@ -158,16 +162,21 @@ def _write_review_sheet(wb: Workbook, entities: BusinessEntities) -> None:
                         product_raw = section.product_or_series.raw_value
                         break
 
-        ws.cell(row=row, column=1, value=company_raw)
-        ws.cell(row=row, column=2, value=company_std)
-        ws.cell(row=row, column=3, value=product_raw)
-        ws.cell(row=row, column=4, value=product_std)
-        ws.cell(row=row, column=5, value=f.formula_id)
-        ws.cell(row=row, column=6, value=f.formula_no_raw or f"未编号{f.formula_sequence}")
-        ws.cell(row=row, column=7, value=f.page_id)
-        ws.cell(row=row, column=8, value=f.source_image_index)
-        ws.cell(row=row, column=9, value=str(f.record_bbox) if f.record_bbox else "")
-        ws.cell(row=row, column=10, value=f.review_status)
+        _write_value(ws, row, 1, company_raw)
+        _write_value(ws, row, 2, company_std)
+        _write_value(ws, row, 3, product_raw)
+        _write_value(ws, row, 4, product_std)
+        _write_value(ws, row, 5, f.formula_id)
+        _write_value(
+            ws,
+            row,
+            6,
+            f.formula_no_raw or f"未编号{f.formula_sequence}",
+        )
+        _write_value(ws, row, 7, f.page_id)
+        _write_value(ws, row, 8, f.source_image_index)
+        _write_value(ws, row, 9, str(f.record_bbox) if f.record_bbox else "")
+        _write_value(ws, row, 10, f.review_status)
         row += 1
 
 

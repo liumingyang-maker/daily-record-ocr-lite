@@ -62,6 +62,14 @@ class OCRPage:
         }
 
 
+def scope_token_ids(page: OCRPage, image_index: int) -> OCRPage:
+    """Make every token ID globally unique within a multi-page job."""
+    page.image_index = image_index
+    for index, token in enumerate(page.tokens, 1):
+        token.id = f"p{image_index}_t{index:03d}"
+    return page
+
+
 class OCRProvider(ABC):
     """OCR Provider 抽象接口。"""
 

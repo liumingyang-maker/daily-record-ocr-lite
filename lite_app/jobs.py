@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Callable, Coroutine
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -14,14 +15,19 @@ class TaskQueue:
 
     def __init__(self) -> None:
         self._queue: asyncio.Queue[str] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._worker_task: asyncio.Task | None = None
         self._running_job_id: str | None = None
         self._handler: Callable[[str], Coroutine] | None = None
 
     def _ensure_queue(self) -> asyncio.Queue[str]:
         """惰性创建队列（绑定当前事件循环）。"""
-        if self._queue is None:
+        loop = asyncio.get_running_loop()
+        if self._queue is None or self._loop is not loop:
+            if self._worker_task and not self._worker_task.done():
+                raise RuntimeError("任务队列仍绑定到另一个正在运行的事件循环")
             self._queue = asyncio.Queue()
+            self._loop = loop
         return self._queue
 
     def set_handler(self, handler: Callable[[str], Coroutine]) -> None:
@@ -45,6 +51,8 @@ class TaskQueue:
                 pass
             logger.info("后台任务 worker 已停止")
         self._worker_task = None
+        self._queue = None
+        self._loop = None
 
     async def submit(self, job_id: str) -> None:
         """提交任务到队列。"""

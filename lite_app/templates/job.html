@@ -8,6 +8,21 @@
         <div><strong>状态：</strong><span id="job-status" class="status status-{{ job.status | lower }}">{{ job.status }}</span></div>
         <div><strong>Provider：</strong>{{ job.provider or '-' }}</div>
         <div><strong>Model：</strong>{{ job.model or '-' }}</div>
+        <div><strong>运行模式：</strong>{{ "Demo / Mock" if job.demo_mode else "Real" }}</div>
+        <div><strong>OCR：</strong>{{ job.ocr_engine.effective_provider if job.ocr_engine else '-' }}
+            / {{ job.ocr_engine.tier if job.ocr_engine else '-' }}</div>
+        <div><strong>OCR Models：</strong>{{ job.ocr_engine.det_model if job.ocr_engine else '-' }}
+            / {{ job.ocr_engine.rec_model if job.ocr_engine else '-' }}</div>
+        <div><strong>Vision：</strong>{{ job.vision_engine.provider if job.vision_engine else '-' }}
+            / {{ job.vision_engine.model if job.vision_engine else '-' }}</div>
+        <div><strong>Cache：</strong>OCR {{ job.cache_hits.ocr if job.cache_hits else 0 }}
+            / Vision {{ job.cache_hits.vision if job.cache_hits else 0 }}</div>
+        <div><strong>Schema：</strong>{{ job.schema_status or '-' }}</div>
+        <div><strong>冲突：</strong>{{ fusion_summary.conflict or 0 }}</div>
+        <div><strong>耗时：</strong>
+            OCR {{ job.timings_ms.ocr_ms if job.timings_ms else '-' }} ms /
+            Vision {{ job.timings_ms.vision_ms if job.timings_ms else '-' }} ms
+        </div>
         <div><strong>创建时间：</strong>{{ job.created_at[:19] }}</div>
         <div><strong>旋转设置：</strong>{{ job.rotation }}</div>
         <div><strong>识别模式：</strong>
@@ -77,6 +92,7 @@
                 <th>OCR</th>
                 <th>VLM</th>
                 <th>历史</th>
+                <th>证据 / BBox</th>
                 <th>最终值</th>
                 <th>状态</th>
                 <th>操作</th>
@@ -147,6 +163,11 @@ function renderFields(filter) {
         const ocr = (f.candidates || []).find(c => c.source && c.source.startsWith('ocr'));
         const vlm = (f.candidates || []).find(c => c.source === 'vlm');
         const hist = (f.candidates || []).find(c => c.source && c.source.startsWith('history'));
+        const crop = (f.candidates || []).flatMap(c => c.evidence || [])
+            .find(path => typeof path === 'string' && path.startsWith('review/crops/'));
+        const evidence = crop
+            ? `<a href="/jobs/${jobId}/files/${crop}" target="_blank">查看局部裁图</a>`
+            : `<code>${JSON.stringify(f.bbox || null)}</code>`;
         const statusClass = f.status === 'CONFLICT' ? 'status-failed' : f.status === 'NEED_REVIEW' ? 'status-need_review' : 'status-ready';
         const row = document.createElement('tr');
         row.innerHTML = `
@@ -155,11 +176,14 @@ function renderFields(filter) {
             <td>${ocr ? ocr.value + ' (' + (ocr.confidence||0).toFixed(2) + ')' : '-'}</td>
             <td>${vlm ? vlm.value + ' (' + (vlm.confidence||0).toFixed(2) + ')' : '-'}</td>
             <td>${hist ? hist.value : '-'}</td>
+            <td>${evidence}</td>
             <td><input type="text" value="${f.final_value || ''}" data-field-id="${f.field_id}" style="width:80px"></td>
             <td><span class="status ${statusClass}">${f.status}</span></td>
             <td>
                 <button class="btn btn-small" onclick="acceptField('${f.field_id}', 'ocr')">OCR</button>
                 <button class="btn btn-small" onclick="acceptField('${f.field_id}', 'vlm')">VLM</button>
+                <button class="btn btn-small" onclick="recheckField('${f.field_id}')"
+                    ${f.recheck_count ? 'disabled' : ''}>局部复核</button>
                 <button class="btn btn-small btn-primary" onclick="saveField('${f.field_id}')">保存</button>
             </td>`;
         tbody.appendChild(row);
@@ -189,6 +213,19 @@ function saveField(fieldId) {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({value: input.value, source: 'manual', field_type: field ? field.field_type : ''})
     }).then(r => r.json()).then(() => { if(field){field.final_value=input.value; field.status='MANUAL_CONFIRMED';} renderFields('all'); });
+}
+
+function recheckField(fieldId) {
+    fetch('/api/jobs/' + jobId + '/fields/' + fieldId + '/recheck', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    })
+    .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || '局部复核失败');
+        location.reload();
+    })
+    .catch(error => window.alert(error.message));
 }
 
 function confirmAll() {

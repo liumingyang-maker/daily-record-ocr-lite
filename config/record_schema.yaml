@@ -1,141 +1,21 @@
 name: handwritten_formula_record
-prompt_version: "accuracy-v3-grouping"
+prompt_version: accuracy-v4-record-v1
+schema_version: record-v1
+schema_file: config/schema/record-v1.schema.json
 
 system_prompt: |
-  你是一名严格的中文手写生产记录录入员。
-
-  你同时获得：
-  1. 原始或校正后的完整图片；
-  2. PP-OCRv6 识别出的文字、置信度和坐标。
-
-  OCR 结果是辅助证据，可能有误，不能盲目复制。
-  你必须结合原图、空间位置和 OCR 证据判断。
-
-  页面业务规则：
-  1. 每张图片顶部都有一个主要公司名称。
-  2. 页面顶部公司名称默认适用于该页全部配方。
-  3. 公司名称下方的红色、蓝色或突出标题通常是产品、系列、材料牌号或配方类别。
-  4. 页面正文可能包含一条或多条配方。
-  5. ①②③④⑤、阿拉伯数字编号或重复出现的"配方"通常表示新配方开始。
-  6. 每条配方通常包含日期、原料名称行、对应数量行以及可选的"工艺"行。
-  7. 原料名称与数量必须依据水平位置对应。
-  8. 不得把同一页的多个配方合并成一条。
-  9. 不得因为不同页面出现相同配方编号就合并记录。
-  10. 每条配方必须返回 source_image_index、formula_no 和 record_bbox。
-  11. 公司和产品标题看不清时留空并给出 warning，不得猜测。
-  12. 历史公司或产品候选只能辅助标准化，不得覆盖看不清的原始图片事实。
-
-  通用规则：
-  - 原料名称通常在一行，数量通常位于其下一行。
-  - 必须根据水平位置逐项对应，禁止串位。
-  - "工艺"区域必须单独提取，不得混入原料。
-  - 数字、小数点、正负号、百分号、型号必须严格按原图。
-  - 图片没有单位时，单位留空，禁止补写。
-  - 看不清时留空并写 warning，禁止根据行业常识猜测。
-  - 历史知识只能作为候选，不能覆盖图片事实。
-  - 返回每个字段的证据 token id 和 bbox。
-  - 只返回符合 JSON Schema 的 JSON。
+  你是一名严格的中文手写生产记录录入员。你同时获得原图、PP-OCRv6
+  文字证据和本地布局证据。OCR 与布局都可能有误，必须结合原图判断。
+  不得猜测看不清的值，不得将不同页面或不同配方合并。
+  数字、小数点、正负号、百分号和型号必须逐字符核对。
+  只返回符合 record-v1 JSON Schema 的 JSON 对象。
 
 instructions: |
-  识别用户上传的所有图片，按上传顺序处理。每张图片独立识别页面头部（公司和产品），
-  然后拆分出该页的所有配方。
-
-  输出结构：使用 pages[] 数组，每个元素对应一张图片。
-
-  规则：
-  1. 每张图片输出一个 page 对象，包含 company、product_sections 和 warnings。
-  2. company 提取页面顶部的公司名称（原文和标准化值）。
-  3. product_sections 按产品/系列分段，每段包含 formulas 数组。
-  4. ①②③④⑤、数字编号或重复"配方"标题表示新配方开始。
-  5. 每条配方包含 formula_no、record_date、record_bbox、materials、process_parameters。
-  6. 原料名称通常写在同一行，数量写在其下方。必须依据水平位置逐项配对，不能串位。
-  7. "工艺"区域单独写入 process_parameters，不得混入 materials。
-  8. 日期、数字、型号、百分比和单位尽量保持图片原样。
-  9. 单位没有明确写出时使用空字符串，不得自行补单位。
-  10. 看不清的字段使用空字符串，并在 warnings 中说明位置。
-  11. 不要把活页环、横线、页签或阴影识别为文字。
-  12. confidence 使用 0 到 1，表示该对象的整体转录可信度。
-  13. 只返回一个 JSON 对象，不要输出解释，不要使用 Markdown 代码块。
-  14. 每个字段尽量返回 evidence_token_ids 和 bbox（归一化坐标）。
-  15. 不得把同一页的多个配方合并成一条。
-  16. 不得因为不同页面出现相同配方编号就合并记录。
-
-schema:
-  type: object
-  additionalProperties: false
-  required: [page_heading, records, warnings]
-  properties:
-    page_heading:
-      type: string
-    records:
-      type: array
-      items:
-        type: object
-        additionalProperties: false
-        required:
-          - source_image_indexes
-          - record_date
-          - title
-          - materials
-          - process_parameters
-          - notes
-          - confidence
-          - warnings
-        properties:
-          source_image_indexes:
-            type: array
-            items:
-              type: integer
-              minimum: 1
-          record_date:
-            type: string
-          title:
-            type: string
-          materials:
-            type: array
-            items:
-              type: object
-              additionalProperties: false
-              required: [name, amount, unit, confidence]
-              properties:
-                name:
-                  type: string
-                amount:
-                  type: string
-                unit:
-                  type: string
-                confidence:
-                  type: number
-                  minimum: 0
-                  maximum: 1
-          process_parameters:
-            type: array
-            items:
-              type: object
-              additionalProperties: false
-              required: [name, value, unit, confidence]
-              properties:
-                name:
-                  type: string
-                value:
-                  type: string
-                unit:
-                  type: string
-                confidence:
-                  type: number
-                  minimum: 0
-                  maximum: 1
-          notes:
-            type: string
-          confidence:
-            type: number
-            minimum: 0
-            maximum: 1
-          warnings:
-            type: array
-            items:
-              type: string
-    warnings:
-      type: array
-      items:
-        type: string
+  按上传顺序为每张图片生成 pages[] 中的一个 page。每页包含 page_id、
+  source_image_index、company、product_sections 和 warnings。每个产品区段包含
+  formulas；每条配方包含稳定 formula_id、formula_sequence、record_bbox、
+  materials、process_parameters、notes、warnings 与 confidence。
+  所有业务字段必须使用带 value、confidence、evidence_token_ids、bbox 的对象。
+  公司字段使用 raw_value、standard_value、confidence、bbox、
+  evidence_token_ids、match_source、review_status。图片未写单位时保留空字符串。
+  本地布局结果仅为辅助证据，可能有误。只返回 JSON，不要 Markdown。

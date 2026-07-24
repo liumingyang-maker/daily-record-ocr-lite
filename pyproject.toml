@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "daily-record-ocr-lite"
+version = "1.0.0"
+description = "Accuracy-first handwritten production-record OCR with PP-OCRv6 and vision models"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.30,<1",
+  "jinja2>=3.1,<4",
+  "python-multipart>=0.0.9,<1",
+  "httpx>=0.27,<1",
+  "pyyaml>=6,<7",
+  "pillow>=10,<12",
+  "openpyxl>=3.1,<4",
+  "jsonschema>=4.22,<5",
+  "rapidfuzz>=3,<4",
+  "numpy>=1.26,<3",
+]
+
+[project.scripts]
+daily-record-ocr = "lite_app.main:run"
+
+[tool.setuptools.packages.find]
+include = ["lite_app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests_lite"]
+markers = [
+  "real_ocr: requires installed PaddlePaddle/PaddleOCR and real model inference",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests_lite/*" = ["E501"]
+"scripts/*.py" = ["E402"]

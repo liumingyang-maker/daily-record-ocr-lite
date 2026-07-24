@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import tempfile
 from pathlib import Path
 from typing import Any
 
+from ..storage import write_json_atomic
 from .models import BusinessEntities
 
 logger = logging.getLogger(__name__)
@@ -20,18 +19,7 @@ def save_business_entities(job_dir: Path, entities: BusinessEntities) -> None:
     review_dir.mkdir(parents=True, exist_ok=True)
     target = review_dir / "business_entities.json"
 
-    data = entities.to_dict()
-    fd, tmp_path = tempfile.mkstemp(dir=str(review_dir), suffix=".tmp", prefix=".be_")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, str(target))
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+    write_json_atomic(target, entities.to_dict())
 
 
 def load_business_entities(job_dir: Path) -> BusinessEntities | None:
@@ -58,7 +46,6 @@ def build_tree_response(entities: BusinessEntities) -> dict[str, Any]:
 
 def build_pages_response(entities: BusinessEntities) -> list[dict[str, Any]]:
     """构建 /api/jobs/{id}/pages 响应。"""
-    import dataclasses
 
     pages = []
     for page in entities.pages:
@@ -106,7 +93,6 @@ def build_formula_detail(entities: BusinessEntities, formula_id: str) -> dict[st
     if not formula:
         return None
 
-    import dataclasses
 
     def _evidence_to_dict(ev) -> dict:
         return {

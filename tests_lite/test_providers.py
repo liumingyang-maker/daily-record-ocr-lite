@@ -1,9 +1,9 @@
 """Provider 模块测试。"""
 
 import json
-import pytest
+
 import httpx
-from pathlib import Path
+import pytest
 
 from lite_app.providers import (
     MockProvider,

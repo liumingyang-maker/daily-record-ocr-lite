@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS correction_logs (
     job_id TEXT NOT NULL,
     record_id TEXT,
     field_id TEXT NOT NULL,
+    original_field_id TEXT,
     field_type TEXT,
     old_value TEXT,
     new_value TEXT,
@@ -145,6 +146,12 @@ class KnowledgeDB:
         """创建表结构。"""
         conn = self._get_conn()
         conn.executescript(_SCHEMA_SQL)
+        correction_columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(correction_logs)").fetchall()
+        }
+        if "original_field_id" not in correction_columns:
+            conn.execute("ALTER TABLE correction_logs ADD COLUMN original_field_id TEXT")
         conn.commit()
         logger.info("知识库初始化完成: %s", self.db_path)
 
@@ -156,7 +163,7 @@ class KnowledgeDB:
     # ─── 物料操作 ───────────────────────────────────────────
 
     def add_material(self, standard_name: str, category: str = "", default_unit: str = "") -> int:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         conn = self._get_conn()
         cur = conn.execute(
             "INSERT OR IGNORE INTO materials (standard_name, category, default_unit, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
@@ -165,10 +172,14 @@ class KnowledgeDB:
         conn.commit()
         if cur.lastrowid:
             return cur.lastrowid
-        row = conn.execute("SELECT id FROM materials WHERE standard_name = ?", (standard_name,)).fetchone()
+        row = conn.execute(
+            "SELECT id FROM materials WHERE standard_name = ?", (standard_name,)
+        ).fetchone()
         return row["id"]
 
-    def add_alias(self, material_id: int, alias: str, alias_type: str = "ocr_error", source: str = "manual") -> None:
+    def add_alias(
+        self, material_id: int, alias: str, alias_type: str = "ocr_error", source: str = "manual"
+    ) -> None:
         conn = self._get_conn()
         conn.execute(
             "INSERT OR IGNORE INTO material_aliases (material_id, alias, alias_type, source) VALUES (?, ?, ?, ?)",
@@ -204,7 +215,9 @@ class KnowledgeDB:
 
     # ─── 配方操作 ───────────────────────────────────────────
 
-    def add_formula(self, title: str, customer_id: int | None = None, product_id: int | None = None) -> int:
+    def add_formula(
+        self, title: str, customer_id: int | None = None, product_id: int | None = None
+    ) -> int:
         conn = self._get_conn()
         cur = conn.execute(
             "INSERT INTO formulas (title, customer_id, product_id) VALUES (?, ?, ?)",
@@ -213,7 +226,15 @@ class KnowledgeDB:
         conn.commit()
         return cur.lastrowid
 
-    def add_formula_item(self, formula_id: int, seq: int, material_name: str, amount: str, unit: str = "", material_id: int | None = None) -> None:
+    def add_formula_item(
+        self,
+        formula_id: int,
+        seq: int,
+        material_name: str,
+        amount: str,
+        unit: str = "",
+        material_id: int | None = None,
+    ) -> None:
         normalized = None
         try:
             normalized = float(amount)
@@ -240,12 +261,34 @@ class KnowledgeDB:
 
     # ─── 修正日志 ───────────────────────────────────────────
 
-    def add_correction(self, job_id: str, field_id: str, field_type: str, old_value: str, new_value: str, chosen_source: str = "manual", ocr_value: str = "", vlm_value: str = "", record_id: str = "") -> None:
-        now = datetime.now(timezone.utc).isoformat()
+    def add_correction(
+        self,
+        job_id: str,
+        field_id: str,
+        field_type: str,
+        old_value: str,
+        new_value: str,
+        chosen_source: str = "manual",
+        ocr_value: str = "",
+        vlm_value: str = "",
+        record_id: str = "",
+    ) -> None:
+        now = datetime.now(UTC).isoformat()
         conn = self._get_conn()
         conn.execute(
             "INSERT INTO correction_logs (job_id, record_id, field_id, field_type, old_value, new_value, chosen_source, ocr_value, vlm_value, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (job_id, record_id, field_id, field_type, old_value, new_value, chosen_source, ocr_value, vlm_value, now),
+            (
+                job_id,
+                record_id,
+                field_id,
+                field_type,
+                old_value,
+                new_value,
+                chosen_source,
+                ocr_value,
+                vlm_value,
+                now,
+            ),
         )
         conn.commit()
 
@@ -256,15 +299,54 @@ class KnowledgeDB:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def remap_correction_field_ids(
+        self,
+        job_id: str,
+        field_mapping: dict[str, str],
+        record_mapping: dict[str, str] | None = None,
+    ) -> None:
+        """Keep historical corrections attached after canonical ID migrations."""
+        conn = self._get_conn()
+        for old_id, new_id in field_mapping.items():
+            conn.execute(
+                """
+                UPDATE correction_logs
+                SET original_field_id = COALESCE(original_field_id, field_id),
+                    field_id = ?
+                WHERE job_id = ? AND field_id = ?
+                """,
+                (new_id, job_id, old_id),
+            )
+        for old_id, new_id in (record_mapping or {}).items():
+            conn.execute(
+                """
+                UPDATE correction_logs
+                SET record_id = ?
+                WHERE job_id = ? AND record_id = ?
+                """,
+                (new_id, job_id, old_id),
+            )
+        conn.commit()
+
     # ─── 缓存 ─────────────────────────────────────────────
 
     def get_cache(self, cache_key: str) -> dict[str, Any] | None:
         conn = self._get_conn()
-        row = conn.execute("SELECT * FROM recognition_cache WHERE cache_key = ?", (cache_key,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM recognition_cache WHERE cache_key = ?", (cache_key,)
+        ).fetchone()
         return dict(row) if row else None
 
-    def set_cache(self, cache_key: str, image_hash: str, stage: str, result_path: str, model: str = "", version: str = "") -> None:
-        now = datetime.now(timezone.utc).isoformat()
+    def set_cache(
+        self,
+        cache_key: str,
+        image_hash: str,
+        stage: str,
+        result_path: str,
+        model: str = "",
+        version: str = "",
+    ) -> None:
+        now = datetime.now(UTC).isoformat()
         conn = self._get_conn()
         conn.execute(
             "INSERT OR REPLACE INTO recognition_cache (cache_key, image_hash, stage, model, version, result_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -279,7 +361,9 @@ class KnowledgeDB:
 
     # ─── 公司别名 ─────────────────────────────────────────
 
-    def add_company_alias(self, company_id: int, alias: str, alias_type: str = "manual", source: str = "web") -> None:
+    def add_company_alias(
+        self, company_id: int, alias: str, alias_type: str = "manual", source: str = "web"
+    ) -> None:
         conn = self._get_conn()
         conn.execute(
             "INSERT OR IGNORE INTO company_aliases (company_id, alias, alias_type, source) VALUES (?, ?, ?, ?)",
@@ -297,7 +381,9 @@ class KnowledgeDB:
 
     # ─── 产品别名 ─────────────────────────────────────────
 
-    def add_product_alias(self, product_id: int, alias: str, alias_type: str = "manual", source: str = "web") -> None:
+    def add_product_alias(
+        self, product_id: int, alias: str, alias_type: str = "manual", source: str = "web"
+    ) -> None:
         conn = self._get_conn()
         conn.execute(
             "INSERT OR IGNORE INTO product_aliases (product_id, alias, alias_type, source) VALUES (?, ?, ?, ?)",

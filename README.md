@@ -1,186 +1,127 @@
-# daily-record-ocr-lite（准确率优先增强版）
+# daily-record-ocr-lite
 
-将手机拍摄的中文手写生产/配方笔记识别为结构化数据，允许人工校对，并写入 Excel。
+[![CI](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/ci.yml)
+[![Real OCR](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/real-ocr.yml/badge.svg?branch=master)](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/real-ocr.yml)
 
-[![CI](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/ci.yml/badge.svg?branch=feature/accuracy-first-dual-engine)](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/ci.yml)
+当前稳定版本：`v1.0.0`
 
-## 核心设计：双引擎识别 + 空间关联融合
+把中文手写生产/配方记录经 PP-OCRv6 与视觉模型双引擎识别、人工复核，并导出为
+公司—产品—配方结构的 Excel。
 
-本项目使用 **PP-OCRv6 + 视觉大模型** 双引擎互相验证：
+## 让 AI 安装
 
-- PP-OCRv6 提供文字、坐标和置信度
-- 视觉大模型接收原图 + OCR 证据（含坐标），理解空间关系
-- **空间关联融合**：通过 evidence_token_ids → bbox IoU → 中心距离三策略关联 OCR 与 VLM 候选
-- **严格数字冲突检测**：OCR≠VLM 时强制 CONFLICT，历史候选不能覆盖
-- **识别缓存**：OCR 和 VLM 阶段均检查缓存，相同图片+模型+prompt 版本不重复调用
-- **Draft202012 Schema 校验**：VLM 输出在 pipeline 中实时校验
-- 历史物料/配方匹配辅助纠错
-- 冲突字段局部裁图复核
-- 字段级人工确认（Confirm All 检查未解决冲突）
-- 失败标记 DEGRADED，不静默回退
+把仓库链接和下面这段话发给你的安装 AI：
 
-## 架构
+> 请克隆此仓库，读取根目录 AGENTS.md 和 docs/AI_AGENT_INSTALL.md，根据我的操作
+> 系统完成安装、PP-OCRv6 真实验证、视觉模型配置和 doctor 验收。禁止使用 Mock
+> 结果冒充真实识别。
 
-```
-上传图片 → VLM/OCR 双图预处理 → [缓存检查]
-    → PP-OCRv6 整图识别 → [写入OCR缓存]
-    → 视觉大模型（带 OCR 证据）→ [Schema校验] → [写入VLM缓存]
-    → 历史匹配 → 空间关联融合 → 冲突检测
-    → 局部复核 → 字段级人工确认
-    → 公司—产品—配方分组 → Excel 5-Sheet 导出
-```
+AI 必须输出 `INSTALL_REPORT`，包括真实 OCR 通过数与 doctor 状态。
 
-核心模块：
+## 真实模式与 Demo
 
-- `lite_app/ocr/` — OCRProvider 抽象 + PaddleOCRv6（tier→模型名映射）+ Mock + 单例 + Overlay
-- `lite_app/vision/` — VisionProvider 抽象 + mock / openai_compatible
-- `lite_app/layout/` — 行聚类、原料-数量横向配对、记录分组
-- `lite_app/knowledge/` — sqlite3 知识库 + 历史匹配器 + 公司/产品别名
-- `lite_app/fusion/` — 候选融合引擎 + 严格数字冲突检测
-- `lite_app/grouping/` — 公司—产品—配方业务分组 + 三视图 + 分组Excel导出
-- `lite_app/review/` — 局部复核 + 修正日志
-- `lite_app/cache.py` — 识别缓存（图片哈希+模型+prompt版本）
-- `lite_app/pipeline_v2.py` — 双引擎集成 pipeline（含缓存+Schema校验+空间关联）
-- `lite_app/image_utils_v2.py` — VLM/OCR 双图预处理（可选 OpenCV CLAHE）
-- `lite_app/exporter.py` — Excel 5-Sheet 导出
-- `lite_app/main.py` — FastAPI 页面与 API（37 路由）
+全新安装默认是 `SETUP_REQUIRED`：没有配置视觉模型时不接受识别任务。Mock 只能由
+用户在 `/setup` 显式开启；所有页面显示警示，导出名以 `DEMO-` 开头，结果与上传
+图片无关。
 
-## 安装要求
+## 最快安装
 
-- Python 3.11+
-- 无需 Node.js、Docker、数据库
-- 推荐安装 OCR 依赖以获得最佳准确率
+Python 支持 3.11/3.12。
 
-## 安装和启动
-
-### Windows
+Windows CPU：
 
 ```powershell
-python -m venv venv
-venv\Scripts\activate
-# 推荐：安装含 OCR 的完整依赖
-pip install -r requirements-ocr.txt
-# 或仅核心依赖（无 OCR，降级运行）
-# pip install -r requirements.txt
-python -m app.main
+.\install\install-windows.ps1 -OcrMode Cpu
+.\start-windows.bat
 ```
 
-### macOS / Linux
+Linux CPU：
 
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements-ocr.txt
-python -m app.main
+```text
+./install/install-linux.sh
+./start-linux.sh
 ```
 
-启动后访问 http://127.0.0.1:8765
+GPU 与 macOS 安装前必须查询 PaddlePaddle/PaddleOCR 当前官方兼容矩阵。详细入口见
+[`install/README.md`](install/README.md) 和 `docs/INSTALL_*.md`。
 
-验证安装：
+## 首次配置
 
-```bash
-python scripts/verify_install.py
+启动后访问 <http://127.0.0.1:8765/setup>，或使用：
+
+```text
+python scripts/configure.py vision --provider openai_compatible --base-url URL --endpoint /chat/completions --model MODEL
+python scripts/configure.py set-key
+python scripts/configure.py ocr --provider paddleocr_v6 --tier medium --device cpu
+python scripts/configure.py test-ocr --image PATH
+python scripts/configure.py test-vision
+python scripts/doctor.py --full --json
 ```
 
-也可使用 uvicorn 直接启动：
+API Key 只写入环境或 `data/secrets.env`，不会由设置 API 回显。
 
-```bash
-uvicorn lite_app.main:app --host 127.0.0.1 --port 8765
+## 识别与数据流
+
+```text
+上传 → OCR/Vision 双图预处理
+     → PP-OCRv6（文本、坐标、置信度）
+     → 行/配对/记录布局证据
+     → 视觉模型（原图 + OCR/Layout）
+     → record-v1 严格校验
+     → evidence token / bbox / center 多 token 关联与融合
+     → review/final_result.json
+     → 人工修改或一次局部 OCR/VLM 复核
+     → BusinessEntities 投影 → 五 Sheet Excel
 ```
 
-## PP-OCRv6 模型配置
+数字 OCR 与视觉模型不一致时强制 `CONFLICT`。Schema 错误、缺失 FinalResult、关键
+空字段或未确认项都不能进入 READY/正式导出。人工字段修改同步 FinalResult、融合、
+修正日志、业务投影和 Excel；原始视觉结果保留在 `vision/structured_result.json`。
 
-`config/recognition.yaml` 中 `ocr.tier` 映射真实模型名：
+## 验证
 
-| tier | 检测模型 | 识别模型 |
-|------|---------|---------|
-| tiny | PP-OCRv6_mobile_det | PP-OCRv6_mobile_rec |
-| small | PP-OCRv6_mobile_det | PP-OCRv6_server_rec |
-| medium | PP-OCRv6_server_det | PP-OCRv6_server_rec |
-
-## 默认 Mock 模式
-
-未配置任何 API Key 时，默认使用 mock provider。读取 `config/mock_result.json`（pages[] 格式）返回预设结果，包含公司/产品/多配方结构，可完整体验分组和导出流程。
-
-## 接入 OpenAI-compatible 视觉模型
-
-复制 `.env.example` 为 `.env`，修改以下字段：
-
-```env
-VISION_PROVIDER=openai_compatible
-VISION_BASE_URL=http://127.0.0.1:11434/v1
-VISION_ENDPOINT=/chat/completions
-VISION_API_KEY=your-api-key
-VISION_MODEL=qwen-vl
+```text
+python -m pytest -m "not real_ocr" -q
+python -m ruff check lite_app tests_lite scripts
+python -m pytest -m real_ocr -q -s
+python scripts/doctor.py --json
+python scripts/verify_release.py
 ```
 
-支持任何兼容 OpenAI Chat Completions 接口的视觉模型服务（Ollama、vLLM、OpenAI、Azure 等）。
+真实 OCR Gate 必须实际加载 PP-OCRv6 并完成推理，不能全 skip。
 
-## 识别结果页面
+## 任务目录
 
-上传后默认跳转到 `/jobs/{id}/result`（分组结果页），提供三种视图：
-
-- **按公司**：公司 → 产品/系列 → 配方（默认）
-- **按图片**：图片 → 页面公司 → 配方
-- **仅看待确认**：只显示有冲突或待复核的配方
-
-点击配方查看材料/工艺表，点击字段查看 OCR/VLM/历史候选证据。
-
-## 任务文件保存位置
-
-```
-data/jobs/20260723-221530-a1b2c3/
-├── job.json                    # 任务元数据（含 cache_hits、timings_ms）
-├── source_01_*.jpg             # 原始上传
-├── prepared_vlm_01.jpg         # VLM 预处理图
-├── prepared_ocr_01.jpg         # OCR 预处理图（灰度+CLAHE）
-├── ocr/
-│   ├── page_01_base.json       # OCR 结果（含坐标）
-│   └── page_01_overlay.jpg     # OCR 检测框可视化
-├── vision/
-│   ├── raw_response.txt        # VLM 原始响应
-│   └── structured_result.json  # VLM 结构化结果
-├── fusion/
-│   └── result.json             # 融合结果（final_value 为唯一导出源）
+```text
+data/jobs/<job-id>/
+├── source/                  # 原始上传
+├── preprocess/              # OCR/Vision 双图
+├── ocr/                    # 原始 OCR 与 overlay
+├── layout/                 # lines / pairs / records
+├── vision/                 # raw_response / structured_result / schema_errors
+├── fusion/                 # candidates / result
 ├── review/
-│   └── business_entities.json  # 公司—产品—配方分组
-└── recognized-*.xlsx           # 导出文件
+│   ├── final_result.json   # 唯一正式结果
+│   ├── business_entities.json
+│   ├── recheck_result.json
+│   ├── corrections.json
+│   └── job_events.json
+└── export/recognized-*.xlsx
 ```
 
-## 常见错误排查
+跨任务缓存位于 `data/cache/{ocr,vision}`。隐私和删除规则见
+[`docs/DATA_AND_PRIVACY.md`](docs/DATA_AND_PRIVACY.md)。
 
-| 错误 | 原因和解决 |
-|------|-----------|
-| DEGRADED 状态 | 双引擎识别失败，检查 OCR/VLM 配置后重新识别 |
-| 视觉模型接口超时 | 检查模型服务是否运行，或增大 `timeout_seconds` |
-| HTTP 401 | API Key 错误，检查 `.env` 中 `VISION_API_KEY` |
-| 无法连接视觉模型服务 | 检查 `VISION_BASE_URL` 地址是否正确 |
-| 文件不是可识别的图片 | 上传的文件不是有效图片格式 |
-| Confirm 返回 REVIEW_REQUIRED | 存在未解决冲突或关键空字段，需先处理 |
-| Schema 校验不通过 | 在详情页查看具体错误，手动修正 JSON |
+## 文档
 
-## 测试
+- 视觉配置：[`docs/CONFIGURE_VISION.md`](docs/CONFIGURE_VISION.md)
+- 故障排查：[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)
+- 支持环境：[`docs/SUPPORTED_ENVIRONMENTS.md`](docs/SUPPORTED_ENVIRONMENTS.md)
+- AI 升级：[`docs/AI_AGENT_UPGRADE.md`](docs/AI_AGENT_UPGRADE.md)
+- v1.0.0 说明：[`docs/RELEASE_NOTES_V1.0.0.md`](docs/RELEASE_NOTES_V1.0.0.md)
 
-```bash
-pip install -r requirements-dev.txt
-python -m pytest -q
-```
+## 已知限制
 
-- 164 个测试通过，5 个 real_ocr 跳过（需安装 paddleocr）
-- CI: Python 3.11 + 3.12 全绿
-- 测试不调用外网，使用 mock provider 和 httpx.MockTransport
-
-运行真实 OCR 测试：
-
-```bash
-pip install -r requirements-ocr.txt
-python -m pytest -m real_ocr -v
-```
-
-## 数据隐私
-
-- 图片默认保存在本机 `data/jobs/` 目录
-- 只有使用远程模型时，处理后的图片才会发送给所配置的视觉模型服务
-- 使用本地模型（如 Ollama）时，数据不出本机
-- 不收集任何遥测数据
-- API Key 不在日志/页面/响应中输出
+手写质量、复杂表格和所选视觉模型会影响准确率；NVIDIA/macOS 的 Paddle 安装依赖
+当前官方 wheel；v1 不支持绕过未确认项强制正式导出。本地应用默认只监听
+`127.0.0.1`，不应直接暴露公网。

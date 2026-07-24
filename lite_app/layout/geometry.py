@@ -11,6 +11,10 @@ from ..ocr.base import OCRToken
 logger = logging.getLogger(__name__)
 
 
+class LayoutError(RuntimeError):
+    """Local layout evidence cannot be generated safely."""
+
+
 @dataclass
 class TextLine:
     """聚类后的文本行。"""
@@ -169,9 +173,11 @@ def detect_record_boundaries(
     # 本地检测：基于垂直空白
     records: list[dict[str, Any]] = []
     current_start = 0
-    avg_line_height = sum(
-        l.bbox[3] - l.bbox[1] for l in lines
-    ) / len(lines) if lines else 20
+    avg_line_height = (
+        sum(line.bbox[3] - line.bbox[1] for line in lines) / len(lines)
+        if lines
+        else 20
+    )
 
     gap_threshold = avg_line_height * 3  # 3倍行高以上视为分隔
 
@@ -205,8 +211,52 @@ def _lines_bbox(lines: list[TextLine]) -> list[float]:
     """计算多行的包围盒。"""
     if not lines:
         return [0, 0, 0, 0]
-    x_min = min(l.bbox[0] for l in lines)
-    y_min = min(l.bbox[1] for l in lines)
-    x_max = max(l.bbox[2] for l in lines)
-    y_max = max(l.bbox[3] for l in lines)
+    x_min = min(line.bbox[0] for line in lines)
+    y_min = min(line.bbox[1] for line in lines)
+    x_max = max(line.bbox[2] for line in lines)
+    y_max = max(line.bbox[3] for line in lines)
     return [x_min, y_min, x_max, y_max]
+
+
+def build_layout_evidence(tokens: list[OCRToken], page_height: int) -> dict[str, Any]:
+    """Run the geometry defense immediately after OCR and serialize its evidence."""
+    lines = cluster_lines(tokens, page_height)
+    pairs: list[dict[str, Any]] = []
+    for index in range(len(lines) - 1):
+        name_line = lines[index]
+        amount_line = lines[index + 1]
+        if not name_line.tokens or not amount_line.tokens:
+            continue
+        numeric_count = sum(
+            any(character.isdigit() for character in token.text)
+            for token in amount_line.tokens
+        )
+        if numeric_count == 0:
+            continue
+        for pair in pair_materials_amounts(name_line, amount_line):
+            if pair.amount_token is None:
+                continue
+            pairs.append(
+                {
+                    "name_token_ids": [pair.name_token.id],
+                    "amount_token_ids": [pair.amount_token.id],
+                    "name": pair.name_token.text,
+                    "amount": pair.amount_token.text,
+                    "distance": pair.distance,
+                    "score": max(0.0, 1.0 - pair.distance / max(page_height, 1)),
+                }
+            )
+    records = detect_record_boundaries(lines, page_height)
+    return {
+        "lines": [
+            {
+                "index": line.index,
+                "token_ids": [token.id for token in line.tokens],
+                "bbox": line.bbox,
+                "text": line.text,
+            }
+            for line in lines
+        ],
+        "pairs": pairs,
+        "records": records,
+    }

@@ -24,6 +24,12 @@ env/
 # Task data
 data/jobs/*/
 !data/jobs/.gitkeep
+data/cache/
+data/settings.json
+data/secrets.env
+data/setup_health.json
+data/last-doctor.json
+backups/
 
 # Knowledge DB
 data/knowledge.sqlite3

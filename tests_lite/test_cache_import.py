@@ -1,9 +1,7 @@
 """缓存模块和知识库导入测试。"""
 
-import pytest
-from pathlib import Path
 
-from lite_app.cache import compute_image_hash, build_cache_key, RecognitionCache
+from lite_app.cache import RecognitionCache, build_cache_key, compute_image_hash
 from lite_app.knowledge.database import KnowledgeDB
 
 
@@ -88,7 +86,6 @@ class TestKnowledgeImport:
         )
 
         import csv
-        import io
         db = KnowledgeDB(tmp_path / "import_test.sqlite3")
         db.initialize()
 
@@ -131,16 +128,14 @@ class TestKnowledgeImport:
         ws.append(["抗氧剂1010", "", "助剂", ""])
         wb.save(str(xlsx_file))
 
+
         from openpyxl import load_workbook
-        import io
         db = KnowledgeDB(tmp_path / "import_test2.sqlite3")
         db.initialize()
 
         wb2 = load_workbook(str(xlsx_file), read_only=True)
         ws2 = wb2.active
         rows = list(ws2.iter_rows(values_only=True))
-        headers = [str(h or "").strip() for h in rows[0]]
-
         name_col = 0
         unit_col = 1
         category_col = 2

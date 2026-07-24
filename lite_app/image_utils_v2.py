@@ -148,10 +148,6 @@ def generate_enhanced_variant(
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(gray)
 
-    # 轻度锐化
-    kernel = np.array([[-0.5, -0.5, -0.5],
-                       [-0.5,  5.0, -0.5],
-                       [-0.5, -0.5, -0.5]]) / 1.0
     # 使用温和锐化
     kernel_mild = np.array([[0, -0.5, 0],
                             [-0.5, 3, -0.5],

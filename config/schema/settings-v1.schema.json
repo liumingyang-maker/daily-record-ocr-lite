@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/liumingyang-maker/daily-record-ocr-lite/config/schema/settings-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "demo_mode", "ocr", "vision"],
+  "properties": {
+    "schema_version": {"const": "settings-v1"},
+    "demo_mode": {"type": "boolean"},
+    "ocr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "tier", "device", "minimum_score"],
+      "properties": {
+        "provider": {"enum": ["paddleocr_v6", "mock"]},
+        "tier": {"enum": ["tiny", "small", "medium"]},
+        "device": {"type": "string"},
+        "minimum_score": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "vision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "base_url", "endpoint", "model"],
+      "properties": {
+        "provider": {"enum": ["", "openai_compatible", "mock"]},
+        "base_url": {"type": "string"},
+        "endpoint": {"type": "string"},
+        "model": {"type": "string"}
+      }
+    }
+  }
+}

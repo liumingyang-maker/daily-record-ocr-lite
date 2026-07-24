@@ -1,13 +1,12 @@
 """图片处理模块测试。"""
 
+
 import pytest
-from pathlib import Path
 from PIL import Image
 
 from lite_app.image_utils import (
     ImageProcessError,
     prepare_image,
-    ROTATION_MAP,
 )
 
 
@@ -24,7 +23,7 @@ class TestPrepareImage:
 
     def test_rgba_to_rgb_white_bg(self, sample_image_rgba, tmp_path):
         output = tmp_path / "out.jpg"
-        info = prepare_image(sample_image_rgba, output, rotation="0")
+        prepare_image(sample_image_rgba, output, rotation="0")
         assert output.exists()
         img = Image.open(output)
         assert img.mode == "RGB"

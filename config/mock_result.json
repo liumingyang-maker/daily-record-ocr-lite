@@ -1,106 +1,83 @@
 {
+  "schema_version": "record-v1",
   "pages": [
     {
+      "page_id": "page_001",
       "source_image_index": 1,
       "company": {
-        "raw_value": "重庆某某新材料",
-        "standard_value": "重庆某某新材料有限公司",
-        "confidence": 0.94,
-        "bbox": [0.60, 0.02, 0.91, 0.11],
-        "evidence_token_ids": ["p1_t001", "p1_t002"],
-        "match_source": "history_exact",
+        "raw_value": "演示公司",
+        "standard_value": "演示公司",
+        "confidence": 0.95,
+        "bbox": [0.08, 0.04, 0.42, 0.10],
+        "evidence_token_ids": ["p1_t001"],
+        "match_source": "demo",
         "review_status": "AUTO_ACCEPT"
       },
       "product_sections": [
         {
+          "section_id": "section_001",
           "product_or_series": {
-            "raw_value": "PA66GF30",
-            "standard_value": "PA66GF30",
-            "confidence": 0.91,
-            "bbox": [0.55, 0.10, 0.90, 0.18]
+            "value": "PA66 演示系列",
+            "confidence": 0.93,
+            "evidence_token_ids": ["p1_t002"],
+            "bbox": [0.08, 0.12, 0.35, 0.18]
           },
-          "product_type": "material_grade",
-          "section_bbox": [0.05, 0.10, 0.95, 0.95],
+          "product_type": "series",
+          "section_bbox": [0.05, 0.10, 0.95, 0.90],
           "formulas": [
             {
+              "formula_id": "demo__page_001__formula_001",
               "formula_no": "①",
-              "record_date": {"value": "24.7.10", "confidence": 0.92},
-              "record_bbox": [0.05, 0.18, 0.93, 0.50],
+              "formula_sequence": 1,
+              "record_date": {
+                "value": "2026-07-24",
+                "confidence": 0.92,
+                "evidence_token_ids": ["p1_t003"],
+                "bbox": [0.08, 0.20, 0.25, 0.24]
+              },
+              "record_bbox": [0.05, 0.18, 0.95, 0.55],
               "materials": [
-                {"name": {"value": "PA66", "confidence": 0.95}, "amount": {"value": "60", "confidence": 0.94}, "unit": {"value": "kg", "confidence": 0.90}},
-                {"name": {"value": "GF30", "confidence": 0.92}, "amount": {"value": "30", "confidence": 0.93}, "unit": {"value": "kg", "confidence": 0.90}},
-                {"name": {"value": "抗氧剂1010", "confidence": 0.85}, "amount": {"value": "0.3", "confidence": 0.88}, "unit": {"value": "", "confidence": 1.0}},
-                {"name": {"value": "润滑剂", "confidence": 0.80}, "amount": {"value": "0.5", "confidence": 0.82}, "unit": {"value": "", "confidence": 1.0}}
+                {
+                  "material_id": "material_001",
+                  "name": {
+                    "value": "PA66",
+                    "confidence": 0.96,
+                    "evidence_token_ids": ["p1_t004"],
+                    "bbox": [0.10, 0.28, 0.22, 0.33]
+                  },
+                  "amount": {
+                    "value": "60",
+                    "confidence": 0.94,
+                    "evidence_token_ids": ["p1_t005"],
+                    "bbox": [0.10, 0.36, 0.16, 0.41]
+                  },
+                  "unit": {
+                    "value": "",
+                    "confidence": 1.0,
+                    "evidence_token_ids": [],
+                    "bbox": null
+                  },
+                  "warnings": []
+                }
               ],
-              "process_parameters": [
-                {"name": {"value": "主机转速", "confidence": 0.90}, "value": {"value": "50", "confidence": 0.91}, "unit": {"value": "Hz", "confidence": 0.88}},
-                {"name": {"value": "一区温度", "confidence": 0.88}, "value": {"value": "260", "confidence": 0.89}, "unit": {"value": "℃", "confidence": 0.85}}
-              ],
-              "notes": {"value": "注意干燥4小时", "confidence": 0.85},
-              "warnings": []
-            },
-            {
-              "formula_no": "②",
-              "record_date": {"value": "24.7.10", "confidence": 0.90},
-              "record_bbox": [0.05, 0.52, 0.93, 0.80],
-              "materials": [
-                {"name": {"value": "PA66", "confidence": 0.93}, "amount": {"value": "50", "confidence": 0.92}, "unit": {"value": "kg", "confidence": 0.90}},
-                {"name": {"value": "GF30", "confidence": 0.91}, "amount": {"value": "40", "confidence": 0.90}, "unit": {"value": "kg", "confidence": 0.90}},
-                {"name": {"value": "EBS", "confidence": 0.88}, "amount": {"value": "0.15", "confidence": 0.75}, "unit": {"value": "", "confidence": 1.0}}
-              ],
-              "process_parameters": [
-                {"name": {"value": "主机转速", "confidence": 0.89}, "value": {"value": "45", "confidence": 0.90}, "unit": {"value": "Hz", "confidence": 0.87}}
-              ],
-              "notes": {"value": "", "confidence": 1.0},
-              "warnings": ["EBS数量置信度偏低"]
+              "process_parameters": [],
+              "notes": {
+                "value": "",
+                "confidence": 1.0,
+                "evidence_token_ids": [],
+                "bbox": null
+              },
+              "warnings": [],
+              "confidence": 0.93
             }
-          ]
+          ],
+          "warnings": []
         }
       ],
       "warnings": []
-    },
-    {
-      "source_image_index": 2,
-      "company": {
-        "raw_value": "重庆某某新材料",
-        "standard_value": "重庆某某新材料有限公司",
-        "confidence": 0.93,
-        "bbox": [0.58, 0.02, 0.92, 0.10],
-        "evidence_token_ids": ["p2_t001"],
-        "match_source": "history_exact",
-        "review_status": "AUTO_ACCEPT"
-      },
-      "product_sections": [
-        {
-          "product_or_series": {
-            "raw_value": "PP增强",
-            "standard_value": "PP增强",
-            "confidence": 0.89,
-            "bbox": [0.50, 0.09, 0.85, 0.16]
-          },
-          "product_type": "series",
-          "section_bbox": [0.05, 0.09, 0.95, 0.90],
-          "formulas": [
-            {
-              "formula_no": "①",
-              "record_date": {"value": "24.7.11", "confidence": 0.91},
-              "record_bbox": [0.05, 0.16, 0.93, 0.55],
-              "materials": [
-                {"name": {"value": "PP", "confidence": 0.93}, "amount": {"value": "70", "confidence": 0.94}, "unit": {"value": "kg", "confidence": 0.90}},
-                {"name": {"value": "滑石粉", "confidence": 0.91}, "amount": {"value": "20", "confidence": 0.92}, "unit": {"value": "kg", "confidence": 0.90}},
-                {"name": {"value": "相容剂", "confidence": 0.87}, "amount": {"value": "5", "confidence": 0.89}, "unit": {"value": "", "confidence": 1.0}}
-              ],
-              "process_parameters": [
-                {"name": {"value": "螺杆转速", "confidence": 0.89}, "value": {"value": "45", "confidence": 0.90}, "unit": {"value": "Hz", "confidence": 0.88}}
-              ],
-              "notes": {"value": "", "confidence": 1.0},
-              "warnings": []
-            }
-          ]
-        }
-      ],
-      "warnings": ["第二张图片右下角字迹模糊"]
     }
   ],
-  "warnings": ["第二张图片右下角字迹模糊"]
+  "warnings": [
+    "演示模式固定结果，不代表对上传图片的真实识别。"
+  ]
 }

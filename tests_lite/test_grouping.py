@@ -1,7 +1,5 @@
 """分组模块测试：一页多配方/跨页分组/编号重复/公司匹配。"""
 
-import pytest
-from pathlib import Path
 
 from lite_app.grouping.models import (
     BusinessEntities,
@@ -11,15 +9,14 @@ from lite_app.grouping.models import (
 )
 from lite_app.grouping.service import (
     build_business_entities,
-    normalize_formula_no,
     is_formula_number_token,
+    normalize_formula_no,
 )
 from lite_app.grouping.storage import (
-    save_business_entities,
-    load_business_entities,
-    build_tree_response,
-    build_pages_response,
     build_formula_detail,
+    build_tree_response,
+    load_business_entities,
+    save_business_entities,
 )
 
 

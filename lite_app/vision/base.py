@@ -7,9 +7,17 @@ from pathlib import Path
 from typing import Any
 
 
-class VisionProviderError(Exception):
+class VisionProviderError(RuntimeError):
     """Provider 调用错误。"""
     pass
+
+
+class VisionConfigurationError(VisionProviderError):
+    """Vision provider configuration is missing or invalid."""
+
+
+class VisionConnectionError(VisionProviderError):
+    """Vision provider could not be reached or returned an invalid response."""
 
 
 class VisionProvider(ABC):
