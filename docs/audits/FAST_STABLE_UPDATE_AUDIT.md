@@ -45,6 +45,8 @@ docs/superpowers/plans/2026-07-24-fast-stable-update.md
 
 - 固定点：`ce410bf6d539288fa3e6c4114fb200ab4c6cc145`
 - 分支：`docs/fast-stable-update`
+- PR：`https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/3`
+- 首轮 CI Head：`1ccb8e7d7043ddbcee2440125e77593dfda8af86`
 - 设计提交：`4493657`
 - 计划提交：`188903e`
 - 测试提交：`5e1d4cb`
@@ -86,9 +88,13 @@ docs/superpowers/plans/2026-07-24-fast-stable-update.md
 - `python -m pytest -m "not real_ocr" -q`：`249 passed, 5 deselected`。
 - 跟踪内容 Secret 扫描：无匹配。
 - 相对固定点 diff Secret 扫描：无匹配。
+- PR #3 首轮 CI：`core (3.11)`、`core (3.12)`、`paddle-inference`、`install`
+  全部 `SUCCESS`。
 
 更新器未在当前开发工作树中执行真实 checkout，因为这会破坏正在审查的分支。Tag
-选择、条件分支和禁止命令由静态契约覆盖；真实 Windows 安装尚待 PR CI 验证。
+选择、条件分支和禁止命令由静态契约覆盖。PR 的 Windows `install` 冒烟任务验证共享
+加固安装器和平台安装流程，但不会执行更新器的版本切换，因此不能视为真实 checkout
+端到端测试。
 
 ## 安全与失败策略
 
@@ -102,7 +108,8 @@ docs/superpowers/plans/2026-07-24-fast-stable-update.md
 ## 已知限制
 
 - Linux/macOS 本次只有 AI 协议，没有自动更新脚本。
-- 更新器行为已通过静态契约验证；真实 Windows checkout/安装路径尚待 PR CI。
+- 更新器行为已通过静态契约验证；Windows CI 验证共享安装器，但未执行更新器的真实
+  checkout。
 - `master` 仍可由用户显式传入，但不再是普通用户默认目标。
 
 ## 独立 GPT 审查
@@ -119,8 +126,8 @@ docs/superpowers/plans/2026-07-24-fast-stable-update.md
 3. **重要，已处置**：审查时本报告尚未跟踪。复核结论现已回填，本报告随审计提交进入
    分支和 PR。
 4. **P2，部分加固并接受剩余限制**：静态测试原先只检查字符串。现增加 origin-only
-   和同版本 doctor 的代码块约束；当前分支仍不执行破坏性的真实 checkout，最终由
-   Windows PR CI 验证安装路径。
+   和同版本 doctor 的代码块约束；当前分支仍不执行破坏性的真实 checkout。Windows
+   PR CI 已验证共享安装器，不把它表述为更新器 checkout 的端到端验证。
 
 ### 设计符合性
 
@@ -130,5 +137,6 @@ docs/superpowers/plans/2026-07-24-fast-stable-update.md
 
 ## 当前结论
 
-独立 GPT 双轴复核通过，首次发现的严重/重要实现问题已修复，仅保留真实 Windows
-checkout/安装待 PR CI 的 P2。建议进入 PR；在 CI 完成前不作最终合并结论。
+独立 GPT 双轴复核通过，首次发现的严重/重要实现问题已修复。PR #3 首轮四项 CI 全部
+通过；剩余 P2 仅为未执行更新器真实 checkout 的已披露测试边界。当前证据支持合并，
+审计回填提交仍须再次通过同一组 PR CI 后才能执行 merge commit。
