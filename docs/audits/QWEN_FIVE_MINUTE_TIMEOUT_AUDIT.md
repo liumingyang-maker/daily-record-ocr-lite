@@ -152,9 +152,87 @@ FinalResult 或 Excel。因此不能判断模型是否理解字段任务，只�
 - 下一步应使用可稳定承载正式请求的端点重新执行同一完整任务；只有生成结构化结果、
   FinalResult 并具备导出条件后，才重新评估合并。
 
+## 2026-07-24 按量 API 脱敏复验
+
+### Token Plan 使用范围结论
+
+根据阿里云官方
+[Token Plan（个人版）说明](https://help.aliyun.com/zh/model-studio/token-plan-personal-overview)，
+Token Plan 仅限兼容的编程工具和智能体工具交互式使用，禁止用于自动化脚本、自定义应用
+后端或非交互式批量调用。`daily-record-ocr-lite` 属于自定义应用后端，因此停止将 Token
+Plan 作为正式视觉端点，也不再针对该路径增加超时、重试或兼容性修改。
+
+### 实际生效配置
+
+- Base URL 域名：`dashscope.aliyuncs.com`，不包含 Token Plan 域名。
+- Key 类型：`sk-ws`；完整 Key 仅存在于本机私密配置，不进入本报告。
+- Provider / Model：`openai_compatible` / `qwen3.7-plus`。
+- Endpoint：`/chat/completions`。
+- 请求控制：`response_format={"type":"json_object"}`、
+  `enable_thinking=false`、有效 timeout `300` 秒。
+- Windows 进程、用户和机器级 `VISION_API_KEY` / `VISION_BASE_URL` 均未设置；
+  项目 `.env` 不存在，因此没有覆盖页面配置。
+
+### 连接探针
+
+- 本机 `POST /api/settings/test-vision`：HTTP `200`，`status=OK`。
+- 延迟：`2250 ms`。
+- `vision_capability=true`。
+- `json_response_capability=true`。
+- `strict_json_capability=true`。
+- marker：`VISION-7319`。
+- request_id：当前 Provider/测试接口未暴露，未伪造。
+- 本机 OCR 自检：HTTP `200`、`status=OK`、`2096 ms`；配置保存后失效的
+  setup health 已按产品流程重新验证为 `READY_FOR_RECOGNITION`。
+
+### 同图完整任务
+
+- 新 Job：`20260724-233423-acb6b0`。
+- 输入与旧失败 Job `20260724-203755-20fbb4` 的原图 SHA-256 相同：
+  `CD96CC9662C103016867751ECD2446E48DDFEFE7766F5F6BBFBFECCFAB47B054`。
+- 原图：`196724` bytes；Vision 预处理图：`226113` bytes。
+- OCR：成功，生成基础结果、Layout 和 Overlay；从状态事件计算 OCR 阶段约
+  `992 ms`。失败路径没有持久化 `cache_hits`，因此不把缓存命中作为已证明事实。
+- Vision：约 `33981 ms` 后在收到响应头前断开，错误为
+  `Server disconnected without sending a response.`。
+- HTTP 状态 / request_id：未收到响应头，故均不可用。
+- 模型 content：未收到。
+- `vision/raw_response.txt`：未生成。
+- `vision/structured_result.json`：未生成。
+- Schema：未执行。
+- FinalResult：未生成。
+- Job 最终状态：`FAILED`。
+- Excel：未生成，不可下载。
+
+旧 Job 和旧失败证据未覆盖或删除。
+
+### A/B/C 受控对照
+
+所有请求均使用同一按量域名、`qwen3.7-plus`、一张图片、`json_object`、
+关闭思考和 `300` 秒 timeout；未把完整业务响应写入公共日志。
+
+| 组别 | 图片 | 请求体 | Prompt | 结果 | 延迟 | 响应头/content |
+|---|---:|---:|---|---|---:|---|
+| A（应用探针） | 小图；`2203` bytes | 应用接口未暴露 | 极简 marker JSON | HTTP 200，OK | `2250 ms` | content 已收到 |
+| A（元数据复测） | 小图；`2203` bytes | `3396` bytes | 同一探针 Prompt | TLS `UNEXPECTED_EOF` | `8515 ms` | 均未收到 |
+| B | 同一真实图；`226113` bytes | `301928` bytes | 极简描述 JSON | `RemoteProtocolError` | `42765 ms` | 均未收到 |
+| C | 同一真实图；`226113` bytes | `321597` bytes | 完整 OCR/Layout/Schema，`16375` 字符 | `RemoteProtocolError` | `50125 ms` | 均未收到 |
+
+B 与 C 都在响应头之前失败，且 B 已移除完整 OCR/Layout/Schema Prompt；因此现有证据
+不支持“模型不知道业务任务”或“完整 Prompt 导致失败”的单一解释。真实图/约 300 KB
+请求体与链路稳定性仍是主要候选；A 的一次成功和一次握手失败同时证明端点存在间歇性
+连接问题。没有服务端 HTTP 状态或 request_id，不能进一步归因到模型推理阶段。
+
+### Gate 与 PR 决策
+
+真实 Gate 未满足：没有模型 content、结构化结果、Schema、FinalResult 或 Excel。
+PR #4 继续保持 Draft；不合并、不创建 Tag、不发布。下一步若继续诊断，应优先取得
+阿里云服务端请求接收证据或检查真实图片请求大小/网关限制，而不是继续增加客户端超时。
+
 ## 当前结论
 
-五分钟超时行为的代码与自动化 Gate 通过，但真实正式任务 Gate 失败，且失败发生在远端
-无响应断开，不是客户端超时。独立 GPT 双轴审查的代码测试 P2 和审计字段重要问题均
-已修复；真实 Gate 阻塞仍然存在。可以创建带有失败证据的 Draft/诊断 PR 供 CI 和审查，
-但在正式任务成功前不建议合并，更不得发布。
+五分钟超时行为的代码与自动化 Gate 通过，但 Token Plan 和按量 API 的真实正式任务
+Gate 都失败，且失败均发生在远端无响应断开，不是客户端 300 秒超时。按量连接探针成功，
+但同一真实图的极简和完整 Prompt 均未收到响应头，真实 Gate 阻塞仍然存在。独立 GPT
+双轴审查的代码测试 P2 和审计字段重要问题均已修复；PR #4 继续保持 Draft，在正式任务
+成功前不合并、不打 Tag、不发布。
