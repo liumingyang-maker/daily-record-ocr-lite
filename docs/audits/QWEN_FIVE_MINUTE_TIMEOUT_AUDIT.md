@@ -51,7 +51,8 @@ docs/superpowers/plans/2026-07-24-qwen-five-minute-timeout.md
 - 计划提交：`bc8be24`
 - 实现提交：`c43e377`
 - PR：`https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/4`（Draft/诊断）
-- CI：运行中；即使通过也不能替代失败的真实正式任务 Gate
+- CI：`core (3.11)`、`core (3.12)`、`paddle-inference`、`install` 全部
+  `SUCCESS`；不能替代失败的真实正式任务 Gate
 - Tag：不创建
 - Release：不创建
 - 审计日期：2026-07-24
