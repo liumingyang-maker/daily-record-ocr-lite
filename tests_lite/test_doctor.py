@@ -90,7 +90,7 @@ def test_doctor_output_is_safe_on_legacy_windows_encoding(monkeypatch):
     machine_buffer = io.BytesIO()
     machine_stdout = io.TextIOWrapper(machine_buffer, encoding="cp1252")
     monkeypatch.setattr(sys, "stdout", machine_stdout)
-    assert main(["--json", "--gate"]) == 0
+    assert main(["--json", "--gate"]) == 1  # SETUP_REQUIRED returns exit code 1
     machine_stdout.flush()
     serialized = machine_buffer.getvalue().decode("cp1252")
     assert json.loads(serialized)["checks"][0]["message"] == "视觉模型尚未配置"
@@ -98,6 +98,6 @@ def test_doctor_output_is_safe_on_legacy_windows_encoding(monkeypatch):
     human_buffer = io.BytesIO()
     human_stdout = io.TextIOWrapper(human_buffer, encoding="cp1252")
     monkeypatch.setattr(sys, "stdout", human_stdout)
-    assert main(["--gate"]) == 0
+    assert main(["--gate"]) == 1  # SETUP_REQUIRED returns exit code 1
     human_stdout.flush()
     assert "\\u89c6\\u89c9" in human_buffer.getvalue().decode("cp1252")

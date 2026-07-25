@@ -75,12 +75,17 @@ try {
     New-Item -ItemType Directory -Force -Path "data\jobs", "data\cache\ocr", "data\cache\vision", "data\models" | Out-Null
     & $Python -c "from lite_app.settings import SettingsService; from pathlib import Path; s=SettingsService(Path('data')); s.save(s.load())"
     if ($LASTEXITCODE -ne 0) { throw "创建默认设置失败。" }
+    # Load shared doctor exit code contract
+    . (Join-Path $PSScriptRoot "doctor-exit-contract.ps1")
+    
     & $Python scripts\doctor.py --json --gate
     $DoctorExit = $LASTEXITCODE
-    if ($DoctorExit -ne 0) {
-        throw "doctor 报告 BROKEN；安装失败。"
+    $DoctorResult = Resolve-DoctorExitCode -DoctorExit $DoctorExit
+    if ($DoctorResult.Success) {
+        Write-Host $DoctorResult.Message
+    } else {
+        throw $DoctorResult.Message
     }
-    Write-Host "安装公共步骤完成。下一步运行 .\start-windows.bat 并在 /setup 配置视觉模型。"
 } finally {
     Set-Location $OriginalLocation
     subst.exe $ShortDrive /D

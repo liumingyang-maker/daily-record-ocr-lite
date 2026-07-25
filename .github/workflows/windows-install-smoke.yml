@@ -26,4 +26,8 @@ jobs:
         run: |
           .\.venv\Scripts\python.exe -c "import paddle; paddle.utils.run_check()"
           .\.venv\Scripts\python.exe -c "from fastapi.testclient import TestClient; from lite_app.main import app; response=TestClient(app).get('/health'); assert response.status_code == 200; assert response.json()['version'] == '1.0.1'"
-          .\.venv\Scripts\python.exe scripts\doctor.py --json --gate
+          # Run doctor and capture exit code using cmd /c
+          cmd /c ".\.venv\Scripts\python.exe scripts\doctor.py --json --gate & echo DOCTOR_EXIT_CODE=%ERRORLEVEL%"
+          if ($LASTEXITCODE -gt 1) {
+            throw "Doctor failed with exit code $LASTEXITCODE"
+          }

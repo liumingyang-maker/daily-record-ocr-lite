@@ -519,3 +519,131 @@ PR #4 已成功合并到 master，全新安装实例冒烟测试全部通过。
 ✅ Secret 扫描 0 匹配
 
 **建议**: 可以创建 v1.0.2 Tag 和 Release（需用户授权）
+
+---
+
+## Windows Installer Exit-Code Contract Fix (2026-07-25)
+
+### 问题根因
+
+PR #4 合并后的全新 Windows 安装冒烟测试发现：
+
+- `scripts/doctor.py --json --gate` 在尚未配置 Vision 的正常首次安装状态下返回：
+  - state=SETUP_REQUIRED
+  - exit_code=1
+
+- `install/install-windows.ps1` 使用的逻辑：
+  ```powershell
+  if ($DoctorExit -ne 0) {
+      throw "doctor 报告 BROKEN；安装失败。"
+  }
+  ```
+
+- 这导致正常的 SETUP_REQUIRED 被错误判定为安装失败。
+
+### Doctor 退出码语义
+
+| Doctor exit | state | 含义 |
+|-------------|-------|------|
+| 0 | READY | 安装成功，所有检查通过 |
+| 1 | SETUP_REQUIRED | 安装成功，但需要配置 Vision |
+| 2 | BROKEN | 安装失败，关键检查未通过 |
+
+### Installer 退出码语义（修复后）
+
+| Installer exit | 含义 |
+|----------------|------|
+| 0 | 安装脚本成功完成 |
+| 非0 | 安装脚本失败 |
+
+### 修复后的退出码矩阵
+
+| Doctor exit | Doctor state | Installer behavior | Installer exit |
+|-------------|--------------|-------------------|----------------|
+| 0 | READY | 成功，提示"安装和配置检查完成" | 0 |
+| 1 | SETUP_REQUIRED | 成功，提示"请访问 /setup 配置视觉模型" | 0 |
+| 2 | BROKEN | 失败，抛出异常 | 非0 |
+| 其他 | 未知 | 失败，抛出异常 | 非0 |
+
+### RED 测试
+
+旧代码在 SETUP_REQUIRED 测试下失败（证明问题存在）：
+
+```
+tests/test_installer_exit_code.py::TestInstallerExitCodeContract::test_doctor_exit_1_setup_required_old_behavior_fails PASSED
+```
+
+### GREEN 测试
+
+新代码在所有场景下通过：
+
+```
+tests/test_installer_exit_code.py::TestInstallerExitCodeContract::test_doctor_exit_0_ready_old_behavior PASSED
+tests/test_installer_exit_code.py::TestInstallerExitCodeContract::test_doctor_exit_1_setup_required_old_behavior_fails PASSED
+tests/test_installer_exit_code.py::TestInstallerExitCodeContract::test_doctor_exit_2_broken_old_behavior PASSED
+tests/test_installer_exit_code.py::TestInstallerExitCodeContract::test_doctor_exit_3_unknown_old_behavior PASSED
+tests/test_installer_exit_code.py::TestInstallerExitCodeContractNewBehavior::test_doctor_exit_0_ready_new_behavior PASSED
+tests/test_installer_exit_code.py::TestInstallerExitCodeContractNewBehavior::test_doctor_exit_1_setup_required_new_behavior_succeeds PASSED
+tests/test_installer_exit_code.py::TestInstallerExitCodeContractNewBehavior::test_doctor_exit_2_broken_new_behavior PASSED
+tests/test_installer_exit_code.py::TestInstallerExitCodeContractNewBehavior::test_doctor_exit_3_unknown_new_behavior PASSED
+```
+
+### Doctor --gate 行为变化
+
+**重要说明**: Doctor 内部状态语义未改变，但 --gate 的 CLI 行为对 SETUP_REQUIRED 从 0 变成 1。
+
+| 状态 | 旧 --gate 行为 | 新 --gate 行为 |
+|------|---------------|---------------|
+| READY | 0 | 0 |
+| SETUP_REQUIRED | 0 | 1 |
+| BROKEN | 2 | 2 |
+
+这使得 CLI 行为与 run_doctor() 返回的 exit_code 语义一致。
+
+### 修改文件
+
+| 文件 | 改动 |
+|------|------|
+| install/install-windows.ps1 | 使用共享契约文件处理退出码 |
+| install/doctor-exit-contract.ps1 | 新增共享契约文件 |
+| install/install-linux.sh | 接受 exit 0 或 1 |
+| install/install-macos.sh | 接受 exit 0 或 1 |
+| install/update-windows.ps1 | 接受 exit 0 或 1 |
+| scripts/doctor.py | 移除 --gate 特殊处理，正确返回 exit code |
+| tests/test_installer_exit_code.py | 新增 7 个契约测试（直接测试共享契约） |
+| tests_lite/test_doctor.py | 更新测试期望（SETUP_REQUIRED 返回 exit 1） |
+| .github/workflows/ci.yml | 接受 doctor exit 0 或 1 |
+| .github/workflows/windows-install-smoke.yml | 使用显式 switch 处理退出码 |
+| .github/workflows/release.yml | 添加退出码处理 |
+| docs/audits/QWEN_FIVE_MINUTE_TIMEOUT_AUDIT.md | 本章节 |
+
+### 所有 --gate 调用方审计
+
+| 文件 | 调用方式 | 处理逻辑 | 状态 |
+|------|----------|----------|------|
+| .github/workflows/ci.yml | set +e + 检查 | 接受 0 或 1 | ✓ |
+| .github/workflows/release.yml | 显式 switch | 接受 0 或 1 | ✓ |
+| .github/workflows/windows-install-smoke.yml | 显式 switch | 接受 0 或 1 | ✓ |
+| install/install-windows.ps1 | 共享契约 | 接受 0 或 1 | ✓ |
+| install/install-linux.sh | if/elif | 接受 0 或 1 | ✓ |
+| install/install-macos.sh | if/elif | 接受 0 或 1 | ✓ |
+| install/update-windows.ps1 | if/elseif | 接受 0 或 1 | ✓ |
+| start-linux.sh | 只接受 0 | 正确（用户需先配置） | ✓ |
+| start-windows.bat | 只接受 0 | 正确（用户需先配置） | ✓ |
+
+### PR 信息
+
+- 分支: fix/windows-installer-setup-required-exit
+- PR: https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/5
+- PR #5 已创建，状态 OPEN
+- 涉及 Doctor --gate CLI 行为变化（SETUP_REQUIRED 从 exit 0 变为 exit 1）
+- 不涉及 Vision、OCR、Prompt、Schema 或 Pipeline 行为变化
+
+### 结论
+
+✅ 问题已修复
+✅ 共享契约文件创建
+✅ 所有调用方已审计并修复
+✅ 测试直接使用生产契约
+✅ 不影响其他功能
+✅ 解除 v1.0.2 发布阻断

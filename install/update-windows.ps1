@@ -61,10 +61,15 @@ if ($PreviousCommit -eq $TargetCommit) {
     $DoctorScript = Join-Path $Root "scripts\doctor.py"
     if (Test-Path $DoctorPython) {
         & $DoctorPython $DoctorScript --json --gate
-        if ($LASTEXITCODE -ne 0) {
-            throw "已经是目标版本，但 doctor 健康检查失败。"
+        $DoctorExit = $LASTEXITCODE
+        if ($DoctorExit -eq 0) {
+            Write-Host "已经是目标稳定版本 $TargetRef；状态 READY。"
+        } elseif ($DoctorExit -eq 1) {
+            Write-Host "已经是目标稳定版本 $TargetRef；状态 SETUP_REQUIRED。"
+            Write-Host "请访问 /setup 配置视觉模型。"
+        } else {
+            throw "已经是目标版本，但 doctor 返回退出码 $DoctorExit。"
         }
-        Write-Host "已经是目标稳定版本 $TargetRef；无需重复安装。"
         Write-Host "数据备份位于 $Backup"
         exit 0
     }
