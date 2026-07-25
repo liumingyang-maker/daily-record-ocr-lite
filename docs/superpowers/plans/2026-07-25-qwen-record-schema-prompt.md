@@ -143,11 +143,10 @@ Run:
 
 ```powershell
 & 'C:\Users\97020\Desktop\daily-record-ocr-lite\.venv\Scripts\python.exe' `
-  -m pytest tests_lite/test_qwen_vision_capability.py `
-  tests_lite/test_qwen_five_minute_timeout.py -q
+  -m pytest tests_lite/test_dashscope_probe_request.py -q
 ```
 
-Expected: Qwen tests pass; request still contains `json_object` and
+Expected: `5 passed`; request still contains `json_object` and
 `enable_thinking=false`, with effective timeout at least 300 seconds.
 
 - [ ] **Step 5: Commit the implementation**
