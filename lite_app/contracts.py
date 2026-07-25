@@ -124,8 +124,13 @@ def validate_page_coverage(
 
 def normalize_legacy_result(result: dict[str, Any], job_id: str = "legacy") -> dict[str, Any]:
     """Convert the pre-v1 records contract without mutating the source object."""
-    if result.get("schema_version") == "record-v1" and isinstance(result.get("pages"), list):
+    # Already in pages format (with or without schema_version)
+    if isinstance(result.get("pages"), list):
         normalized = copy.deepcopy(result)
+        if not normalized.get("schema_version"):
+            normalized["schema_version"] = "record-v1"
+        if not isinstance(normalized.get("warnings"), list):
+            normalized["warnings"] = []
         _assign_stable_ids(normalized, job_id)
         _fill_reviewable_metadata(normalized)
         return normalized
@@ -236,6 +241,16 @@ def _assign_stable_ids(result: dict[str, Any], job_id: str) -> None:
 def _fill_reviewable_metadata(result: dict[str, Any]) -> None:
     """Fill recoverable evidence metadata while forcing affected fields to review."""
 
+    _VALID_REVIEW = {"AUTO_ACCEPT", "NEED_REVIEW", "MANUAL_CONFIRMED", "MANUAL_REJECTED", "MANUAL_CONFIRMED_EMPTY"}
+
+    def _sanitize_bbox(bbox: Any) -> Any:
+        """bbox must be null or [0-1] normalized 4-element array."""
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            return None
+        if all(isinstance(v, (int, float)) and 0 <= v <= 1 for v in bbox):
+            return list(bbox)
+        return None  # pixel coordinates or invalid → null
+
     def fill(field: Any) -> None:
         if not isinstance(field, dict):
             return
@@ -243,22 +258,94 @@ def _fill_reviewable_metadata(result: dict[str, Any]) -> None:
         field.setdefault("confidence", 0.0)
         field.setdefault("evidence_token_ids", [])
         field.setdefault("bbox", None)
+        # Sanitize bbox (pixel coords → null)
+        field["bbox"] = _sanitize_bbox(field.get("bbox"))
+        # Fix invalid review_status
+        rs = field.get("review_status", "")
+        if rs not in _VALID_REVIEW:
+            field["review_status"] = "NEED_REVIEW"
         if missing:
             field["review_status"] = "NEED_REVIEW"
 
+    def ensure_field(parent: dict, key: str) -> dict:
+        """Ensure a field dict exists with default structure."""
+        val = parent.get(key)
+        if isinstance(val, list):
+            # Model sometimes returns array; take first element or empty
+            val = val[0] if val and isinstance(val[0], dict) else {}
+        if not isinstance(val, dict):
+            val = {"value": str(val or ""), "confidence": 0.0, "evidence_token_ids": [], "bbox": None}
+            parent[key] = val
+        # Remove 'unit' if nested inside an evidenceField (not allowed by schema)
+        val.pop("unit", None)
+        fill(val)
+        return val
+
     for page in result.get("pages", []):
-        fill(page.get("company"))
+        # Fix source_image_index (model may return 0-based)
+        idx = page.get("source_image_index", 1)
+        if isinstance(idx, int) and idx < 1:
+            page["source_image_index"] = idx + 1
+        # Company
+        company = page.get("company")
+        if isinstance(company, dict):
+            fill(company)
+        # Product sections
         for section in page.get("product_sections", []):
+            # Ensure required section fields
+            if "product_or_series" not in section:
+                section["product_or_series"] = {"value": "", "confidence": 0.0, "evidence_token_ids": [], "bbox": None}
             fill(section.get("product_or_series"))
+            section.setdefault("product_type", "unknown")
+            section.setdefault("section_bbox", None)
+            section.setdefault("section_id", "")
+            section.setdefault("warnings", [])
             for formula in section.get("formulas", []):
+                # Ensure formula required fields
+                if "formula_no" not in formula:
+                    formula["formula_no"] = ""
+                if "record_date" not in formula:
+                    formula["record_date"] = {"value": "", "confidence": 0.0, "evidence_token_ids": [], "bbox": None}
                 fill(formula.get("record_date"))
+                if "notes" not in formula:
+                    formula["notes"] = {"value": "", "confidence": 0.0, "evidence_token_ids": [], "bbox": None}
+                # notes might be array from model → convert to single evidenceField
+                if isinstance(formula.get("notes"), list):
+                    notes_list = formula["notes"]
+                    if notes_list and isinstance(notes_list[0], dict):
+                        formula["notes"] = notes_list[0]
+                    else:
+                        formula["notes"] = {"value": "", "confidence": 0.0, "evidence_token_ids": [], "bbox": None}
                 fill(formula.get("notes"))
+                formula.setdefault("formula_id", "")
+                formula.setdefault("formula_sequence", 0)
+                formula["record_bbox"] = _sanitize_bbox(formula.get("record_bbox"))
+                formula.setdefault("warnings", [])
+                formula.setdefault("confidence", 0.0)
                 for material in formula.get("materials", []):
-                    for name in ("name", "amount", "unit"):
-                        fill(material.get(name))
+                    ensure_field(material, "name")
+                    ensure_field(material, "amount")
+                    ensure_field(material, "unit")
+                    # material_id must be non-empty
+                    if not material.get("material_id"):
+                        material["material_id"] = f"mat_{id(material) % 100000:05d}"
+                    material.setdefault("warnings", [])
+                    # Remove fields not allowed by schema (additionalProperties: false)
+                    material.pop("review_status", None)
+                    material.pop("confidence", None)
+                    material.pop("evidence_token_ids", None)
+                    material.pop("bbox", None)
                 for parameter in formula.get("process_parameters", []):
-                    for name in ("name", "value", "unit"):
-                        fill(parameter.get(name))
+                    ensure_field(parameter, "name")
+                    ensure_field(parameter, "value")
+                    ensure_field(parameter, "unit")
+                    if not parameter.get("parameter_id"):
+                        parameter["parameter_id"] = f"par_{id(parameter) % 100000:05d}"
+                    parameter.setdefault("warnings", [])
+                    parameter.pop("review_status", None)
+                    parameter.pop("confidence", None)
+                    parameter.pop("evidence_token_ids", None)
+                    parameter.pop("bbox", None)
 
 
 def _legacy_field(value: Any) -> dict[str, Any]:
