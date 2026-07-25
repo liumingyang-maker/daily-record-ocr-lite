@@ -8,12 +8,7 @@ Tests the behavior of install-windows.ps1 when doctor.py returns different exit 
 """
 
 import subprocess
-import tempfile
 from pathlib import Path
-from unittest.mock import patch
-
-import pytest
-
 
 # Mock doctor script that returns configurable exit codes
 MOCK_DOCTOR_SCRIPT = '''
