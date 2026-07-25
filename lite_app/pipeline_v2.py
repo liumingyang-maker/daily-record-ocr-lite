@@ -109,6 +109,29 @@ def extract_json(text: str) -> dict[str, Any]:
     raise PipelineError(f"无法从视觉模型响应解析 JSON: {text[:200]}")
 
 
+def build_vision_user_prompt(
+    schema_config: dict[str, Any],
+    ocr_evidence: list[dict[str, Any]],
+    layout_prompt: dict[str, Any],
+) -> str:
+    schema_text = json.dumps(
+        schema_config["schema"],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return (
+        f"{schema_config.get('instructions', '')}\n\n"
+        "以下 JSON Schema 是必须严格遵守的正式输出契约：\n"
+        f"JSON_SCHEMA={schema_text}\n"
+        "source_image_index 必须从 1 开始。\n"
+        "bbox 必须使用 0 到 1 的归一化坐标；无法可靠定位时返回 null。\n"
+        "以下 OCR 与本地布局仅为辅助证据，可能有误：\n"
+        f"OCR={json.dumps(ocr_evidence, ensure_ascii=False)}\n"
+        f"LAYOUT={json.dumps(layout_prompt, ensure_ascii=False)}\n"
+        "只返回严格符合上述 JSON Schema 的 JSON 对象。"
+    )
+
+
 async def analyze_job_v2(
     job_id: str,
     storage: JobStorage | None = None,
@@ -266,12 +289,10 @@ async def analyze_job_v2(
             }
             for page_index, evidence in layout_by_page.items()
         }
-        user_prompt = (
-            f"{schema_config.get('instructions', '')}\n\n"
-            "以下 OCR 与本地布局仅为辅助证据，可能有误：\n"
-            f"OCR={json.dumps(ocr_evidence, ensure_ascii=False)}\n"
-            f"LAYOUT={json.dumps(layout_prompt, ensure_ascii=False)}\n"
-            "只返回严格符合 JSON Schema 的 JSON。"
+        user_prompt = build_vision_user_prompt(
+            schema_config,
+            ocr_evidence,
+            layout_prompt,
         )
         vision_key = _hash_payload(
             {

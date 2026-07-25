@@ -4,32 +4,32 @@
 
 ```text
 请作为独立软件变更审计员，审查 daily-record-ocr-lite 的
-Qwen3.7 Plus 五分钟正式识别超时热修复。
+Qwen3.7 Plus record-v1 Schema Prompt 修复。
 
 仓库：
 https://github.com/liumingyang-maker/daily-record-ocr-lite
 
 分支：
-fix/qwen-five-minute-timeout
+fix/qwen-record-schema-prompt
 
 固定比较点：
-d5751781a49042b79872177f8d357779f828aaad...HEAD
+8d5f3b2...HEAD
 
 设计：
-docs/superpowers/specs/2026-07-24-qwen-five-minute-timeout-design.md
+docs/superpowers/specs/2026-07-25-qwen-record-schema-prompt-design.md
 
 计划：
-docs/superpowers/plans/2026-07-24-qwen-five-minute-timeout.md
+docs/superpowers/plans/2026-07-25-qwen-record-schema-prompt.md
 
 请重点核验：
-1. 仅阿里云域名的 qwen3.7-plus 被提升到至少300秒。
-2. 用户显式配置超过300秒时是否保留。
-3. 其他模型和其他端点是否保持原超时。
-4. json_object和enable_thinking=false是否保持。
-5. 自动化测试是否进行了真实TDD RED/GREEN。
-6. 真实正式任务失败是否被如实报告，而非用HTTP、小探针或延时冒充成功。
-7. 失败时是否禁止合并和发布。
-8. 是否存在Secret、原始响应、任务图片或本机配置进入Git。
+1. 正式 pipeline_v2 是否把完整 record-v1 Schema 送入 Provider user_prompt。
+2. source_image_index 1-based 与 bbox [0,1] 约束是否明确。
+3. json_object、enable_thinking=false 和 300 秒策略是否保持。
+4. 自动化测试是否进行了真实 TDD RED/GREEN，并覆盖生产接线。
+5. 真实正式任务失败是否被如实报告，而非用探针或单测冒充成功。
+6. PR #4 已合并的历史事实与本轮新 Draft PR 是否被正确区分。
+7. 真实 Gate 失败时是否禁止新 PR 合并、Tag 和发布。
+8. 是否存在 Secret、原始响应、任务图片或本机配置进入 Git。
 
 输出：
 - 阻塞/严重问题
@@ -45,19 +45,29 @@ docs/superpowers/plans/2026-07-24-qwen-five-minute-timeout.md
 
 ## 元数据
 
-- 固定点：`d5751781a49042b79872177f8d357779f828aaad`
-- 分支：`fix/qwen-five-minute-timeout`
-- 设计提交：`4bf06ba`
-- 计划提交：`bc8be24`
-- 实现提交：`c43e377`
-- 按量实测证据提交：`ddf086544b0e99530e4fe43e56fdcc44ee9870c3`
-- PR：`https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/4`（Draft/诊断）
-- CI：代码与首轮审计 Head `a0a9ca0` 的 `core (3.11)`、`core (3.12)`、
-  `paddle-inference`、`install` 全部 `SUCCESS`；后续仅文档提交的实时 CI 以 PR 页面
-  为准。任一 CI 成功都不能替代失败的真实正式任务 Gate
+- 本轮固定点：`8d5f3b2`
+- 本轮分支：`fix/qwen-record-schema-prompt`
+- 本轮设计提交：`77b1d62`
+- 本轮计划提交：`27147b0`
+- 本轮 RED 提交：`9ed31db`
+- 本轮实现提交：`cdaa80c`
+- 本轮生产接线测试：`4b2a871`
+- 历史 timeout 设计/计划/实现：`4bf06ba` / `bc8be24` / `c43e377`
+- 历史按量实测证据提交：`ddf086544b0e99530e4fe43e56fdcc44ee9870c3`
+- 历史 PR #4：`https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/4`，
+  已于 2026-07-25 合并，merge SHA `a0905a034ab15373c00cc22ccb5552cfc28ededa`
+- 本轮 Draft PR #6：
+  `https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/6`；
+  真实完整 Gate 成功前禁止转 Ready 或合并
+- 历史 CI：Head `a0a9ca0` 的 `core (3.11)`、`core (3.12)`、
+  `paddle-inference`、`install` 全部 `SUCCESS`
+- 本轮 CI：Draft PR #6 Head `5397e45` 的 `core (3.11)`、`core (3.12)`、
+  `paddle-inference`、`install` 全部 `SUCCESS`；后续仅审计状态提交以 PR 实时页面为准。
+  任一 CI 成功都不能替代失败的真实正式任务 Gate
 - Tag：不创建
 - Release：不创建
-- 审计日期：2026-07-24
+- 初始审计日期：2026-07-24
+- 本轮追加审计日期：2026-07-25
 
 ## 变更
 
@@ -68,7 +78,8 @@ docs/superpowers/plans/2026-07-24-qwen-five-minute-timeout.md
 - 实际超时使用 `max(configured_timeout, 300)`。
 - 非目标模型仍使用原配置值。
 
-未修改 OCR、预热、多核、Pipeline、Schema、Prompt、配置页面或平台安装层。
+原五分钟 timeout 子变更未修改 OCR、预热、多核、Pipeline、Schema、Prompt、
+配置页面或平台安装层；2026-07-25 本轮明确修改正式 `pipeline_v2` Prompt。
 
 禁止项执行情况：
 
@@ -116,17 +127,19 @@ docs/superpowers/plans/2026-07-24-qwen-five-minute-timeout.md
 FinalResult 或 Excel。因此不能判断模型是否理解字段任务，只能判断当前 Token Plan
 端点未可靠完成正式请求。
 
-## 安全
+## 2026-07-24 历史审查与当时风险
 
-- 跟踪内容 Secret 扫描：无匹配。
+### 安全
+
+- 当时跟踪内容 Secret 扫描：无匹配。
 - 相对固定点 diff Secret 扫描：无匹配。
 - 分支没有 `data/`、日志、图片、原始响应或本机配置。
 - 审计报告不包含 API Key、Authorization Header 或原始模型内容。
 - 桌面真实任务数据保留在本机忽略目录。
 
-## 独立 GPT 双轴复核
+### 独立 GPT 双轴复核
 
-### 任务书/设计符合性
+#### 任务书/设计符合性
 
 - 阻塞（已接受）：真实正式任务两次均由远端无响应断开，没有 Vision 结构、
   FinalResult 或 Excel；因此只建议创建诊断 PR，不建议合并或发布。
@@ -134,7 +147,7 @@ FinalResult 或 Excel。因此不能判断模型是否理解字段任务，只�
 - P2（已修复）：缺少“非阿里云端点 + qwen3.7-plus 保持原超时”的负向契约。
   已补充测试并验证目标 `5 passed`、全量 `253 passed, 5 deselected`。
 
-### 项目规范
+#### 项目规范
 
 - 阻塞（已接受）：真实正式任务 Gate 未通过，禁止合并或发布。
 - 重要（已修复）：报告原先未回填独立 GPT 发现，也未明确 PR、CI、Tag 和 Release
@@ -142,12 +155,12 @@ FinalResult 或 Excel。因此不能判断模型是否理解字段任务，只�
 - P2（已修复）：同一非阿里云 Qwen 负向契约已补充。
 - Secret 与本机产物：未发现进入分支 diff。
 
-## Release 资产
+### Release 资产
 
 不适用。本任务未通过真实正式任务 Gate，不创建 Tag、GitHub Release 或 Release 资产，
 现有 `v1.0.1` Release 保持不变。
 
-## 遗留风险与下一步
+### 遗留风险与下一步
 
 - Token Plan 正式请求在约 11–13 秒由远端主动断开，延长客户端超时不能阻止该行为。
 - 当前没有模型收到并完成正式字段任务的证据，不能评价模型字段理解能力。
@@ -218,9 +231,9 @@ Plan 作为正式视觉端点，也不再针对该路径增加超时、重试或
 | A（应用探针） | 小图；`2203` bytes | 应用接口未暴露 | 极简 marker JSON | HTTP 200，OK | `2250 ms` | content 已收到 |
 | A（元数据复测） | 小图；`2203` bytes | `3396` bytes | 同一探针 Prompt | TLS `UNEXPECTED_EOF` | `8515 ms` | 均未收到 |
 | B | 同一真实图；`226113` bytes | `301928` bytes | 极简描述 JSON | `RemoteProtocolError` | `42765 ms` | 均未收到 |
-| C | 同一真实图；`226113` bytes | `321597` bytes | 完整 OCR/Layout/Schema，`16375` 字符 | `RemoteProtocolError` | `50125 ms` | 均未收到 |
+| C | 同一真实图；`226113` bytes | `321597` bytes | 完整 OCR/Layout + 简化业务说明，`16375` 字符；未含 Schema 本体 | `RemoteProtocolError` | `50125 ms` | 均未收到 |
 
-B 与 C 都在响应头之前失败，且 B 已移除完整 OCR/Layout/Schema Prompt；因此现有证据
+B 与 C 都在响应头之前失败，且 B 已移除 OCR/Layout 和简化业务说明；因此现有证据
 不支持“模型不知道业务任务”或“完整 Prompt 导致失败”的单一解释。真实图/约 300 KB
 请求体与端到端链路问题都是待验证候选，现有样本不足以给二者排序；A 的一次成功和一次
 握手失败表明调用链存在间歇性连接失败。没有服务端 HTTP 状态或 request_id，不能进一步
@@ -228,17 +241,17 @@ B 与 C 都在响应头之前失败，且 B 已移除完整 OCR/Layout/Schema Pr
 
 ### Gate 与 PR 决策
 
-真实 Gate 未满足：没有模型 content、结构化结果、Schema、FinalResult 或 Excel。
-PR #4 继续保持 Draft；不合并、不创建 Tag、不发布。下一步若继续诊断，应优先取得
-阿里云服务端请求接收证据或检查真实图片请求大小/网关限制，而不是继续增加客户端超时。
+截至 2026-07-24 本节记录时，真实 Gate 未满足：没有模型 content、结构化结果、
+Schema、FinalResult 或 Excel；PR #4 当时保持 Draft。PR #4 后续 Release Candidate、
+真实 Gate 和合并状态见下文追加章节。
 
-## 当前结论
+## 2026-07-24 阶段性结论
 
 五分钟超时行为的代码与自动化 Gate 通过，但 Token Plan 和按量 API 的真实正式任务
 Gate 都失败，且失败均发生在远端无响应断开，不是客户端 300 秒超时。按量连接探针成功，
 但同一真实图的极简和完整 Prompt 均未收到响应头，真实 Gate 阻塞仍然存在。独立 GPT
-双轴审查的代码测试 P2 和审计字段重要问题均已修复；PR #4 继续保持 Draft，在正式任务
-成功前不合并、不打 Tag、不发布。
+双轴审查的代码测试 P2 和审计字段重要问题均已修复；这是当时的阶段性判断，不代表
+PR #4 的最终状态。
 
 ---
 
@@ -647,3 +660,134 @@ tests/test_installer_exit_code.py::TestInstallerExitCodeContractNewBehavior::tes
 ✅ 测试直接使用生产契约
 ✅ 不影响其他功能
 ✅ 解除 v1.0.2 发布阻断
+
+## record-v1 Schema Prompt 修复追加审计（2026-07-25）
+
+### 分支与 PR 边界
+
+- 历史 PR #4 已合并，merge SHA：
+  `a0905a034ab15373c00cc22ccb5552cfc28ededa`。
+- 本轮从最新 `origin/master` 的 `8d5f3b2` 建立独立分支
+  `fix/qwen-record-schema-prompt`。
+- 本轮变更不属于已合并的 PR #4；使用 Draft PR #6。
+- Draft PR #6 在真实完整 Gate 成功前不得转 Ready、合并、Tag 或发布。
+
+### 用户新 Job 与根因
+
+桌面 v1.0.1 Job `20260725-151256-8a9956` 首次在正式图片任务中收到 Qwen3.7 Plus
+返回的 `12242` 字符纯 JSON，并生成：
+
+- `vision/raw_response.txt`；
+- `vision/structured_result.json`；
+- `vision/schema_errors.json`。
+
+该 Job 的 Vision 阶段约 `55348 ms`，最终为 `FAILED_SCHEMA`，共有 95 个 fatal：
+
+- required：50；
+- anyOf：29，其中 27 个字段 bbox 和 2 个 record bbox 使用像素坐标；
+- additionalProperties：11，均为 amount 内嵌 unit；
+- type：2，notes 返回数组而非对象；
+- enum：1；
+- minimum：1；
+- pageCoverage：1。
+
+95 项是按字段实例重复展开的级联契约错误，不是 95 个 OCR 错误。响应包含 1 页、
+2 条配方、11 个物料和 2 个工艺参数，表明模型能够返回宽泛业务结构，但不能证明字段
+识别准确。
+
+代码追踪确认近端根因：
+
+- 正式 `pipeline_v2` 只发送简化 instructions、OCR、Layout 和一句“符合 JSON
+  Schema”；
+- `record-v1` Schema 本体没有进入 user prompt；
+- Qwen3.7 Plus 的 `json_object` 只保证返回 JSON 对象，不保证符合本地 Schema；
+- 旧 `pipeline.py` 会序列化 Schema，但正式 `pipeline_v2` 遗漏了该步骤。
+
+正式 Schema 未进入请求是明确的实现缺陷，也是该响应契约错误的高置信候选近端根因；
+修复后尚未收到新 content，因此因果关系和其他模型输出问题仍未完成真实验证。
+
+### 方案 A 与 TDD
+
+用户批准方案 A：
+
+- 在正式业务 Prompt 中嵌入紧凑完整 `record-v1` Schema；
+- 明确 `source_image_index` 从 1 开始；
+- 明确 bbox 使用 `[0,1]` 归一化坐标，无法定位时返回 null；
+- 保持 `response_format={"type":"json_object"}`；
+- 保持 `enable_thinking=false`；
+- 保持有效 timeout 至少 300 秒；
+- 不使用本地字段修补伪造合规结果。
+
+提交：
+
+- 设计：`77b1d62`；
+- 计划：`27147b0`；
+- RED：`9ed31db`，以
+  `pipeline_v2 must expose a testable prompt builder` 失败；
+- GREEN 实现：`cdaa80c`；
+- 计划路径修正：`3d4ca5d`；
+- 生产接线测试：`4b2a871`。
+
+独立代码审查确认：
+
+- 完整 Schema 已进入纯 builder；
+- `analyze_job_v2` 生产路径实际使用 builder；
+- 缓存键包含新 prompt 与 Schema，会自然避开旧 Vision 缓存；
+- Schema 约 `4.7 KB`，使用紧凑序列化；
+- 未改变 Qwen 请求控制参数。
+
+审查提出的 Important“只测 builder、未锁定生产接线”已通过
+`tests_lite/test_pipeline_v2_e2e.py` 修复：Fake Provider 捕获生产路径实际
+`user_prompt`，并断言包含完整紧凑 Schema。
+
+### 自动化 Gate
+
+- Prompt 目标测试：`1 passed`；
+- Pipeline/Qwen 相关测试：`7 passed`；
+- 原实现分支全量非 real OCR：`254 passed, 5 deselected`；
+- 最新 master 基线全量非 real OCR：`277 passed, 5 deselected`；
+- Ruff：`All checks passed!`；
+- `git diff --check`：通过；
+- 本轮分支 diff Secret 扫描：0；
+- 最新 master 跟踪内容扫描命中 `scripts/pipeline_gate.py` 中 1 个 9 字符示例占位符，
+  真实 Key 匹配为 0。
+
+### 桌面实例与真实复验
+
+桌面实例仅应用本轮 `pipeline_v2` Prompt 修复，用户配置、Key 和所有旧 Job 保持不变。
+实际新 Prompt 元数据：
+
+- Prompt：`10779` 字符；
+- 完整 Schema：`4683` 字符，确认嵌入；
+- Vision 图片：`177908` bytes；
+- 请求体：`250801` bytes；
+- 1-based 页面索引与 bbox 最大值 1 约束均存在。
+
+重启后连接探针：
+
+- HTTP `200`；
+- latency `8000 ms`；
+- `vision_capability=true`；
+- `json_response_capability=true`；
+- `strict_json_capability=true`；
+- marker `VISION-7319`。
+
+同图 SHA-256：
+`35D86DD4C993B4066DE3E56D9AE30F631C83033C129A6A2F9FCC4ED5D014A96A`。
+
+两次受控新 Job：
+
+| Job | OCR 阶段 | Vision 阶段 | 结果 |
+|---|---:|---:|---|
+| `20260725-153125-75b904` | `3359 ms` | `15501 ms` | 响应头前断开 |
+| `20260725-153206-9619e4` | `121 ms` | `22912 ms` | 响应头前断开 |
+
+两次均未收到模型 content，未生成 raw response、structured result、FinalResult 或 Excel。
+失败路径不持久化 `cache_hits`，因此不把第二次更短的 OCR 阶段写成已证明的缓存命中。
+按约束停止请求，不增加 timeout，不加入自动重试。
+
+### 当前结论
+
+代码、生产接线和自动化测试证明完整 Schema 已进入正式请求，但两次修复后真实请求均在
+响应头前断开，因此尚未获得新的 Schema 输出，真实 Gate 仍阻塞。新 PR 必须保持 Draft；
+不合并、不创建 Tag、不发布。

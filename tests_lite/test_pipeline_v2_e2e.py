@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 from PIL import Image
 
+from lite_app.config import load_schema_config
 from lite_app.final_result import FinalResultService
 from lite_app.ocr.base import OCRPage, OCRToken
 from lite_app.storage import JobStorage
@@ -70,8 +71,16 @@ class RealNamedOCRManager:
 class VisionResultProvider:
     def __init__(self, result: dict):
         self.result = result
+        self.user_prompt: str | None = None
 
-    async def analyze(self, *_args, **_kwargs):
+    async def analyze(
+        self,
+        _image_paths,
+        _system_prompt,
+        user_prompt,
+        _json_schema,
+    ):
+        self.user_prompt = user_prompt
         return json.dumps(self.result, ensure_ascii=False)
 
 
@@ -206,15 +215,21 @@ async def test_v2_pipeline_conflict_manual_api_and_excel_source(
     monkeypatch.setattr(
         pipeline_v2, "SettingsService", lambda _path: TestSettings()
     )
+    vision_provider = VisionResultProvider(_vision_result())
     monkeypatch.setattr(
-        pipeline_v2,
-        "build_vision_provider",
-        lambda _config: VisionResultProvider(_vision_result()),
+        pipeline_v2, "build_vision_provider", lambda _config: vision_provider
     )
     monkeypatch.setattr(pipeline_v2, "_history_candidates", lambda _result: {})
 
     result = await pipeline_v2.analyze_job_v2(job["id"], storage)
     assert result["status"] == "REVIEW_REQUIRED"
+    compact_schema = json.dumps(
+        load_schema_config()["schema"],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    assert vision_provider.user_prompt is not None
+    assert f"JSON_SCHEMA={compact_schema}" in vision_provider.user_prompt
 
     final = FinalResultService(storage.get_job_dir(job["id"])).load()
     amount = final["pages"][0]["product_sections"][0]["formulas"][0][
