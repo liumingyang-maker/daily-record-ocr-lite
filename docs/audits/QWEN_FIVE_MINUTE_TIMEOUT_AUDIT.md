@@ -56,10 +56,12 @@ docs/superpowers/plans/2026-07-25-qwen-record-schema-prompt.md
 - 历史按量实测证据提交：`ddf086544b0e99530e4fe43e56fdcc44ee9870c3`
 - 历史 PR #4：`https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/4`，
   已于 2026-07-25 合并，merge SHA `a0905a034ab15373c00cc22ccb5552cfc28ededa`
-- 本轮新 PR：创建后保持 Draft，真实完整 Gate 成功前禁止转 Ready 或合并
+- 本轮 Draft PR #6：
+  `https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/6`；
+  真实完整 Gate 成功前禁止转 Ready 或合并
 - 历史 CI：Head `a0a9ca0` 的 `core (3.11)`、`core (3.12)`、
   `paddle-inference`、`install` 全部 `SUCCESS`
-- 本轮 CI：新 Draft PR 创建后验证；任一 CI 成功都不能替代失败的真实正式任务 Gate
+- 本轮 CI：Draft PR #6 验证中；任一 CI 成功都不能替代失败的真实正式任务 Gate
 - Tag：不创建
 - Release：不创建
 - 初始审计日期：2026-07-24
@@ -665,8 +667,8 @@ tests/test_installer_exit_code.py::TestInstallerExitCodeContractNewBehavior::tes
   `a0905a034ab15373c00cc22ccb5552cfc28ededa`。
 - 本轮从最新 `origin/master` 的 `8d5f3b2` 建立独立分支
   `fix/qwen-record-schema-prompt`。
-- 本轮变更不属于已合并的 PR #4；必须使用新的 Draft PR。
-- 新 Draft PR 在真实完整 Gate 成功前不得转 Ready、合并、Tag 或发布。
+- 本轮变更不属于已合并的 PR #4；使用 Draft PR #6。
+- Draft PR #6 在真实完整 Gate 成功前不得转 Ready、合并、Tag 或发布。
 
 ### 用户新 Job 与根因
 
