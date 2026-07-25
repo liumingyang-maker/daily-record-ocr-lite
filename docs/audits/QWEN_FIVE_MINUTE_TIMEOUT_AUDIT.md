@@ -588,23 +588,62 @@ tests/test_installer_exit_code.py::TestInstallerExitCodeContractNewBehavior::tes
 tests/test_installer_exit_code.py::TestInstallerExitCodeContractNewBehavior::test_doctor_exit_3_unknown_new_behavior PASSED
 ```
 
+### Doctor --gate 行为变化
+
+**重要说明**: Doctor 内部状态语义未改变，但 --gate 的 CLI 行为对 SETUP_REQUIRED 从 0 变成 1。
+
+| 状态 | 旧 --gate 行为 | 新 --gate 行为 |
+|------|---------------|---------------|
+| READY | 0 | 0 |
+| SETUP_REQUIRED | 0 | 1 |
+| BROKEN | 2 | 2 |
+
+这使得 CLI 行为与 run_doctor() 返回的 exit_code 语义一致。
+
 ### 修改文件
 
 | 文件 | 改动 |
 |------|------|
-| install/install-windows.ps1 | 退出码处理逻辑从 if-ne-0 改为 switch |
-| tests/test_installer_exit_code.py | 新增 8 个契约测试 |
+| install/install-windows.ps1 | 使用共享契约文件处理退出码 |
+| install/doctor-exit-contract.ps1 | 新增共享契约文件 |
+| install/install-linux.sh | 接受 exit 0 或 1 |
+| install/install-macos.sh | 接受 exit 0 或 1 |
+| install/update-windows.ps1 | 接受 exit 0 或 1 |
+| scripts/doctor.py | 移除 --gate 特殊处理，正确返回 exit code |
+| tests/test_installer_exit_code.py | 新增 7 个契约测试（直接测试共享契约） |
+| tests_lite/test_doctor.py | 更新测试期望（SETUP_REQUIRED 返回 exit 1） |
+| .github/workflows/ci.yml | 接受 doctor exit 0 或 1 |
+| .github/workflows/windows-install-smoke.yml | 使用显式 switch 处理退出码 |
+| .github/workflows/release.yml | 添加退出码处理 |
 | docs/audits/QWEN_FIVE_MINUTE_TIMEOUT_AUDIT.md | 本章节 |
+
+### 所有 --gate 调用方审计
+
+| 文件 | 调用方式 | 处理逻辑 | 状态 |
+|------|----------|----------|------|
+| .github/workflows/ci.yml | set +e + 检查 | 接受 0 或 1 | ✓ |
+| .github/workflows/release.yml | 显式 switch | 接受 0 或 1 | ✓ |
+| .github/workflows/windows-install-smoke.yml | 显式 switch | 接受 0 或 1 | ✓ |
+| install/install-windows.ps1 | 共享契约 | 接受 0 或 1 | ✓ |
+| install/install-linux.sh | if/elif | 接受 0 或 1 | ✓ |
+| install/install-macos.sh | if/elif | 接受 0 或 1 | ✓ |
+| install/update-windows.ps1 | if/elseif | 接受 0 或 1 | ✓ |
+| start-linux.sh | 只接受 0 | 正确（用户需先配置） | ✓ |
+| start-windows.bat | 只接受 0 | 正确（用户需先配置） | ✓ |
 
 ### PR 信息
 
 - 分支: fix/windows-installer-setup-required-exit
-- PR: 待创建
+- PR: https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/5
+- PR #5 已创建，状态 OPEN
+- 涉及 Doctor --gate CLI 行为变化（SETUP_REQUIRED 从 exit 0 变为 exit 1）
 - 不涉及 Vision、OCR、Prompt、Schema 或 Pipeline 行为变化
 
 ### 结论
 
 ✅ 问题已修复
-✅ RED/GREEN 测试完整
+✅ 共享契约文件创建
+✅ 所有调用方已审计并修复
+✅ 测试直接使用生产契约
 ✅ 不影响其他功能
 ✅ 解除 v1.0.2 发布阻断

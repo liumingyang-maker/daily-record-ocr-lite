@@ -35,5 +35,12 @@ set +e
 .venv/bin/python scripts/doctor.py --json --gate
 doctor_exit=$?
 set -e
-[[ "$doctor_exit" -eq 0 ]] || { echo "doctor 报告 BROKEN" >&2; exit 2; }
-echo "安装完成。运行 ./start-macos.command，并在 /setup 配置视觉模型。"
+if [[ "$doctor_exit" -eq 0 ]]; then
+  echo "安装和配置检查完成，当前状态 READY。"
+elif [[ "$doctor_exit" -eq 1 ]]; then
+  echo "安装公共步骤完成，当前状态 SETUP_REQUIRED。"
+  echo "请运行 ./start-macos.command 并访问 /setup 配置视觉模型。"
+else
+  echo "doctor 返回退出码 $doctor_exit；安装失败。" >&2
+  exit 2
+fi

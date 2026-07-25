@@ -1,10 +1,13 @@
 """Contract tests for Windows installer exit-code handling.
 
-Tests the behavior of install-windows.ps1 when doctor.py returns different exit codes:
-- Exit 0 / READY: Installer should succeed
-- Exit 1 / SETUP_REQUIRED: Installer should succeed (normal first install)
-- Exit 2 / BROKEN: Installer should fail
-- Exit 3 / Unknown: Installer should fail
+Tests the shared doctor-exit-contract.ps1 module that defines how installers
+and CI workflows interpret Doctor exit codes.
+
+Exit code semantics:
+- 0: READY - all checks passed
+- 1: SETUP_REQUIRED - installation succeeded but Vision needs configuration
+- 2: BROKEN - critical check failed
+- Other: UNKNOWN - unexpected state
 """
 
 import shutil
@@ -26,169 +29,98 @@ def get_powershell_cmd():
     return None
 
 
-# Mock doctor script that returns configurable exit codes
-MOCK_DOCTOR_SCRIPT = '''
-import sys
-import json
+# Path to the shared contract file
+CONTRACT_FILE = Path(__file__).resolve().parent.parent / "install" / "doctor-exit-contract.ps1"
 
-exit_code = int(sys.argv[-1]) if sys.argv[-1].isdigit() else 0
 
-result = {
-    "schema_version": "doctor-v1",
-    "version": "1.0.1",
-    "state": "READY" if exit_code == 0 else ("SETUP_REQUIRED" if exit_code == 1 else "BROKEN"),
-    "exit_code": exit_code,
-    "checks": []
-}
+@pytest.mark.skipif(not POWERSHELL_AVAILABLE, reason="PowerShell not available on this platform")
+class TestDoctorExitContract:
+    """Test the shared doctor-exit-contract.ps1 module directly."""
 
-print(json.dumps(result))
-sys.exit(exit_code)
+    def _call_contract(self, exit_code: int) -> dict:
+        """Call Resolve-DoctorExitCode with the given exit code and return the result."""
+        ps_cmd = get_powershell_cmd()
+        if not ps_cmd:
+            pytest.skip("PowerShell not available")
+
+        # Create a test script that loads the contract and calls it
+        test_script = f'''
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+. "{CONTRACT_FILE}"
+$result = Resolve-DoctorExitCode -DoctorExit {exit_code}
+Write-Output ($result | ConvertTo-Json -Compress)
 '''
+        
+        # Write temp script with UTF-8 BOM
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.ps1', delete=False, encoding='utf-8-sig') as f:
+            f.write(test_script)
+            temp_script = f.name
+        
+        try:
+            result = subprocess.run(
+                [ps_cmd, "-ExecutionPolicy", "Bypass", "-File", temp_script],
+                capture_output=True,
+                encoding='utf-8',
+                errors='replace'
+            )
+            if result.returncode != 0:
+                pytest.fail(f"PowerShell script failed: {result.stderr}")
+            import json
+            return json.loads(result.stdout.strip())
+        finally:
+            Path(temp_script).unlink(missing_ok=True)
+
+    def test_doctor_exit_0_ready(self):
+        """Doctor exit 0 should return Success=true, State=READY."""
+        result = self._call_contract(0)
+        assert result["Success"] is True
+        assert result["State"] == "READY"
+
+    def test_doctor_exit_1_setup_required(self):
+        """Doctor exit 1 should return Success=true, State=SETUP_REQUIRED."""
+        result = self._call_contract(1)
+        assert result["Success"] is True
+        assert result["State"] == "SETUP_REQUIRED"
+
+    def test_doctor_exit_2_broken(self):
+        """Doctor exit 2 should return Success=false, State=BROKEN."""
+        result = self._call_contract(2)
+        assert result["Success"] is False
+        assert result["State"] == "BROKEN"
+
+    def test_doctor_exit_3_unknown(self):
+        """Doctor exit 3 should return Success=false, State=UNKNOWN."""
+        result = self._call_contract(3)
+        assert result["Success"] is False
+        assert result["State"] == "UNKNOWN"
+
+    def test_doctor_exit_negative(self):
+        """Doctor exit -1 should return Success=false."""
+        result = self._call_contract(-1)
+        assert result["Success"] is False
+
+    def test_doctor_exit_255(self):
+        """Doctor exit 255 should return Success=false."""
+        result = self._call_contract(255)
+        assert result["Success"] is False
 
 
 @pytest.mark.skipif(not POWERSHELL_AVAILABLE, reason="PowerShell not available on this platform")
-class TestInstallerExitCodeContract:
-    """Test installer behavior with different doctor exit codes."""
+class TestInstallerUsesContract:
+    """Test that the actual installer uses the shared contract correctly."""
 
-    def _run_installer_with_mock_doctor(self, doctor_exit_code: int, tmp_path: Path) -> subprocess.CompletedProcess:
-        """Run installer with a mock doctor that returns the specified exit code."""
+    def test_installer_loads_contract(self, tmp_path):
+        """Verify that install-windows.ps1 dot-sources doctor-exit-contract.ps1."""
         ps_cmd = get_powershell_cmd()
         if not ps_cmd:
             pytest.skip("PowerShell not available")
 
-        # Create mock doctor script
-        mock_doctor = tmp_path / "mock_doctor.py"
-        mock_doctor.write_text(MOCK_DOCTOR_SCRIPT)
-
-        # Create a simplified installer test script that mimics the critical logic
-        installer_test = tmp_path / "test_installer.ps1"
-        installer_test.write_text(f'''
-$ErrorActionPreference = "Stop"
-$Python = "python"
-
-# Mock doctor call
-& $Python "{mock_doctor}" --json --gate {doctor_exit_code}
-$DoctorExit = $LASTEXITCODE
-
-# Original logic (BUGGY)
-if ($DoctorExit -ne 0) {{
-    throw "doctor 报告 BROKEN；安装失败。"
-}}
-Write-Host "安装公共步骤完成。下一步运行 .\\start-windows.bat 并在 /setup 配置视觉模型。"
-exit 0
-''')
-
-        # Run the test script
-        result = subprocess.run(
-            [ps_cmd, "-ExecutionPolicy", "Bypass", "-File", str(installer_test)],
-            capture_output=True,
-            text=True,
-            cwd=str(tmp_path)
-        )
-        return result
-
-    def test_doctor_exit_0_ready_old_behavior(self, tmp_path):
-        """Doctor exit 0 / READY should succeed with old behavior."""
-        result = self._run_installer_with_mock_doctor(0, tmp_path)
-        assert result.returncode == 0, f"Expected exit 0, got {result.returncode}. stderr: {result.stderr}"
-        assert "安装公共步骤完成" in result.stdout
-
-    def test_doctor_exit_1_setup_required_old_behavior_fails(self, tmp_path):
-        """Doctor exit 1 / SETUP_REQUIRED should FAIL with old behavior (this is the bug)."""
-        result = self._run_installer_with_mock_doctor(1, tmp_path)
-        # Old behavior: exit 1 throws exception, installer fails
-        assert result.returncode != 0, f"Expected non-zero exit (bug), got {result.returncode}"
-        assert "BROKEN" in result.stderr or "安装失败" in result.stderr
-
-    def test_doctor_exit_2_broken_old_behavior(self, tmp_path):
-        """Doctor exit 2 / BROKEN should fail with old behavior."""
-        result = self._run_installer_with_mock_doctor(2, tmp_path)
-        assert result.returncode != 0, f"Expected non-zero exit, got {result.returncode}"
-        assert "BROKEN" in result.stderr or "安装失败" in result.stderr
-
-    def test_doctor_exit_3_unknown_old_behavior(self, tmp_path):
-        """Doctor exit 3 / Unknown should fail with old behavior."""
-        result = self._run_installer_with_mock_doctor(3, tmp_path)
-        assert result.returncode != 0, f"Expected non-zero exit, got {result.returncode}"
-
-
-@pytest.mark.skipif(not POWERSHELL_AVAILABLE, reason="PowerShell not available on this platform")
-class TestInstallerExitCodeContractNewBehavior:
-    """Test installer behavior with NEW fixed logic."""
-
-    def _run_installer_with_new_logic(self, doctor_exit_code: int, tmp_path: Path) -> subprocess.CompletedProcess:
-        """Run installer with new fixed logic."""
-        ps_cmd = get_powershell_cmd()
-        if not ps_cmd:
-            pytest.skip("PowerShell not available")
-
-        # Create mock doctor script
-        mock_doctor = tmp_path / "mock_doctor.py"
-        mock_doctor.write_text(MOCK_DOCTOR_SCRIPT)
-
-        # Create installer test script with NEW fixed logic
-        installer_test = tmp_path / "test_installer_new.ps1"
-        installer_test.write_text(f'''
-$ErrorActionPreference = "Stop"
-$Python = "python"
-
-# Mock doctor call
-& $Python "{mock_doctor}" --json --gate {doctor_exit_code}
-$DoctorExit = $LASTEXITCODE
-
-# NEW fixed logic
-switch ($DoctorExit) {{
-    0 {{
-        Write-Host "安装和配置检查完成，当前状态 READY。"
-    }}
-    1 {{
-        Write-Host "安装公共步骤完成，当前状态 SETUP_REQUIRED。"
-        Write-Host "请运行 .\\start-windows.bat 并访问 /setup 配置视觉模型。"
-    }}
-    2 {{
-        throw "doctor 报告 BROKEN；安装失败。"
-    }}
-    default {{
-        throw "doctor 返回未知退出码 $DoctorExit；安装状态无法确认。"
-    }}
-}}
-exit 0
-''')
-
-        # Run the test script
-        result = subprocess.run(
-            [ps_cmd, "-ExecutionPolicy", "Bypass", "-File", str(installer_test)],
-            capture_output=True,
-            text=True,
-            cwd=str(tmp_path)
-        )
-        return result
-
-    def test_doctor_exit_0_ready_new_behavior(self, tmp_path):
-        """Doctor exit 0 / READY should succeed with new behavior."""
-        result = self._run_installer_with_new_logic(0, tmp_path)
-        assert result.returncode == 0, f"Expected exit 0, got {result.returncode}. stderr: {result.stderr}"
-        assert "安装和配置检查完成" in result.stdout
-        assert "READY" in result.stdout
-
-    def test_doctor_exit_1_setup_required_new_behavior_succeeds(self, tmp_path):
-        """Doctor exit 1 / SETUP_REQUIRED should SUCCEED with new behavior."""
-        result = self._run_installer_with_new_logic(1, tmp_path)
-        assert result.returncode == 0, f"Expected exit 0, got {result.returncode}. stderr: {result.stderr}"
-        assert "安装公共步骤完成" in result.stdout
-        assert "SETUP_REQUIRED" in result.stdout
-        assert "/setup" in result.stdout
-        assert "BROKEN" not in result.stdout
-        assert "安装失败" not in result.stdout
-
-    def test_doctor_exit_2_broken_new_behavior(self, tmp_path):
-        """Doctor exit 2 / BROKEN should fail with new behavior."""
-        result = self._run_installer_with_new_logic(2, tmp_path)
-        assert result.returncode != 0, f"Expected non-zero exit, got {result.returncode}"
-        assert "BROKEN" in result.stderr or "安装失败" in result.stderr
-
-    def test_doctor_exit_3_unknown_new_behavior(self, tmp_path):
-        """Doctor exit 3 / Unknown should fail with new behavior."""
-        result = self._run_installer_with_new_logic(3, tmp_path)
-        assert result.returncode != 0, f"Expected non-zero exit, got {result.returncode}"
-        assert "未知退出码" in result.stderr or "安装状态无法确认" in result.stderr
+        # Read the installer file with UTF-8 encoding
+        installer = Path(__file__).resolve().parent.parent / "install" / "install-windows.ps1"
+        content = installer.read_text(encoding='utf-8')
+        
+        # Verify it loads the contract
+        assert "doctor-exit-contract.ps1" in content
+        assert "Resolve-DoctorExitCode" in content
