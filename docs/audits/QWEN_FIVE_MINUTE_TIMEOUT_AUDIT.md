@@ -61,7 +61,9 @@ docs/superpowers/plans/2026-07-25-qwen-record-schema-prompt.md
   真实完整 Gate 成功前禁止转 Ready 或合并
 - 历史 CI：Head `a0a9ca0` 的 `core (3.11)`、`core (3.12)`、
   `paddle-inference`、`install` 全部 `SUCCESS`
-- 本轮 CI：Draft PR #6 验证中；任一 CI 成功都不能替代失败的真实正式任务 Gate
+- 本轮 CI：Draft PR #6 Head `5397e45` 的 `core (3.11)`、`core (3.12)`、
+  `paddle-inference`、`install` 全部 `SUCCESS`；后续仅审计状态提交以 PR 实时页面为准。
+  任一 CI 成功都不能替代失败的真实正式任务 Gate
 - Tag：不创建
 - Release：不创建
 - 初始审计日期：2026-07-24
