@@ -251,6 +251,22 @@ def _fill_reviewable_metadata(result: dict[str, Any]) -> None:
             return list(bbox)
         return None  # pixel coordinates or invalid → null
 
+    def _normalize_warnings(warnings: Any) -> list[str]:
+        """Convert warnings to list of strings. Model may return objects."""
+        if not isinstance(warnings, list):
+            return []
+        result = []
+        for w in warnings:
+            if isinstance(w, str):
+                result.append(w)
+            elif isinstance(w, dict):
+                # Extract message from warning object
+                msg = w.get("message", str(w))
+                result.append(str(msg))
+            else:
+                result.append(str(w))
+        return result
+
     def fill(field: Any) -> None:
         if not isinstance(field, dict):
             return
@@ -287,11 +303,18 @@ def _fill_reviewable_metadata(result: dict[str, Any]) -> None:
         fill(val)
         return val
 
+    # Normalize top-level warnings
+    if isinstance(result.get("warnings"), list):
+        result["warnings"] = _normalize_warnings(result["warnings"])
+
     for page in result.get("pages", []):
         # Fix source_image_index (model may return 0-based)
         idx = page.get("source_image_index", 1)
         if isinstance(idx, int) and idx < 1:
             page["source_image_index"] = idx + 1
+        # Normalize page-level warnings
+        if isinstance(page.get("warnings"), list):
+            page["warnings"] = _normalize_warnings(page["warnings"])
         # Company
         company = page.get("company")
         if isinstance(company, dict):
@@ -306,6 +329,7 @@ def _fill_reviewable_metadata(result: dict[str, Any]) -> None:
             section.setdefault("section_bbox", None)
             section.setdefault("section_id", "")
             section.setdefault("warnings", [])
+            section["warnings"] = _normalize_warnings(section["warnings"])
             for formula in section.get("formulas", []):
                 # Ensure formula required fields
                 if "formula_no" not in formula:
@@ -322,11 +346,18 @@ def _fill_reviewable_metadata(result: dict[str, Any]) -> None:
                         formula["notes"] = notes_list[0]
                     else:
                         formula["notes"] = {"value": "", "confidence": 0.0, "evidence_token_ids": [], "bbox": None}
+                # notes might use 'content' instead of 'value'
+                if isinstance(formula.get("notes"), dict):
+                    if "content" in formula["notes"] and "value" not in formula["notes"]:
+                        formula["notes"]["value"] = formula["notes"].pop("content")
+                    # Remove 'content' if it still exists (not allowed by schema)
+                    formula["notes"].pop("content", None)
                 fill(formula.get("notes"))
                 formula.setdefault("formula_id", "")
                 formula.setdefault("formula_sequence", 0)
                 formula["record_bbox"] = _sanitize_bbox(formula.get("record_bbox"))
                 formula.setdefault("warnings", [])
+                formula["warnings"] = _normalize_warnings(formula["warnings"])
                 formula.setdefault("confidence", 0.0)
                 for material in formula.get("materials", []):
                     ensure_field(material, "name")
@@ -334,6 +365,7 @@ def _fill_reviewable_metadata(result: dict[str, Any]) -> None:
                     ensure_field(material, "unit")
                     # material_id is already assigned by _assign_stable_ids
                     material.setdefault("warnings", [])
+                    material["warnings"] = _normalize_warnings(material["warnings"])
                     # Remove fields not allowed by schema (additionalProperties: false)
                     material.pop("review_status", None)
                     material.pop("confidence", None)
@@ -350,6 +382,7 @@ def _fill_reviewable_metadata(result: dict[str, Any]) -> None:
                     ensure_field(parameter, "unit")
                     # parameter_id is already assigned by _assign_stable_ids
                     parameter.setdefault("warnings", [])
+                    parameter["warnings"] = _normalize_warnings(parameter["warnings"])
                     # Remove fields not allowed by schema (additionalProperties: false)
                     parameter.pop("review_status", None)
                     parameter.pop("confidence", None)
