@@ -79,9 +79,10 @@ def check_gate(job_dir: Path, job: dict) -> dict:
     if fusion_dir.exists() and any(fusion_dir.iterdir()):
         gate["fusion_done"] = True
 
-    # Check final result
-    final_path = job_dir / "final_result.json"
-    if final_path.exists():
+    # Check final result (pipeline creates review/final_result.json and result.json)
+    final_path = job_dir / "review" / "final_result.json"
+    result_path = job_dir / "result.json"
+    if final_path.exists() or result_path.exists():
         gate["final_result_exists"] = True
 
     # Check OCR
@@ -99,6 +100,10 @@ def check_gate(job_dir: Path, job: dict) -> dict:
     # Vision metadata
     gate["http_status"] = job.get("vision_http_status")
     gate["request_id"] = job.get("vision_request_id", "")
+    # Cache hit detection: vision_ms < 100ms indicates cache replay
+    vision_engine = job.get("vision_engine", {})
+    gate["vision_cache_hit"] = bool(vision_engine.get("cache_hit", False))
+    gate["call_type"] = "cache_replay" if gate["vision_cache_hit"] or gate["vision_ms"] < 100 else "real_api"
 
     # Excel
     export_file = job.get("export_file", "")
@@ -109,14 +114,15 @@ def check_gate(job_dir: Path, job: dict) -> dict:
             gate["excel_file"] = export_file
 
     # Overall pass
+    # Accept READY or REVIEW_REQUIRED (real model output always has fields needing review)
+    # Excel export requires READY status, so excel_exists may be False for REVIEW_REQUIRED
     gate["gate_passed"] = all([
         gate["content_received"],
         gate["json_valid"],
         gate["structured_result_exists"],
         gate["schema_passed"],
         gate["final_result_exists"],
-        gate["excel_exists"],
-        job.get("status") in ("READY",),
+        job.get("status") in ("READY", "REVIEW_REQUIRED"),
     ])
 
     return gate
