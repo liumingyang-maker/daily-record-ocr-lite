@@ -7,8 +7,15 @@ Tests the behavior of install-windows.ps1 when doctor.py returns different exit 
 - Exit 3 / Unknown: Installer should fail
 """
 
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
+
+# Skip all tests in this module if PowerShell is not available
+powershell_available = shutil.which("powershell") is not None or shutil.which("pwsh") is not None
+pytestmark = pytest.mark.skipif(not powershell_available, reason="PowerShell not available on this platform")
 
 # Mock doctor script that returns configurable exit codes
 MOCK_DOCTOR_SCRIPT = '''
