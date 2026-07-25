@@ -13,9 +13,18 @@ from pathlib import Path
 
 import pytest
 
-# Skip all tests in this module if PowerShell is not available
-powershell_available = shutil.which("powershell") is not None or shutil.which("pwsh") is not None
-pytestmark = pytest.mark.skipif(not powershell_available, reason="PowerShell not available on this platform")
+# Check if PowerShell is available
+POWERSHELL_AVAILABLE = shutil.which("powershell") is not None or shutil.which("pwsh") is not None
+
+
+def get_powershell_cmd():
+    """Get the PowerShell command for the current platform."""
+    if shutil.which("powershell"):
+        return "powershell"
+    elif shutil.which("pwsh"):
+        return "pwsh"
+    return None
+
 
 # Mock doctor script that returns configurable exit codes
 MOCK_DOCTOR_SCRIPT = '''
@@ -37,11 +46,16 @@ sys.exit(exit_code)
 '''
 
 
+@pytest.mark.skipif(not POWERSHELL_AVAILABLE, reason="PowerShell not available on this platform")
 class TestInstallerExitCodeContract:
     """Test installer behavior with different doctor exit codes."""
 
     def _run_installer_with_mock_doctor(self, doctor_exit_code: int, tmp_path: Path) -> subprocess.CompletedProcess:
         """Run installer with a mock doctor that returns the specified exit code."""
+        ps_cmd = get_powershell_cmd()
+        if not ps_cmd:
+            pytest.skip("PowerShell not available")
+
         # Create mock doctor script
         mock_doctor = tmp_path / "mock_doctor.py"
         mock_doctor.write_text(MOCK_DOCTOR_SCRIPT)
@@ -66,7 +80,7 @@ exit 0
 
         # Run the test script
         result = subprocess.run(
-            ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(installer_test)],
+            [ps_cmd, "-ExecutionPolicy", "Bypass", "-File", str(installer_test)],
             capture_output=True,
             text=True,
             cwd=str(tmp_path)
@@ -98,11 +112,16 @@ exit 0
         assert result.returncode != 0, f"Expected non-zero exit, got {result.returncode}"
 
 
+@pytest.mark.skipif(not POWERSHELL_AVAILABLE, reason="PowerShell not available on this platform")
 class TestInstallerExitCodeContractNewBehavior:
     """Test installer behavior with NEW fixed logic."""
 
     def _run_installer_with_new_logic(self, doctor_exit_code: int, tmp_path: Path) -> subprocess.CompletedProcess:
         """Run installer with new fixed logic."""
+        ps_cmd = get_powershell_cmd()
+        if not ps_cmd:
+            pytest.skip("PowerShell not available")
+
         # Create mock doctor script
         mock_doctor = tmp_path / "mock_doctor.py"
         mock_doctor.write_text(MOCK_DOCTOR_SCRIPT)
@@ -138,7 +157,7 @@ exit 0
 
         # Run the test script
         result = subprocess.run(
-            ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(installer_test)],
+            [ps_cmd, "-ExecutionPolicy", "Bypass", "-File", str(installer_test)],
             capture_output=True,
             text=True,
             cwd=str(tmp_path)
