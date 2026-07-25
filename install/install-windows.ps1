@@ -77,10 +77,21 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "创建默认设置失败。" }
     & $Python scripts\doctor.py --json --gate
     $DoctorExit = $LASTEXITCODE
-    if ($DoctorExit -ne 0) {
-        throw "doctor 报告 BROKEN；安装失败。"
+    switch ($DoctorExit) {
+        0 {
+            Write-Host "安装和配置检查完成，当前状态 READY。"
+        }
+        1 {
+            Write-Host "安装公共步骤完成，当前状态 SETUP_REQUIRED。"
+            Write-Host "请运行 .\start-windows.bat 并访问 /setup 配置视觉模型。"
+        }
+        2 {
+            throw "doctor 报告 BROKEN；安装失败。"
+        }
+        default {
+            throw "doctor 返回未知退出码 $DoctorExit；安装状态无法确认。"
+        }
     }
-    Write-Host "安装公共步骤完成。下一步运行 .\start-windows.bat 并在 /setup 配置视觉模型。"
 } finally {
     Set-Location $OriginalLocation
     subst.exe $ShortDrive /D
