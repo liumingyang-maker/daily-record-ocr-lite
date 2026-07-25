@@ -113,10 +113,8 @@ def check_gate(job_dir: Path, job: dict) -> dict:
             gate["excel_exists"] = True
             gate["excel_file"] = export_file
 
-    # Overall pass
-    # Accept READY or REVIEW_REQUIRED (real model output always has fields needing review)
-    # Excel export requires READY status, so excel_exists may be False for REVIEW_REQUIRED
-    gate["gate_passed"] = all([
+    # Recognition Gate: pipeline completed successfully with valid structured result
+    gate["recognition_gate_passed"] = all([
         gate["content_received"],
         gate["json_valid"],
         gate["structured_result_exists"],
@@ -124,6 +122,16 @@ def check_gate(job_dir: Path, job: dict) -> dict:
         gate["final_result_exists"],
         job.get("status") in ("READY", "REVIEW_REQUIRED"),
     ])
+
+    # Export Gate: recognition passed + READY status + Excel exported
+    gate["export_gate_passed"] = all([
+        gate["recognition_gate_passed"],
+        job.get("status") == "READY",
+        gate["excel_exists"],
+    ])
+
+    # Legacy gate_passed for backward compatibility
+    gate["gate_passed"] = gate["recognition_gate_passed"]
 
     return gate
 
@@ -256,13 +264,18 @@ async def main():
     print(f"\n{'='*60}")
     print("PIPELINE GATE SUMMARY")
     print(f"{'='*60}")
-    passed = sum(1 for r in results if r["gate_passed"])
+    recog_passed = sum(1 for r in results if r["recognition_gate_passed"])
+    export_passed = sum(1 for r in results if r["export_gate_passed"])
     print(f"Total runs: {len(results)}")
-    print(f"Passed: {passed}/{len(results)}")
+    print(f"Recognition Gate: {recog_passed}/{len(results)}")
+    print(f"Export Gate: {export_passed}/{len(results)}")
     for r in results:
+        recog = "PASS" if r["recognition_gate_passed"] else "FAIL"
+        export = "PASS" if r["export_gate_passed"] else "FAIL"
         print(f"  Run #{r['run_number']}: job={r['job_id']} status={r['status']} "
               f"vision={r['vision_ms']}ms ocr={r['ocr_ms']}ms "
-              f"content={r['content_chars']}chars gate={'PASS' if r['gate_passed'] else 'FAIL'}")
+              f"call_type={r['call_type']} "
+              f"recognition={recog} export={export}")
 
     # Save results
     out_dir = Path(__file__).resolve().parent.parent / "data" / "diagnostics"
@@ -272,10 +285,8 @@ async def main():
     out_file.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\nResults saved: {out_file}")
 
-    if passed == len(results):
-        print("\nALL GATES PASSED - Pipeline is production ready.")
-    else:
-        print(f"\nGATE FAILED - {len(results)-passed} runs did not pass.")
+    print(f"\nRecognition Gate: {'PASS' if recog_passed == len(results) else 'FAIL'}")
+    print(f"Export Gate: {'PASS' if export_passed == len(results) else 'FAIL'}")
 
 
 if __name__ == "__main__":

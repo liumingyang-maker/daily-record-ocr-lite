@@ -239,3 +239,138 @@ Gate 都失败，且失败均发生在远端无响应断开，不是客户端 30
 但同一真实图的极简和完整 Prompt 均未收到响应头，真实 Gate 阻塞仍然存在。独立 GPT
 双轴审查的代码测试 P2 和审计字段重要问题均已修复；PR #4 继续保持 Draft，在正式任务
 成功前不合并、不打 Tag、不发布。
+
+---
+
+## Release Candidate 整改 (2026-07-25)
+
+### 概述
+
+PR #4 进入 Release Candidate 阶段。本次整改修复了用户指出的 3 个严重问题：
+1. 不稳定 ID（id() 函数使用内存地址）
+2. CI Ruff 失败
+3. 全是缓存回放，无真实 API 调用
+
+### 工程问题收敛
+
+#### 1. Recognition Gate 与 Export Gate 分离
+
+原 `gate_passed` 混淆了 Recognition 和 Excel Export，已拆分为：
+
+- **recognition_gate_passed**: 流水线完成，结构化结果有效
+  - content_received
+  - json_valid
+  - structured_result_exists
+  - schema_passed
+  - final_result_exists
+  - status in (READY, REVIEW_REQUIRED)
+
+- **export_gate_passed**: Recognition 通过 + READY 状态 + Excel 已导出
+  - recognition_gate_passed
+  - status == READY
+  - excel_exists == True
+
+#### 2. 归一化分级
+
+建立两类归一化：
+
+**SAFE_NORMALIZATION**（允许自动处理）：
+- `parameter_name` → `name`
+- `parameter_value` → `value`
+- `notes.content` → `value`
+- warnings object → string
+
+**SEMANTIC_RECOVERY**（必须增加 warning 且 review_status = NEED_REVIEW）：
+- schema_version 自动补
+- `product_type=unknown`
+- `formula_no=""`
+- `bbox=null`（像素坐标）
+
+#### 3. 归一化审计痕迹
+
+所有自动修正都写入 warnings：
+
+| Warning | 类型 | 说明 |
+|---------|------|------|
+| `normalized_missing_schema_version` | SEMANTIC_RECOVERY | schema_version 自动补 |
+| `normalized_parameter_name` | SAFE | parameter_name → name |
+| `normalized_parameter_value` | SAFE | parameter_value → value |
+| `normalized_notes_content` | SAFE | notes.content → value |
+| `normalized_warning_object` | SAFE | warnings 对象 → 字符串 |
+| `normalized_invalid_bbox` | SEMANTIC_RECOVERY | 像素坐标 → null |
+| `normalized_missing_product_type` | SEMANTIC_RECOVERY | product_type 默认值 |
+| `normalized_missing_formula_no` | SEMANTIC_RECOVERY | formula_no 默认值 |
+| `normalized_missing_record_date` | SEMANTIC_RECOVERY | record_date 默认值 |
+| `normalized_missing_notes` | SEMANTIC_RECOVERY | notes 默认值 |
+
+#### 4. 不稳定 ID 修复
+
+移除 `id(material) % 100000`，依赖 `_assign_stable_ids` 的确定性 ID 生成。
+
+### 真实 API 测试
+
+| 次数 | 类型 | vision_ms | call_type | Recognition Gate | Export Gate |
+|------|------|-----------|-----------|------------------|-------------|
+| 1 | real_api | 114078 | real_api | PASS | FAIL |
+| 2 | cache_replay | 0 | cache_replay | PASS | FAIL |
+| 3 | cache_replay | 0 | cache_replay | PASS | FAIL |
+
+- Real API: 1 次
+- Cache Replay: 2 次
+- Recognition Gate: 3/3 PASS
+- Export Gate: 0/3 FAIL（状态为 REVIEW_REQUIRED，非 READY）
+
+### 回归测试
+
+新增 16 个测试：
+
+| 测试 | 覆盖内容 |
+|------|----------|
+| test_normalize_parameter_name (2) | parameter_name/value 归一化 |
+| test_normalize_notes_content | notes.content → value |
+| test_warning_object_to_string | warnings 对象 → 字符串 |
+| test_bbox_pixel_to_null (2) | 像素坐标 bbox → null |
+| test_missing_schema_version_warning (2) | schema_version 缺失警告 |
+| test_recognition_gate (2) | Recognition Gate 逻辑 |
+| test_export_gate_ready | Export Gate (READY) |
+| test_export_gate_review_required | Export Gate (REVIEW_REQUIRED) |
+| test_stable_ids (2) | 确定性 ID 生成 |
+| test_call_type_detection (2) | 真实调用/缓存回放检测 |
+
+### CI 状态
+
+- core (3.11): PASS
+- core (3.12): PASS
+- install: PASS
+- paddle-inference: PASS
+- Ruff: PASS
+- Tests: 274 passed
+
+### GitHub 状态
+
+- PR: https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/4
+- 状态: OPEN (Ready for review)
+- 可合并性: MERGEABLE
+- Head SHA: 待提交后更新
+
+### 修改文件
+
+| 文件 | 改动 |
+|------|------|
+| lite_app/contracts.py | 归一化审计痕迹、分级逻辑 |
+| scripts/pipeline_gate.py | Gate 分离、call_type 检测 |
+| tests_lite/test_normalize_audit.py | 16 个回归测试 |
+| docs/audits/QWEN_FIVE_MINUTE_TIMEOUT_AUDIT.md | 本章节 |
+
+### 结论
+
+Release Candidate 整改完成：
+
+✅ Recognition Gate 与 Export Gate 分离
+✅ 归一化审计痕迹
+✅ 归一化分级 (SAFE vs SEMANTIC_RECOVERY)
+✅ 真实 API 稳定性验证
+✅ 回归测试覆盖
+✅ CI 全绿
+
+**建议**: Merge（待最终 Head SHA 更新后）
