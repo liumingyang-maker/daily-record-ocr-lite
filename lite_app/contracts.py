@@ -340,15 +340,23 @@ def _fill_reviewable_metadata(result: dict[str, Any]) -> None:
                     material.pop("evidence_token_ids", None)
                     material.pop("bbox", None)
                 for parameter in formula.get("process_parameters", []):
+                    # Normalize model field names → schema field names
+                    if "parameter_name" in parameter and "name" not in parameter:
+                        parameter["name"] = parameter.pop("parameter_name")
+                    if "parameter_value" in parameter and "value" not in parameter:
+                        parameter["value"] = parameter.pop("parameter_value")
                     ensure_field(parameter, "name")
                     ensure_field(parameter, "value")
                     ensure_field(parameter, "unit")
                     # parameter_id is already assigned by _assign_stable_ids
                     parameter.setdefault("warnings", [])
+                    # Remove fields not allowed by schema (additionalProperties: false)
                     parameter.pop("review_status", None)
                     parameter.pop("confidence", None)
                     parameter.pop("evidence_token_ids", None)
                     parameter.pop("bbox", None)
+                    parameter.pop("parameter_name", None)
+                    parameter.pop("parameter_value", None)
 
 
 def _legacy_field(value: Any) -> dict[str, Any]:
