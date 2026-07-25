@@ -38,6 +38,10 @@ class OpenAICompatibleVisionProvider(VisionProvider):
             )
             and self.model.lower() == "qwen3.7-plus"
         )
+        self.trust_env = config.get(
+            "trust_env",
+            not self.is_alibaba_qwen37,
+        )
         self.timeout = int(config.get("timeout_seconds", 180))
         if self.is_alibaba_qwen37:
             self.timeout = max(self.timeout, 300)
@@ -107,7 +111,10 @@ class OpenAICompatibleVisionProvider(VisionProvider):
         start = time.time()
 
         try:
-            client_kwargs: dict[str, Any] = {"timeout": self.timeout}
+            client_kwargs: dict[str, Any] = {
+                "timeout": self.timeout,
+                "trust_env": self.trust_env,
+            }
             if self._transport is not None:
                 client_kwargs["transport"] = self._transport
             async with httpx.AsyncClient(**client_kwargs) as client:
