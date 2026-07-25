@@ -351,7 +351,7 @@ PR #4 进入 Release Candidate 阶段。本次整改修复了用户指出的 3 �
 - PR: https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/4
 - 状态: OPEN (Ready for review)
 - 可合并性: MERGEABLE
-- Head SHA: 待提交后更新
+- Head SHA: 7b15abef4e12dda043543630730cdb6c1c7783cc
 
 ### 修改文件
 
