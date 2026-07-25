@@ -3,10 +3,175 @@
 [![CI](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/ci.yml)
 [![Real OCR](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/real-ocr.yml/badge.svg?branch=master)](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/real-ocr.yml)
 
-当前稳定版本：`v1.0.1`
+将中文手写生产记录、配方记录或日常记录图片，通过 PP-OCRv6、Qwen3.7 Plus 视觉模型、
+OCR/Layout/Vision 融合和人工复核，转换为结构化记录，并导出为 Excel。
 
-把中文手写生产/配方记录经 PP-OCRv6 与视觉模型双引擎识别、人工复核，并导出为
-公司—产品—配方结构的 Excel。
+**主要流程：**
+
+上传图片 → OCR → Vision → 结构化结果 → 人工确认 → READY → Excel 导出
+
+> **注意：** 人工复核是正式导出的安全步骤，不是可选功能。
+
+## 当前版本状态
+
+- **当前稳定 Release：** `v1.0.1`
+- **master 当前包含：**
+  - Qwen Vision 300 秒超时修复
+  - Pipeline Gate
+  - Windows 安装器 SETUP_REQUIRED 修复
+  - 相关改动将在下一稳定版本发布
+
+**普通用户使用 Release；开发或抢先体验用户使用 master。**
+
+## Windows 快速开始
+
+### 1. 安装前置条件
+
+- 安装 [Git](https://git-scm.com/)
+- 安装 Python 3.11 或 3.12
+
+### 2. 克隆并安装
+
+```powershell
+git clone https://github.com/liumingyang-maker/daily-record-ocr-lite.git
+cd daily-record-ocr-lite
+.\install\install-windows.ps1 -OcrMode Cpu
+```
+
+### 3. 首次安装的正常结果
+
+安装完成后，你会看到：
+
+```
+Doctor state: SETUP_REQUIRED
+Doctor exit code: 1
+Installer exit code: 0
+```
+
+**这不是安装失败！** 只是尚未配置视觉模型。
+
+### 4. 启动程序
+
+```powershell
+.\start-windows.bat
+```
+
+### 5. 访问配置页面
+
+浏览器打开：http://127.0.0.1:8765/setup
+
+## Vision 配置
+
+在 `/setup` 页面或使用命令行配置：
+
+| 配置项 | 值 |
+|--------|-----|
+| Provider | `openai_compatible` |
+| Base URL | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| Endpoint | `/chat/completions` |
+| Model | `qwen3.7-plus` |
+| API Key | 你的 `sk-ws` 按量 API Key |
+
+**重要说明：**
+
+- 不使用 Token Plan 作为自定义应用后端
+- 不把 API Key 提交到 Git
+- Key 保存在本机配置或 `data/secrets.env`
+- 请求超时至少 300 秒
+- 单次真实识别可能耗时约 90 至 120 秒
+- 页面等待期间不要重复提交同一个任务
+
+## OCR 配置
+
+默认真实 OCR：
+
+| 配置项 | 值 |
+|--------|-----|
+| Provider | `paddleocr_v6` |
+| Tier | `medium` |
+| Device | `cpu` |
+
+Windows CPU 普通用户使用默认安装命令即可。
+
+**说明：** 第一次加载 PP-OCRv6 可能较慢，后续会使用本地模型和缓存。
+
+## 首次使用流程
+
+### 第一次识别
+
+1. 打开应用（`.\start-windows.bat`）
+2. 浏览器访问 http://127.0.0.1:8765
+3. 上传一张手写记录图片
+4. 等待 OCR 和 Vision 完成（约 90-120 秒）
+5. 查看状态：
+   - 若状态为 `REVIEW_REQUIRED`，进入人工复核
+   - `REVIEW_REQUIRED` 是正常安全状态，不是失败
+6. 确认所有 `NEED_REVIEW`、`CONFLICT` 和空字段
+7. 状态变为 `READY`
+8. 导出 Excel
+
+**只有 `READY` 状态才能正式导出 Excel。**
+
+## Excel 导出
+
+导出文件位于：
+
+```
+data/jobs/<job-id>/export/recognized-<job-id>.xlsx
+```
+
+可通过页面下载。Excel 按公司、产品、配方、材料、工艺参数等结构组织。
+
+## 更新程序
+
+### 稳定用户（推荐）
+
+默认更新到最新稳定 Tag：
+
+```powershell
+.\install\update-windows.ps1
+```
+
+### 抢先体验用户
+
+明确指定更新到 master：
+
+```powershell
+.\install\update-windows.ps1 -TargetRef master
+```
+
+### 更新前备份
+
+更新前务必备份以下目录：
+
+- `data/`（包含 settings、secrets、jobs、Excel、缓存）
+
+### 更新完成后检查
+
+```powershell
+.\.venv\Scripts\python.exe scripts\doctor.py --full --json
+```
+
+退出码说明：
+- `0` = READY
+- `1` = SETUP_REQUIRED
+- `2` = BROKEN
+
+## 让 AI 安装
+
+把仓库链接和下面这段话发给你的安装 AI：
+
+> 请克隆此仓库，读取根目录 AGENTS.md 和 docs/AI_AGENT_INSTALL.md，根据我的操作
+> 系统完成安装、PP-OCRv6 真实验证、视觉模型配置和 doctor 验收。禁止使用 Mock
+> 结果冒充真实识别。
+
+AI 必须输出 `INSTALL_REPORT`，包括真实 OCR 通过数与 doctor 状态。
+
+## 真实模式与 Demo
+
+全新安装默认是 `SETUP_REQUIRED`：没有配置视觉模型时不接受识别任务。Mock 只能由
+用户在 `/setup` 显式开启；所有页面显示警示，导出名以 `DEMO-` 开头，结果与上传
+图片无关。
 
 ## 快速更新到最新稳定版
 
@@ -32,57 +197,63 @@ Windows Git 安装目录中运行：
 完整步骤见 [`docs/AI_AGENT_UPGRADE.md`](docs/AI_AGENT_UPGRADE.md)。`master` 仅供用户
 明确要求抢先体验时使用，不是普通更新的默认目标。
 
-## 让 AI 安装
+## 常见问题
 
-把仓库链接和下面这段话发给你的安装 AI：
+### 安装显示 SETUP_REQUIRED
 
-> 请克隆此仓库，读取根目录 AGENTS.md 和 docs/AI_AGENT_INSTALL.md，根据我的操作
-> 系统完成安装、PP-OCRv6 真实验证、视觉模型配置和 doctor 验收。禁止使用 Mock
-> 结果冒充真实识别。
+**正常！** 这只是表示尚未配置视觉模型。访问 http://127.0.0.1:8765/setup 配置即可。
 
-AI 必须输出 `INSTALL_REPORT`，包括真实 OCR 通过数与 doctor 状态。
+### Vision 测试成功但识别很慢
 
-## 真实模式与 Demo
+Qwen 完整任务约 90 至 120 秒，300 秒超时是预留安全时间。请耐心等待，不要重复提交。
 
-全新安装默认是 `SETUP_REQUIRED`：没有配置视觉模型时不接受识别任务。Mock 只能由
-用户在 `/setup` 显式开启；所有页面显示警示，导出名以 `DEMO-` 开头，结果与上传
-图片无关。
+### 状态是 REVIEW_REQUIRED
 
-## 最快安装
+这是正常的安全状态，不是系统错误。进入人工确认页面，确认所有字段后状态会变为 READY。
 
-Python 支持 3.11/3.12。
+### 无法导出 Excel
 
-Windows CPU：
+确认：
+1. 状态是否为 `READY`
+2. 是否还有未解决字段（`NEED_REVIEW`、`CONFLICT`）
 
-```powershell
-.\install\install-windows.ps1 -OcrMode Cpu
-.\start-windows.bat
-```
+### Qwen 连接失败
+
+检查以下配置：
+- Base URL：`https://dashscope.aliyuncs.com/compatible-mode/v1`
+- Model：`qwen3.7-plus`
+- API Key：`sk-ws` 按量 API Key
+- 网络连接和系统代理
+- **不要使用 Token Plan 端点**
+
+### OCR 首次启动慢
+
+首次加载 PP-OCRv6 模型属于正常情况，后续会使用本地缓存。
+
+## Linux / macOS
 
 Linux CPU：
 
-```text
+```bash
 ./install/install-linux.sh
 ./start-linux.sh
 ```
 
-GPU 与 macOS 安装前必须查询 PaddlePaddle/PaddleOCR 当前官方兼容矩阵。详细入口见
-[`install/README.md`](install/README.md) 和 `docs/INSTALL_*.md`。
+macOS CPU：
 
-## 首次配置
-
-启动后访问 <http://127.0.0.1:8765/setup>，或使用：
-
-```text
-python scripts/configure.py vision --provider openai_compatible --base-url URL --endpoint /chat/completions --model MODEL
-python scripts/configure.py set-key
-python scripts/configure.py ocr --provider paddleocr_v6 --tier medium --device cpu
-python scripts/configure.py test-ocr --image PATH
-python scripts/configure.py test-vision
-python scripts/doctor.py --full --json
+```bash
+./install/install-macos.sh
+./start-macos.command
 ```
 
-API Key 只写入环境或 `data/secrets.env`，不会由设置 API 回显。
+安装器接受：
+- Doctor exit 0：READY
+- Doctor exit 1：SETUP_REQUIRED
+
+启动脚本只在配置完成后正常启动。
+
+GPU 与 macOS 安装前必须查询 PaddlePaddle/PaddleOCR 当前官方兼容矩阵。详细入口见
+[`install/README.md`](install/README.md) 和 `docs/INSTALL_*.md`。
 
 ## 识别与数据流
 
@@ -143,6 +314,10 @@ data/jobs/<job-id>/
 - 支持环境：[`docs/SUPPORTED_ENVIRONMENTS.md`](docs/SUPPORTED_ENVIRONMENTS.md)
 - AI 升级：[`docs/AI_AGENT_UPGRADE.md`](docs/AI_AGENT_UPGRADE.md)
 - v1.0.1 说明：[`docs/RELEASE_NOTES_V1.0.1.md`](docs/RELEASE_NOTES_V1.0.1.md)
+
+### 开发与审计
+
+- Qwen 超时审计：[`docs/audits/QWEN_FIVE_MINUTE_TIMEOUT_AUDIT.md`](docs/audits/QWEN_FIVE_MINUTE_TIMEOUT_AUDIT.md)
 
 ## 已知限制
 
