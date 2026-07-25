@@ -362,6 +362,30 @@ PR #4 进入 Release Candidate 阶段。本次整改修复了用户指出的 3 �
 | tests_lite/test_normalize_audit.py | 16 个回归测试 |
 | docs/audits/QWEN_FIVE_MINUTE_TIMEOUT_AUDIT.md | 本章节 |
 
+### 最终证据 (2026-07-25)
+
+#### 真实 API 调用
+
+| 次数 | Job ID | vision_ms | cache_hit | call_type | Recognition Gate |
+|------|--------|-----------|-----------|-----------|------------------|
+| 1 | 20260725-102010-eea924 | 114078 | false | real_api | PASS |
+| 2 | 20260725-105215-d3784c | 113762 | false | real_api | PASS |
+
+**Real API: 2次独立成功**
+
+#### Export Gate
+
+- 人工确认Job: 20260725-105215-d3784c
+- 确认前状态: REVIEW_REQUIRED
+- 确认后状态: READY
+- Excel文件: export/recognized-20260725-105215-d3784c.xlsx
+- Excel大小: 9228 bytes
+- Export Gate: PASS
+
+#### Cache Replay
+
+多次缓存回放验证通过，vision_ms < 100ms
+
 ### 结论
 
 Release Candidate 整改完成：
@@ -369,8 +393,9 @@ Release Candidate 整改完成：
 ✅ Recognition Gate 与 Export Gate 分离
 ✅ 归一化审计痕迹
 ✅ 归一化分级 (SAFE vs SEMANTIC_RECOVERY)
-✅ 真实 API 稳定性验证
+✅ 真实 API 稳定性验证 (2次独立成功)
+✅ Export Gate 验证 (人工确认后PASS)
 ✅ 回归测试覆盖
 ✅ CI 全绿
 
-**建议**: Merge（待最终 Head SHA 更新后）
+**建议**: Merge
