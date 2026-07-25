@@ -61,7 +61,7 @@ def check_gate(job_dir: Path, job: dict) -> dict:
         # Check JSON validity
         try:
             from lite_app.pipeline_v2 import extract_json
-            parsed = extract_json(content)
+            extract_json(content)
             gate["json_valid"] = True
         except Exception:
             pass
@@ -114,8 +114,9 @@ def check_gate(job_dir: Path, job: dict) -> dict:
         gate["json_valid"],
         gate["structured_result_exists"],
         gate["schema_passed"],
-        gate["final_result_exists"] or gate["fusion_done"],
-        job.get("status") in ("READY", "REVIEW_REQUIRED", "NEED_REVIEW"),
+        gate["final_result_exists"],
+        gate["excel_exists"],
+        job.get("status") in ("READY",),
     ])
 
     return gate
@@ -123,7 +124,7 @@ def check_gate(job_dir: Path, job: dict) -> dict:
 
 async def run_single_pipeline(image_path: Path, run_number: int) -> dict:
     """Run one complete pipeline execution."""
-    from lite_app.config import clear_config_cache, get_config
+    from lite_app.config import clear_config_cache
     from lite_app.storage import JobStorage
 
     clear_config_cache()
@@ -156,9 +157,11 @@ async def run_single_pipeline(image_path: Path, run_number: int) -> dict:
     storage.save_job(job)
 
     # Run pipeline with retry (1 retry on network errors only)
-    from lite_app.pipeline_v2 import analyze_job_v2, PipelineError
-    import httpx
     import ssl
+
+    import httpx
+
+    from lite_app.pipeline_v2 import PipelineError, analyze_job_v2
 
     max_attempts = 2
     for attempt in range(1, max_attempts + 1):
@@ -205,7 +208,7 @@ async def run_single_pipeline(image_path: Path, run_number: int) -> dict:
     gate["run_number"] = run_number
 
     # Print gate status
-    print(f"\n  --- Gate Check ---")
+    print("\n  --- Gate Check ---")
     for k, v in gate.items():
         if k not in ("job_id", "run_number", "image_sha256"):
             status = "PASS" if v is True else ("FAIL" if v is False else str(v))
@@ -245,7 +248,7 @@ async def main():
 
     # Summary
     print(f"\n{'='*60}")
-    print(f"PIPELINE GATE SUMMARY")
+    print("PIPELINE GATE SUMMARY")
     print(f"{'='*60}")
     passed = sum(1 for r in results if r["gate_passed"])
     print(f"Total runs: {len(results)}")

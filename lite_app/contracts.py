@@ -263,9 +263,15 @@ def _fill_reviewable_metadata(result: dict[str, Any]) -> None:
         # Fix invalid review_status
         rs = field.get("review_status", "")
         if rs not in _VALID_REVIEW:
-            field["review_status"] = "NEED_REVIEW"
-        if missing:
-            field["review_status"] = "NEED_REVIEW"
+            # If missing evidence fields, mark as NEED_REVIEW; otherwise AUTO_ACCEPT
+            if missing:
+                field["review_status"] = "NEED_REVIEW"
+            else:
+                field["review_status"] = "AUTO_ACCEPT"
+        else:
+            # Valid review_status exists; if missing evidence, override to NEED_REVIEW
+            if missing:
+                field["review_status"] = "NEED_REVIEW"
 
     def ensure_field(parent: dict, key: str) -> dict:
         """Ensure a field dict exists with default structure."""
@@ -326,9 +332,7 @@ def _fill_reviewable_metadata(result: dict[str, Any]) -> None:
                     ensure_field(material, "name")
                     ensure_field(material, "amount")
                     ensure_field(material, "unit")
-                    # material_id must be non-empty
-                    if not material.get("material_id"):
-                        material["material_id"] = f"mat_{id(material) % 100000:05d}"
+                    # material_id is already assigned by _assign_stable_ids
                     material.setdefault("warnings", [])
                     # Remove fields not allowed by schema (additionalProperties: false)
                     material.pop("review_status", None)
@@ -339,8 +343,7 @@ def _fill_reviewable_metadata(result: dict[str, Any]) -> None:
                     ensure_field(parameter, "name")
                     ensure_field(parameter, "value")
                     ensure_field(parameter, "unit")
-                    if not parameter.get("parameter_id"):
-                        parameter["parameter_id"] = f"par_{id(parameter) % 100000:05d}"
+                    # parameter_id is already assigned by _assign_stable_ids
                     parameter.setdefault("warnings", [])
                     parameter.pop("review_status", None)
                     parameter.pop("confidence", None)
