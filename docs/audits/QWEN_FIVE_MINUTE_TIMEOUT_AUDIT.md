@@ -399,3 +399,123 @@ Release Candidate 整改完成：
 ✅ CI 全绿
 
 **建议**: Merge
+
+---
+
+## Merge and Clean Install Smoke Test (2026-07-25)
+
+### 1. PR Merge
+
+- PR 状态: MERGED
+- PR Head SHA: bb35c4580f9bebb0d7cc2dd768bc2c582f43f6d8
+- merge commit SHA: a0905a034ab15373c00cc22ccb5552cfc28ededa
+- merge 策略: merge commit
+- merged_at: 2026-07-25T03:33:33Z
+- merged_by: liumingyang-maker
+- master SHA: a0905a034ab15373c00cc22ccb5552cfc28ededa
+
+### 2. Pre-merge Checks
+
+| 检查名称 | status | conclusion | commit_sha |
+|----------|--------|------------|------------|
+| core (3.11) | completed | success | bb35c4580f9bebb0d7cc2dd768bc2c582f43f6d8 |
+| core (3.12) | completed | success | bb35c4580f9bebb0d7cc2dd768bc2c582f43f6d8 |
+| install | completed | success | bb35c4580f9bebb0d7cc2dd768bc2c582f43f6d8 |
+| paddle-inference | completed | success | bb35c4580f9bebb0d7cc2dd768bc2c582f43f6d8 |
+
+### 3. Master Verification
+
+- local master SHA: a0905a034ab15373c00cc22ccb5552cfc28ededa
+- origin/master SHA: a0905a034ab15373c00cc22ccb5552cfc28ededa
+- 三者一致: ✓
+- Ruff: All checks passed!
+- tests: 274 passed
+- diff check: 无输出，退出码0
+- Secret 扫描: 0 匹配
+
+### Master CI
+
+| 检查名称 | status | conclusion | headSha |
+|----------|--------|------------|---------|
+| CI | completed | success | a0905a034ab15373c00cc22ccb5552cfc28ededa |
+| Real OCR | completed | success | a0905a034ab15373c00cc22ccb5552cfc28ededa |
+| Windows install smoke | completed | success | a0905a034ab15373c00cc22ccb5552cfc28ededa |
+
+### 4. Clean Install
+
+- Windows 版本: Windows 25H2
+- 测试目录: C:\Temp\daily-record-ocr-lite-smoke-20260725-114002 (脱敏)
+- installer: install/install-windows.ps1
+- install exit code: 1 (SETUP_REQUIRED，Vision 未配置，正常)
+- doctor state: SETUP_REQUIRED
+- application start: 成功
+
+### 5. Vision Smoke
+
+- base_url 域名: dashscope.aliyuncs.com
+- key_prefix: sk-ws
+- model: qwen3.7-plus
+- HTTP: 200
+- latency: 1750ms
+- capabilities: vision_capability=true, json_response_capability=true
+- status: OK
+
+### 6. OCR Smoke
+
+- provider: paddleocr_v6
+- models: PP-OCRv6_medium
+- loaded: true
+- latency: 2053ms
+- status: OK
+- token_count: 3
+- average_confidence: 0.9979
+
+### 7. Real Pipeline
+
+- Job ID: 20260725-114737-e782e5
+- image SHA: 5F17A414DC0EE8399848C1D357471D542B806AA69A16735A939BF3953CD620BC
+- OCR ms: 21960
+- Vision ms: 114270
+- cache hit: false
+- call type: real_api
+- content chars: 26914
+- JSON: PASS
+- Schema: PASS
+- warnings: normalized_missing_schema_version, normalized_parameter_name, normalized_parameter_value, normalized_notes_content, normalized_warning_object, normalized_invalid_bbox, normalized_missing_product_type, normalized_missing_formula_no, normalized_missing_record_date
+- FinalResult: PASS
+- Recognition Gate: PASS
+
+### 8. Review and Export
+
+- before status: REVIEW_REQUIRED
+- confirmed fields: 80
+- after status: READY
+- READY Gate: PASS
+- Excel filename: export/recognized-20260725-114737-e782e5.xlsx
+- Excel size: 9229 bytes
+- download status: PASS
+- Export Gate: PASS
+
+### 9. Release Decision
+
+- Merge: DONE
+- Tag: NOT RECOMMENDED (用户未授权)
+- Release: NOT RECOMMENDED (用户未授权)
+- Suggested version: v1.0.2
+- Blocking issues: 无
+
+### 结论
+
+PR #4 已成功合并到 master，全新安装实例冒烟测试全部通过。
+
+✅ PR 已合并
+✅ Master CI 全绿
+✅ 全新安装成功
+✅ Vision Test 通过
+✅ OCR Test 通过
+✅ 真实 Pipeline 通过
+✅ 人工确认进入 READY
+✅ Export Gate 通过
+✅ Secret 扫描 0 匹配
+
+**建议**: 可以创建 v1.0.2 Tag 和 Release（需用户授权）
