@@ -2,11 +2,6 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
-import pytest
-
 from lite_app.contracts import normalize_legacy_result
 
 
@@ -190,9 +185,10 @@ class TestRecognitionGate:
 
     def test_recognition_gate_all_conditions_met(self):
         """Test recognition gate passes when all conditions are met."""
-        from scripts.pipeline_gate import check_gate
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+
+        from scripts.pipeline_gate import check_gate
 
         with tempfile.TemporaryDirectory() as tmpdir:
             job_dir = Path(tmpdir)
@@ -216,9 +212,10 @@ class TestRecognitionGate:
 
     def test_recognition_gate_fails_on_schema_error(self):
         """Test recognition gate fails when schema has errors."""
-        from scripts.pipeline_gate import check_gate
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+
+        from scripts.pipeline_gate import check_gate
 
         with tempfile.TemporaryDirectory() as tmpdir:
             job_dir = Path(tmpdir)
@@ -240,9 +237,10 @@ class TestExportGateReady:
     """test_export_gate_ready: export gate passes when READY with Excel."""
 
     def test_export_gate_passes_when_ready_with_excel(self):
-        from scripts.pipeline_gate import check_gate
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+
+        from scripts.pipeline_gate import check_gate
 
         with tempfile.TemporaryDirectory() as tmpdir:
             job_dir = Path(tmpdir)
@@ -272,9 +270,10 @@ class TestExportGateReviewRequired:
     """test_export_gate_review_required: export gate fails when REVIEW_REQUIRED."""
 
     def test_export_gate_fails_when_review_required(self):
-        from scripts.pipeline_gate import check_gate
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+
+        from scripts.pipeline_gate import check_gate
 
         with tempfile.TemporaryDirectory() as tmpdir:
             job_dir = Path(tmpdir)
@@ -339,9 +338,10 @@ class TestCallTypeDetection:
     """test_call_type_detection: call type detection logic."""
 
     def test_real_api_detection(self):
-        from scripts.pipeline_gate import check_gate
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+
+        from scripts.pipeline_gate import check_gate
 
         with tempfile.TemporaryDirectory() as tmpdir:
             job_dir = Path(tmpdir)
@@ -360,9 +360,10 @@ class TestCallTypeDetection:
             assert gate["call_type"] == "real_api"
 
     def test_cache_replay_detection(self):
-        from scripts.pipeline_gate import check_gate
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+
+        from scripts.pipeline_gate import check_gate
 
         with tempfile.TemporaryDirectory() as tmpdir:
             job_dir = Path(tmpdir)
