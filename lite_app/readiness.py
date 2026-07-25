@@ -128,9 +128,10 @@ def evaluate_ready_gate(
         reasons.append("演示模式不能 READY")
 
     ocr = job.get("ocr_engine")
-    if not isinstance(ocr, dict) or (
-        ocr.get("effective_provider") != "paddleocr_v6" or not bool(ocr.get("loaded"))
-    ):
+    _ocr_provider = str(
+        (ocr or {}).get("effective_provider", "") or (ocr or {}).get("configured_provider", "")
+    ).lower()
+    if not isinstance(ocr, dict) or "paddleocr" not in _ocr_provider or not bool(ocr.get("loaded")):
         reasons.append("真实 OCR Provider 未验证可用")
 
     vision = job.get("vision_engine")
