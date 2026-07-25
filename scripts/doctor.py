@@ -406,8 +406,6 @@ def main(argv: list[str] | None = None) -> int:
         _safe_print(f"daily-record-ocr-lite doctor: {report['state']}")
         for check in report["checks"]:
             _safe_print(f"[{check['status']}] {check['id']}: {check['message']}")
-    if args.gate:
-        return 2 if report["state"] == "BROKEN" else 0
     return int(report["exit_code"])
 
 
