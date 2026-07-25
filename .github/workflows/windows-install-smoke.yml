@@ -26,19 +26,14 @@ jobs:
         run: |
           .\.venv\Scripts\python.exe -c "import paddle; paddle.utils.run_check()"
           .\.venv\Scripts\python.exe -c "from fastapi.testclient import TestClient; from lite_app.main import app; response=TestClient(app).get('/health'); assert response.status_code == 200; assert response.json()['version'] == '1.0.1'"
+          # Run doctor and capture exit code without failing on non-zero
+          $ErrorActionPreference = "Continue"
           .\.venv\Scripts\python.exe scripts\doctor.py --json --gate
           $DoctorExit = $LASTEXITCODE
+          $ErrorActionPreference = "Stop"
           switch ($DoctorExit) {
-            0 {
-              Write-Host "Doctor READY"
-            }
-            1 {
-              Write-Host "Doctor SETUP_REQUIRED - expected for clean install"
-            }
-            2 {
-              throw "Doctor BROKEN"
-            }
-            default {
-              throw "Doctor returned unexpected exit code $DoctorExit"
-            }
+            0 { Write-Host "Doctor READY" }
+            1 { Write-Host "Doctor SETUP_REQUIRED - expected for clean install" }
+            2 { throw "Doctor BROKEN" }
+            default { throw "Doctor returned unexpected exit code $DoctorExit" }
           }
