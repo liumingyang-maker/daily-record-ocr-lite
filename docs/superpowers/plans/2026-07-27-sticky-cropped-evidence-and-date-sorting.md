@@ -126,7 +126,7 @@
 
   Run: `.venv\Scripts\python.exe -m pytest tests_lite/test_evidence_regions.py tests_lite/test_pipeline_knowledge.py tests_lite/test_v1_contracts.py -q`
 
-- [ ] **Step 8: 提交 Task 3**
+- [x] **Step 8: 提交 Task 3**
 
   `git add lite_app/evidence_regions.py lite_app/pipeline_v2.py lite_app/contracts.py tests_lite/test_evidence_regions.py tests_lite/test_pipeline_knowledge.py tests_lite/test_v1_contracts.py && git commit -m "feat: generate formula evidence crops"`
 
@@ -154,7 +154,7 @@
 
   crop 可验证时使用裁剪；否则 `image_url` 使用整图；始终保留 `full_image_url`；不向浏览器暴露磁盘绝对路径或 hash 内部细节。
 
-- [ ] **Step 5: 验证并提交 Task 4**
+- [x] **Step 5: 验证并提交 Task 4**
 
   Run: `.venv\Scripts\python.exe -m pytest tests_lite/test_review_api.py tests_lite/test_review_view.py -q`
 
@@ -180,11 +180,11 @@
 
   桌面约 42/58 两列；证据只在当前卡片范围内 sticky；圆角转移到内部标题/内容层；图片声明稳定 aspect ratio；窄屏证据置顶并取消 sticky；不显示“裁剪待确认”。
 
-- [ ] **Step 4: 浏览器回归**
+- [x] **Step 4: 浏览器回归**
 
   在本地真实 Job 页检查 1440、800、375px：无横向滚动；长卡片滚动时当前证据可见；进入下一卡片自然切换；整图链接可键盘访问。
 
-- [ ] **Step 5: 验证并提交 Task 5**
+- [x] **Step 5: 验证并提交 Task 5**
 
   Run: `.venv\Scripts\python.exe -m pytest tests_lite/test_review_api.py tests_lite/test_web.py -q`
 
@@ -196,7 +196,7 @@
 - Modify: `docs/audits/PR9_REVIEW_REMEDIATION_WIP.md`
 - Modify: `docs/superpowers/plans/2026-07-27-sticky-cropped-evidence-and-date-sorting.md`
 
-- [ ] **Step 1: 全量自动化验证**
+- [x] **Step 1: 全量自动化验证**
 
   Run:
   - `.venv\Scripts\python.exe -m ruff check lite_app tests_lite scripts`
@@ -205,7 +205,7 @@
   - `git grep -n -E 'sk-(ws|sp)-[A-Za-z0-9._-]+'`
   - `git diff | Select-String -Pattern 'sk-(ws|sp)-[A-Za-z0-9._-]+'`
 
-- [ ] **Step 2: 真实两图证据 Gate**
+- [x] **Step 2: 真实两图证据 Gate**
 
   对既有真实 Job 的两张原图建立新 Job，不覆盖旧证据。检查 7 条配方均绑定正确来源图，裁剪包含配方标题/序号、第二排日期、材料与数量，必要时包含工艺；失败项回退较大区域或整图。
 
@@ -213,14 +213,14 @@
 
   保持 Job 为 REVIEW_REQUIRED，交由用户逐条核对裁剪与日期原文。未经用户实际确认，不伪造 READY、知识写回或 Excel 成功。
 
-- [ ] **Step 4: 更新审计报告**
+- [x] **Step 4: 更新审计报告**
 
   写入提交 SHA、测试数、Ruff、Secret 扫描、真实 Job 证据、日期样例、裁剪 manifest 与仍阻塞 Gate；顶部保留可直接复制给独立 GPT 的脱敏审查提示词。
 
-- [ ] **Step 5: 推送 Draft PR**
+- [x] **Step 5: 推送 Draft PR**
 
   推送 `feat/personal-knowledge-layer`，确认 PR #9 仍为 Draft；禁止 merge、tag、release。
 
-- [ ] **Step 6: 完成计划自审**
+- [x] **Step 6: 完成计划自审**
 
   将已完成 checkbox 更新为 `[x]`；执行占位文本扫描；核对设计文档每项要求均有代码、测试或明确用户 Gate 证据。

@@ -18,11 +18,101 @@
 5. Qwen3.7 Plus 大图缩放是否只作用于阿里云 qwen3.7-plus，是否存在精度或格式回归；
 6. ZIP路径安全、证据路径/SHA、非配方Excel排除、升级保留数据库/settings/Key的测试是否真实覆盖实现；
 7. 根据真实 A/B/C 证据判断 PR 是否仍应保持 Draft。
+8. 最新实现是否保持整图 OCR/VLM，只把裁剪用于人工审查；证据路由是否按
+   Job/formula 身份、受限路径与 source/crop SHA-256 fail-closed；
+9. `24.7.19`、`22/9/27` 等日期是否保留原文，同时只派生 ISO 排序值；
+   UNKNOWN/UNPARSED 是否不会被历史知识或迁移静默改写；
+10. sticky 证据是否真正受当前配方卡片约束，窄屏是否取消 sticky 且无横向滚动。
 
 请输出 P0/P1/P2、Secret/私人数据边界、是否允许 Ready、是否允许 Merge。
 真实 Knowledge ON 已生成 structured_result 和 FinalResult，但 OFF 对照失败，
 且用户尚未确认问题字段、未生成正式 Excel；禁止给出允许发布结论。
 ```
+
+## 2026-07-27 配方裁剪证据与日期排序整改（最新）
+
+### 审计范围
+
+- 设计：`docs/superpowers/specs/2026-07-27-sticky-cropped-evidence-and-date-sorting-design.md`
+- 实施计划：`docs/superpowers/plans/2026-07-27-sticky-cropped-evidence-and-date-sorting.md`
+- 实现提交：`c3e78ec`、`fd48d0d`、`06f80f3`、`a2836b5`、`3ebb7df`、`0e900b7`
+- 实现 HEAD：`0e900b7`（本审计文档提交不计入实现范围）
+
+### 已完成代码整改
+
+- OCR 和 Qwen 继续读取整图；没有改成逐配方重复调用模型。
+- Qwen 紧凑合同新增可选归一化 `record_bbox`，Prompt 明确其只用于审查定位。
+- 新增本地 `FormulaEvidenceResolver`：融合模型 bbox、OCR 配方号/日期/材料锚点、
+  来源顺序安全分区；重复词命中偏离分区时回退较大安全区域或整图。
+- 裁剪从原始上传图生成高质量 JPEG；`review/evidence_regions.json` 绑定 formula ID、
+  source image、归一化/像素区域、定位来源、原图 SHA-256 和裁剪 SHA-256。
+- 证据 API 不接受任意文件路径；只按现存 Job/formula ID 查 manifest，要求路径仍在
+  Job 的 `source/` 或 `review/evidence/` 范围内，并同时核对原图和裁剪 hash。
+- 审查页左侧显示当前配方裁剪，保留“查看整图”；桌面 sticky 只在当前卡片内生效，
+  小于等于 900px 改为单列静态证据；没有显示“裁剪待确认”文案。
+- 日期控件改为文本输入。FinalResult、UI、Excel 继续保留原写法；统一解析器只派生
+  ISO 排序值，支持两位/四位年份和 `.`、`/`、`-`，两位年份按 `20xx`。
+- SQLite v4 迁移新增 `record_date_raw`，现有 `record_date` 作为内部 ISO 排序列；
+  非空非法值保留原文、排序值置空并标记 `UNPARSED`，迁移前自动备份。
+- 同一来源中夹在两个已知日期之间的无日期记录按 `source_order` 保持中间位置，
+  不为其编造日期；无锚点时使用录入时间和来源顺序稳定排序。
+
+### TDD 与自动化证据
+
+| Gate | 结果 |
+|---|---|
+| 日期解析/编辑定向测试 | 18 passed |
+| 知识迁移/历史/页面定向测试 | 29 passed |
+| 裁剪/API/Pipeline/Knowledge 定向测试 | 41 passed |
+| 全量非真实测试 | **480 passed, 5 deselected** |
+| Ruff | `python -m ruff check lite_app tests_lite scripts` 通过 |
+| Diff check | 通过 |
+| tracked Secret scan | 0 match |
+| working diff Secret scan | 0 match |
+
+### 真实两图审查证据 Gate
+
+使用已有成功 Job `20260727-200552-b00c4a` 的持久化 OCR、FinalResult 和两张原图
+离线生成审查证据，没有重新调用模型、没有覆盖识别结果：
+
+- 2 张原图、7 条配方均生成独立 manifest 项和 JPEG；定位来源均为 `local`。
+- 第 1 页 5 条配方使用来源顺序安全分区，裁剪均包含对应配方标题/序号、材料、
+  数量和工艺区域；重复材料词导致的跨区命中已在 `0e900b7` 收紧。
+- 第 2 页 2 条配方：第 1 条因局部定位冲突使用较大安全区域，第 2 条使用较小区域；
+  两者均可看到日期、材料和数量，用户始终可以打开整图。
+- 裁剪只服务人工对照，没有写回或改变任何 FinalResult 字段。
+
+### 浏览器回归证据
+
+本地新代码服务端口 8767，真实 Job 页只读检查结果：
+
+| 视口 | 结果 |
+|---|---|
+| 1440×900 | 7 crop、7“查看整图”；`position: sticky`；卡片 `overflow: visible`；无横向滚动 |
+| 卡片内滚动 900px | 当前证据 top 约 12px，且 evidence bottom 未越过 card bottom |
+| 滚入下一卡片 | 上一证据退出；下一证据 top 约 12px 后开始 sticky |
+| 800×900 | 单列、证据 `position: static`、无横向滚动 |
+| 375×812 | 单列、无横向滚动、输入控件约 44px |
+| 浏览器控制台 | 0 warning/error |
+
+### 安全与私人数据边界
+
+- 本机生成的 crop、manifest、原图、OCR、FinalResult 和私人数据库均在 ignored
+  `data/` 层，没有进入 Git。
+- 本轮没有输出或提交 API Key、Authorization、完整模型响应或私人绝对路径。
+- hash 篡改测试证明证据接口返回 404，review view 自动回退整图。
+- 真实页面检查没有提交表单、确认配方、写知识库或导出 Excel。
+
+### 本轮仍未解除的 Gate
+
+- 用户尚未逐条确认这 7 条真实配方，因此不伪造 READY、知识写回或正式 Excel。
+- Knowledge OFF 仍未得到成功 FinalResult，OFF/ON 净提升仍不可计算。
+- 只有 5 张独立个人样图，未达到 10–20 张真实样本 Gate。
+- 私人 Windows 安装器升级闭环仍待后续验收。
+
+结论：本轮解决了“整图难对照、sticky 失效、日期原文显示为空、历史排序无法使用”
+四项审查体验问题，但未解除上述发布 Gate。PR #9 必须继续保持 Draft，禁止 Merge、
+Tag 和 Release。
 
 ## 2026-07-27 最新整改与真实 Gate（本节覆盖下方较早结论）
 
