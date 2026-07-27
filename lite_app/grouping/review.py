@@ -6,6 +6,7 @@ import copy
 from pathlib import Path
 from typing import Any
 
+from ..config import DATA_ROOT
 from ..final_result import FinalResultService
 from ..storage import read_json_optional, write_json_atomic
 from .models import BusinessEntities
@@ -53,13 +54,11 @@ class GroupingReviewService:
         job_id: str,
         knowledge_db_path: Path | None = None,
     ) -> None:
-        from ..config import PROJECT_ROOT
-
         self.job_dir = job_dir
         self.job_id = job_id
         self.final_service = FinalResultService(job_dir)
         self.overlay_path = job_dir / "review" / "group_overrides.json"
-        self.knowledge_db_path = knowledge_db_path or PROJECT_ROOT / "data" / "knowledge.sqlite3"
+        self.knowledge_db_path = knowledge_db_path or DATA_ROOT / "knowledge.sqlite3"
 
     def update_page_company(
         self,

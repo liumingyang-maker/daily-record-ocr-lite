@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}首次配置 - 手写配方识别{% endblock %}
 {% block content %}
-<div id="settings-page" data-page="setup" data-save-vision="/api/settings/vision" data-test-vision="/api/settings/test-vision">
+<div id="settings-page" data-page="setup" data-save-vision="/api/settings/vision" data-test-vision="/api/settings/test-vision" data-import-data="/api/desktop/import-data" data-model-status="/api/setup/models/status" data-install-models="/api/setup/models/install">
 <section class="settings-heading">
     <p class="eyebrow">首次配置</p>
     <h2>让真实识别准备就绪</h2>
@@ -44,6 +44,11 @@
     <li class="settings-card">
         <h3>测试本地 OCR</h3>
         <p>使用本机 PP-OCRv6 识别内置清晰样例。</p>
+        <div class="model-download-controls">
+            <button class="btn" id="install-models">下载并校验 OCR 模型</button>
+            <progress id="model-progress" max="100" value="0" hidden></progress>
+            <p id="model-status" aria-live="polite">正在检查本机模型…</p>
+        </div>
         <button class="btn" id="test-ocr">测试 OCR</button>
         <img id="ocr-overlay" alt="OCR 检测结果" hidden>
     </li>
@@ -67,6 +72,17 @@
 
 <details class="setup-advanced">
     <summary>高级连接与 OCR 设置</summary>
+    <section class="settings-card import-existing-data">
+        <h3>导入现有数据</h3>
+        <p>可从以前的源码项目或 data 目录复制任务、知识库和设置。原目录不会被修改；目标已有数据时会先要求确认并创建备份。</p>
+        <div class="form-group">
+            <label for="legacy-data-path">现有项目或 data 目录</label>
+            <input id="legacy-data-path" placeholder="例如 C:\Users\你的名字\Desktop\daily-record-ocr-lite">
+        </div>
+        <label><input id="confirm-data-import" type="checkbox"> 目标已有数据时，确认先备份再导入</label>
+        <div class="settings-actions"><button class="btn" id="import-existing-data">开始导入</button></div>
+        <p id="data-import-status" aria-live="polite"></p>
+    </section>
     <div class="settings-grid">
         <input id="vision-provider" value="openai_compatible" type="hidden">
         <div class="form-group"><label for="vision-base-url">AI 服务地址</label>

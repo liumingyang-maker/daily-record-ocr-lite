@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lite_app.config import PROJECT_ROOT
+from lite_app.config import DATA_ROOT
 from lite_app.knowledge.database import KnowledgeDB
 
 
@@ -98,7 +98,7 @@ def main():
         print(f"文件不存在: {file_path}")
         sys.exit(1)
 
-    db_path = Path(args.db) if args.db else PROJECT_ROOT / "data" / "knowledge.sqlite3"
+    db_path = Path(args.db) if args.db else DATA_ROOT / "knowledge.sqlite3"
     db = KnowledgeDB(db_path)
     db.initialize()
 

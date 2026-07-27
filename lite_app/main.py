@@ -6,8 +6,10 @@ import json
 import logging
 import os
 import platform
+import threading
 import time
 from contextlib import asynccontextmanager
+from functools import lru_cache
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -19,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import __version__
-from .config import PROJECT_ROOT, get_config, load_recognition_config
+from .config import DATA_ROOT, get_config, load_recognition_config
 from .contracts import normalize_legacy_result, validate_record_result
 from .exporter import ExportError, export_job
 from .final_result import (
@@ -43,6 +45,8 @@ from .storage import JobStorage, write_json_atomic
 from .upload_options import VALID_ROTATIONS, normalize_rotations
 
 logger = logging.getLogger(__name__)
+_model_install_guard = threading.Lock()
+_model_install_thread: threading.Thread | None = None
 
 
 @asynccontextmanager
@@ -126,7 +130,7 @@ def _get_storage() -> JobStorage:
 
 
 def _get_settings() -> SettingsService:
-    return SettingsService(PROJECT_ROOT / "data")
+    return SettingsService(DATA_ROOT)
 
 
 def _demo_enabled() -> bool:
@@ -141,7 +145,24 @@ def _demo_enabled() -> bool:
 
 
 def _recognition_gate() -> str:
+    if not _desktop_models_ready():
+        return "SETUP_REQUIRED"
     return str(_get_settings().status()["state"])
+
+
+def _desktop_models_ready() -> bool:
+    from .platform_paths import runtime_kind
+
+    return _model_ready_for_root(str(DATA_ROOT), runtime_kind())
+
+
+@lru_cache(maxsize=4)
+def _model_ready_for_root(data_root: str, install_kind: str) -> bool:
+    if install_kind != "desktop":
+        return True
+    from .model_packages import model_package_status
+
+    return model_package_status(Path(data_root))["status"] == "READY"
 
 
 def _setup_system_info() -> dict:
@@ -299,6 +320,108 @@ async def settings_public():
     return _get_settings().public_settings()
 
 
+@app.get("/api/updates/stable")
+def stable_update_status():
+    from .updates import check_for_stable_update
+
+    return check_for_stable_update(__version__)
+
+
+@app.post("/api/desktop/import-data")
+async def import_existing_desktop_data(request: Request):
+    from .desktop_migration import (
+        InvalidMigrationSource,
+        MigrationConfirmationRequired,
+        import_legacy_data,
+    )
+
+    _guard_local_json_write(request)
+    body = await request.json()
+    source_path = str(body.get("source_path", "")).strip()
+    if not source_path:
+        raise HTTPException(status_code=400, detail="请选择现有项目或 data 目录")
+    try:
+        report = import_legacy_data(
+            Path(source_path),
+            DATA_ROOT,
+            confirm_non_empty=bool(body.get("confirm_non_empty", False)),
+        )
+    except MigrationConfirmationRequired as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InvalidMigrationSource as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return report.to_safe_dict()
+
+
+@app.get("/api/setup/models/status")
+def desktop_model_status():
+    from .model_packages import model_package_status
+
+    state_path = DATA_ROOT / "model_install_state.json"
+    if _model_install_thread is not None and _model_install_thread.is_alive():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            if isinstance(state, dict):
+                return state
+        except (OSError, json.JSONDecodeError):
+            pass
+    return model_package_status(DATA_ROOT)
+
+
+@app.post("/api/setup/models/install", status_code=202)
+async def install_desktop_models(request: Request):
+    global _model_install_thread
+
+    _guard_local_json_write(request)
+    state_path = DATA_ROOT / "model_install_state.json"
+
+    def save_state(payload: dict[str, object]) -> None:
+        allowed = {
+            key: payload[key]
+            for key in (
+                "status",
+                "state",
+                "model",
+                "index",
+                "package_count",
+                "downloaded_bytes",
+                "total_bytes",
+                "ready_count",
+                "error_category",
+            )
+            if key in payload
+        }
+        write_json_atomic(state_path, allowed)
+
+    def worker() -> None:
+        from .model_packages import install_model_packages
+
+        try:
+            result = install_model_packages(
+                DATA_ROOT,
+                progress=lambda event: save_state({"status": "INSTALLING", **event}),
+            )
+            _model_ready_for_root.cache_clear()
+            save_state(result)
+        except Exception as exc:
+            logger.error(
+                "Desktop OCR model installation failed: %s",
+                type(exc).__name__,
+            )
+            save_state({"status": "FAILED", "error_category": "MODEL_INSTALL_FAILED"})
+
+    with _model_install_guard:
+        if _model_install_thread is None or not _model_install_thread.is_alive():
+            save_state({"status": "INSTALLING", "state": "STARTING"})
+            _model_install_thread = threading.Thread(
+                target=worker,
+                name="desktop-model-installer",
+                daemon=True,
+            )
+            _model_install_thread.start()
+    return {"status": "INSTALLING"}
+
+
 @app.put("/api/settings/vision")
 async def configure_vision(request: Request):
     _guard_local_json_write(request)
@@ -425,6 +548,15 @@ async def test_vision_settings(request: Request):
 @app.post("/api/settings/test-ocr")
 async def test_ocr_settings(request: Request):
     _guard_local_json_write(request)
+    if not _desktop_models_ready():
+        return JSONResponse(
+            status_code=409,
+            content={
+                "status": "SETUP_REQUIRED",
+                "error_category": "MODEL_DOWNLOAD_REQUIRED",
+                "message": "请先下载并校验 OCR 模型",
+            },
+        )
     from PIL import Image, ImageDraw, ImageFont
 
     from .ocr.manager import OCRModelManager
@@ -1179,9 +1311,8 @@ async def update_field(job_id: str, field_id: str, request: Request):
 
     # 记录修正日志
     try:
-        from .config import PROJECT_ROOT
         from .knowledge.database import KnowledgeDB
-        db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+        db = KnowledgeDB(DATA_ROOT / "knowledge.sqlite3")
         db.initialize()
         from .review.corrections import CorrectionService
         svc = CorrectionService(db)
@@ -1244,7 +1375,7 @@ def _finalize_job(job_id: str) -> dict:
 
     state = ReviewStateStore(job_dir)
     history = KnowledgeHistory(
-        Path(os.environ.get("KNOWLEDGE_DB_PATH", PROJECT_ROOT / "data" / "knowledge.sqlite3"))
+        Path(os.environ.get("KNOWLEDGE_DB_PATH", DATA_ROOT / "knowledge.sqlite3"))
     )
     try:
         receipt = history.append_confirmed_job(
@@ -1506,7 +1637,6 @@ async def merge_company_groups(job_id: str, request: Request):
 @app.post("/api/jobs/{job_id}/companies/{company_id}/alias")
 async def save_company_alias(job_id: str, company_id: str, request: Request):
     """将原文保存为公司别名到知识库。"""
-    from .config import PROJECT_ROOT
     from .knowledge.database import KnowledgeDB
     storage = _get_storage()
     try:
@@ -1520,7 +1650,7 @@ async def save_company_alias(job_id: str, company_id: str, request: Request):
         raise HTTPException(status_code=400, detail="别名不能为空。")
 
     standard_name = body.get("standard_name", alias).strip()
-    db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+    db = KnowledgeDB(DATA_ROOT / "knowledge.sqlite3")
     db.initialize()
 
     # 查找或创建公司（使用 customers 表）
@@ -1573,7 +1703,6 @@ async def merge_product_groups(job_id: str, request: Request):
 @app.post("/api/jobs/{job_id}/products/{product_id}/alias")
 async def save_product_alias(job_id: str, product_id: str, request: Request):
     """将原文保存为产品别名到知识库。"""
-    from .config import PROJECT_ROOT
     from .knowledge.database import KnowledgeDB
     storage = _get_storage()
     try:
@@ -1587,7 +1716,7 @@ async def save_product_alias(job_id: str, product_id: str, request: Request):
         raise HTTPException(status_code=400, detail="别名不能为空。")
 
     standard_name = body.get("standard_name", alias).strip()
-    db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+    db = KnowledgeDB(DATA_ROOT / "knowledge.sqlite3")
     db.initialize()
 
     # 查找或创建产品（使用 products 表）
@@ -1613,7 +1742,7 @@ def _knowledge_db_path() -> Path:
     return Path(
         os.environ.get(
             "KNOWLEDGE_DB_PATH",
-            PROJECT_ROOT / "data" / "knowledge.sqlite3",
+            DATA_ROOT / "knowledge.sqlite3",
         )
     )
 

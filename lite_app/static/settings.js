@@ -132,6 +132,88 @@
         showResult(data, response.ok);
         if (response.ok) window.location.reload();
     });
+    byId("check-update")?.addEventListener("click", async () => {
+        const status = byId("update-status");
+        const release = byId("open-release");
+        status.textContent = "正在检查最新稳定版…";
+        release.hidden = true;
+        try {
+            const response = await fetch(page.dataset.checkUpdate);
+            const data = await response.json();
+            if (!response.ok || data.status !== "OK") throw new Error("update check failed");
+            status.textContent = data.update_available
+                ? `发现稳定版 v${data.latest_version}。${data.instructions}`
+                : `当前已是最新稳定版。${data.instructions}`;
+            if (data.release_url) {
+                release.href = data.release_url;
+                release.hidden = false;
+            }
+        } catch (_error) {
+            status.textContent = "暂时无法检查更新，请稍后重试。";
+        }
+    });
+    byId("import-existing-data")?.addEventListener("click", async () => {
+        const status = byId("data-import-status");
+        const sourcePath = value("legacy-data-path").trim();
+        if (!sourcePath) {
+            status.textContent = "请先填写现有项目或 data 目录。";
+            return;
+        }
+        status.textContent = "正在复制本机数据…";
+        const {response, data} = await call(page.dataset.importData, "POST", {
+            source_path: sourcePath,
+            confirm_non_empty: Boolean(byId("confirm-data-import")?.checked),
+        });
+        if (!response.ok) {
+            status.textContent = data.detail || "导入失败，请检查所选目录。";
+            return;
+        }
+        const total = Object.values(data.copied_file_counts || {})
+            .reduce((sum, count) => sum + Number(count || 0), 0);
+        status.textContent = `已安全导入 ${total} 个文件。原目录未修改。`;
+    });
+
+    async function refreshModelStatus() {
+        if (!page.dataset.modelStatus) return;
+        const response = await fetch(page.dataset.modelStatus);
+        const data = await response.json();
+        const status = byId("model-status");
+        const progress = byId("model-progress");
+        const button = byId("install-models");
+        if (data.status === "READY") {
+            status.textContent = "OCR 模型已下载并通过 SHA-256 校验。";
+            progress.hidden = true;
+            button.hidden = true;
+            return;
+        }
+        if (data.status === "INSTALLING") {
+            const downloaded = Number(data.downloaded_bytes || 0);
+            const total = Number(data.total_bytes || 0);
+            const percent = total > 0 ? Math.min(100, Math.round(downloaded * 100 / total)) : 0;
+            progress.hidden = false;
+            progress.value = percent;
+            button.disabled = true;
+            status.textContent = data.model
+                ? `正在下载 ${data.model}：${percent}%`
+                : "正在准备 OCR 模型下载…";
+            window.setTimeout(refreshModelStatus, 1000);
+            return;
+        }
+        button.hidden = false;
+        button.disabled = false;
+        progress.hidden = true;
+        status.textContent = data.status === "FAILED"
+            ? "模型下载或校验失败，可安全重试。"
+            : "首次真实识别前需要下载约 146 MB 官方 OCR 模型。";
+    }
+    byId("install-models")?.addEventListener("click", async () => {
+        byId("install-models").disabled = true;
+        await call(page.dataset.installModels, "POST", {});
+        await refreshModelStatus();
+    });
+    refreshModelStatus().catch(() => {
+        if (byId("model-status")) byId("model-status").textContent = "暂时无法检查 OCR 模型。";
+    });
     byId("enable-demo")?.addEventListener("click", async () => {
         if (!window.confirm("演示结果与上传图片无关，确认只体验演示模式？")) return;
         const {response, data} = await call("/api/settings/demo/enable", "POST", {});

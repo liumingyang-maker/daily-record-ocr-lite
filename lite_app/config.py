@@ -10,8 +10,10 @@ from typing import Any
 
 import yaml
 
-# 项目根目录：lite_app/config.py -> 上一级
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+from .platform_paths import DATA_ROOT, RESOURCE_ROOT, resolve_persistent_path
+
+# Replaceable resources live with the application; desktop user data lives elsewhere.
+PROJECT_ROOT = RESOURCE_ROOT
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 _SETTINGS_ENVIRONMENT_OVERRIDES = {
@@ -50,7 +52,7 @@ def _current_vision_api_key() -> str:
     environment_value = os.environ.get("VISION_API_KEY", "")
     if environment_value:
         return environment_value
-    secrets_path = PROJECT_ROOT / "data" / "secrets.env"
+    secrets_path = DATA_ROOT / "secrets.env"
     if not secrets_path.exists():
         return ""
     for line in secrets_path.read_text(encoding="utf-8").splitlines():
@@ -109,10 +111,11 @@ class AppConfig:
 
     @property
     def jobs_dir(self) -> Path:
-        p = Path(self._data["app"]["jobs_dir"])
-        if not p.is_absolute():
-            p = PROJECT_ROOT / p
-        return p
+        return resolve_persistent_path(
+            self._data["app"]["jobs_dir"],
+            resource_root=PROJECT_ROOT,
+            data_root=DATA_ROOT,
+        )
 
     @property
     def max_upload_mb(self) -> int:
@@ -162,7 +165,7 @@ def get_config() -> AppConfig:
     if not isinstance(raw, dict):
         raise ValueError(f"配置文件格式错误: {config_path}")
     data = _resolve_value(raw)
-    settings_path = PROJECT_ROOT / "data" / "settings.json"
+    settings_path = DATA_ROOT / "settings.json"
     if settings_path.exists():
         import json
 
@@ -255,7 +258,7 @@ def load_recognition_config() -> dict[str, Any]:
     if not isinstance(raw, dict):
         return {}
     data = _resolve_value(raw)
-    settings_path = PROJECT_ROOT / "data" / "settings.json"
+    settings_path = DATA_ROOT / "settings.json"
     if settings_path.exists():
         import json
 
