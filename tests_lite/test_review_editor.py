@@ -125,6 +125,12 @@ def test_editor_rejects_stale_version_and_invalid_or_unknown_values(tmp_path):
             {"record_date": "2026/07/27"},
             expected_version=_version(editor),
         )
+    with pytest.raises(ReviewInputError, match="日期"):
+        editor.update_formula(
+            "job-editor__page_001__formula_001",
+            {"record_date": "2026-02-30"},
+            expected_version=_version(editor),
+        )
     with pytest.raises(ReviewInputError, match="不支持"):
         editor.update_material(
             "job-editor__page_001__formula_001",

@@ -137,6 +137,78 @@ footer { color: #888; font-size: 0.78rem; margin: 28px 0 12px; }
 
 .empty { color: #888; font-style: italic; }
 
+/* 证据优先配方工作台 */
+.job-heading, .review-toolbar, .identity-row, .review-toolbar-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+.eyebrow { margin: 0; color: #5f6368; font-size: 0.8rem; letter-spacing: 0.08em; }
+.job-state-card { display: grid; gap: 6px; justify-items: end; }
+.review-workspace { margin-top: 24px; }
+.review-toolbar { align-items: flex-start; margin-bottom: 16px; }
+.review-toolbar h2, .review-toolbar p { margin-top: 0; }
+.review-toolbar-actions { flex-wrap: wrap; justify-content: flex-end; }
+.review-summary { color: #4b5563; font-size: 0.9rem; white-space: nowrap; }
+.review-group { margin-bottom: 24px; }
+.identity-row {
+    padding: 14px;
+    background: #eef5ff;
+    border: 1px solid #cfe0f7;
+    border-radius: 10px;
+    align-items: end;
+}
+.review-field { display: grid; gap: 5px; flex: 1; min-width: 130px; }
+.review-field-label { color: #4b5563; font-size: 0.8rem; font-weight: 600; }
+.review-field input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 9px 10px;
+    border: 1px solid #c9ced6;
+    border-radius: 6px;
+    background: #fff;
+}
+.review-field input:focus { outline: 2px solid #8ab4f8; border-color: #1a73e8; }
+.review-field input.field-issue { border-color: #d97706; background: #fffbeb; }
+.formula-list { display: grid; gap: 12px; margin-top: 12px; }
+.formula-card { border: 1px solid #d9dee5; border-radius: 10px; background: #fff; overflow: hidden; }
+.formula-card.has-issue { border-color: #e5a541; box-shadow: 0 0 0 2px #fff4d6; }
+.formula-card-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 16px;
+    cursor: pointer;
+    font-weight: 700;
+    background: #f8fafc;
+}
+.formula-title { color: #1f2937; }
+.review-chip { padding: 2px 9px; border-radius: 999px; background: #e8eef6; color: #425466; font-size: 0.75rem; }
+.review-chip.issue { background: #fff0cf; color: #9a5b00; }
+.review-chip.confirmed { background: #def3e4; color: #176b35; }
+.blocking-message { margin: 12px 16px 0; padding: 9px 11px; border-radius: 6px; background: #fff7e6; color: #8a5200; }
+.formula-card-layout { display: grid; grid-template-columns: minmax(260px, 0.9fr) minmax(360px, 1.4fr); gap: 18px; padding: 16px; }
+.evidence-card { margin: 0; align-self: start; position: sticky; top: 12px; }
+.evidence-card figcaption { margin-top: 7px; color: #5f6368; font-size: 0.8rem; text-align: center; }
+.evidence-frame { position: relative; min-height: 180px; display: grid; place-items: center; background: #f2f4f7; border-radius: 8px; overflow: hidden; }
+.evidence-frame img { display: block; width: 100%; height: auto; }
+.evidence-marker { position: absolute; border: 3px solid #ea4335; background: rgba(234, 67, 53, 0.12); box-sizing: border-box; pointer-events: none; }
+.formula-editor { display: grid; gap: 16px; }
+.formula-basics, .material-row { display: grid; grid-template-columns: repeat(3, minmax(110px, 1fr)); gap: 10px; align-items: end; }
+.formula-basics { grid-template-columns: minmax(120px, 1fr) minmax(160px, 1fr); }
+.formula-subsection { padding-top: 10px; border-top: 1px solid #e5e7eb; }
+.formula-subsection h4 { margin: 0 0 9px; }
+.material-row { margin-bottom: 9px; }
+.row-actions, .formula-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.formula-actions { justify-content: space-between; padding-top: 8px; }
+.btn-danger { color: #b42318; border-color: #f2b8b5; background: #fff; }
+.btn-danger:hover { background: #fff1f0; }
+.review-primary-action { display: none; }
+.job-actions { margin-top: 28px; padding-top: 18px; border-top: 1px solid #e5e7eb; }
+.advanced-diagnostics { margin-top: 18px; color: #5f6368; font-size: 0.85rem; }
+.empty-state { padding: 32px; text-align: center; background: #f8fafc; border-radius: 10px; }
+
 /* 字段审查表 */
 .fields-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-top: 10px; }
 .fields-table th, .fields-table td { padding: 6px 8px; text-align: left; border-bottom: 1px solid #e0e0e0; }
@@ -180,6 +252,8 @@ footer { color: #888; font-size: 0.78rem; margin: 28px 0 12px; }
     .result-layout { grid-template-columns: 1fr; }
     .tree-nav { border-right: none; border-bottom: 1px solid #e0e0e0; max-height: 200px; }
     .evidence-panel { border-left: none; border-top: 1px solid #e0e0e0; }
+    .formula-card-layout { grid-template-columns: 1fr; }
+    .evidence-card { position: static; }
 }
 
 @media (max-width: 600px) {
@@ -190,4 +264,7 @@ footer { color: #888; font-size: 0.78rem; margin: 28px 0 12px; }
     .fields-table { font-size: 0.75rem; }
     .header-row { align-items: flex-start; flex-direction: column; }
     .settings-grid { grid-template-columns: 1fr; }
+    .job-heading, .review-toolbar, .identity-row { align-items: stretch; flex-direction: column; }
+    .job-state-card { justify-items: start; }
+    .formula-basics, .material-row { grid-template-columns: 1fr; }
 }

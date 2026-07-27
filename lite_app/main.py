@@ -33,9 +33,12 @@ from .readiness import (
     evaluate_ready_gate,
     validate_final_result_contract,
 )
+from .review_editor import ReviewEditor, ReviewInputError, ReviewVersionConflict
+from .review_state import ReviewStateStore, confirm_formula
+from .review_view import build_review_view
 from .settings import SettingsService
 from .status import JobStatus, SetupState
-from .storage import JobStorage, read_json_optional
+from .storage import JobStorage
 from .upload_options import VALID_ROTATIONS, normalize_rotations
 
 logger = logging.getLogger(__name__)
@@ -592,42 +595,31 @@ async def job_detail(job_id: str, request: Request):
     except (FileNotFoundError, ValueError):
         raise HTTPException(status_code=404, detail="任务不存在。")
 
-    result = storage.load_result(job_id)
-    result_json = ""
-    if result:
-        result_json = json.dumps(result, ensure_ascii=False, indent=2)
-    fusion = read_json_optional(
-        storage.get_job_dir(job_id) / "fusion" / "result.json"
-    )
-    fusion_summary = (
-        fusion.get("summary", {}) if isinstance(fusion, dict) else {}
-    )
-
+    presented = present_stored_job(job, storage.get_job_dir(job_id))
+    job = {
+        **job,
+        "title": f"{presented['customer']} · {presented['product']}",
+        "user_status": presented["status"]["label"],
+        "progress_step": presented["progress_step"],
+    }
     return templates.TemplateResponse(
         request,
         "job.html",
         {
             "job": job,
-            "result_json": result_json,
-            "fusion_summary": fusion_summary,
         },
     )
 
 
-@app.get("/jobs/{job_id}/result", response_class=HTMLResponse)
-async def job_result_page(job_id: str, request: Request):
-    """识别结果页面（按公司树/按图片/仅待确认三视图）。"""
+@app.get("/jobs/{job_id}/result")
+async def job_result_page(job_id: str):
+    """Keep old bookmarks working while using one review workspace."""
     storage = _get_storage()
     try:
-        job = storage.get_job(job_id)
+        storage.get_job(job_id)
     except (FileNotFoundError, ValueError):
         raise HTTPException(status_code=404, detail="任务不存在。")
-
-    return templates.TemplateResponse(
-        request,
-        "result.html",
-        {"job": job},
-    )
+    return RedirectResponse(url=f"/jobs/{job_id}#review", status_code=303)
 
 
 # ─── 重新识别 ───────────────────────────────────────────────
@@ -848,7 +840,250 @@ async def download_file(job_id: str, filename: str):
         return FileResponse(file_path, filename=Path(filename).name)
 
 
-# ─── 字段级 API ─────────────────────────────────────────────
+# ─── 业务配方审查 API ────────────────────────────────────────
+
+
+def _review_resources(job_id: str) -> tuple[JobStorage, dict, ReviewEditor, ReviewStateStore]:
+    storage = _get_storage()
+    try:
+        job = storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+    job_dir = storage.get_job_dir(job_id)
+    return storage, job, ReviewEditor(job_dir), ReviewStateStore(job_dir)
+
+
+def _review_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, ReviewVersionConflict):
+        return HTTPException(status_code=409, detail=str(exc))
+    status_code = 404 if "不存在" in str(exc) else 422
+    return HTTPException(status_code=status_code, detail=str(exc))
+
+
+def _version_from(body: dict) -> str:
+    version = str(body.get("version", ""))
+    if not version:
+        raise HTTPException(status_code=422, detail="缺少页面版本，请刷新后重试。")
+    return version
+
+
+def _saved(editor: ReviewEditor, message: str, **extra) -> dict:
+    return {
+        "version": str(editor.load()["updated_at"]),
+        "saved": True,
+        "message": message,
+        **extra,
+    }
+
+
+@app.get("/api/jobs/{job_id}/review")
+async def get_review(job_id: str):
+    _storage, job, editor, state = _review_resources(job_id)
+    try:
+        final = editor.load()
+    except FinalResultError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    view = build_review_view(job, final, state.confirmation_map(final))
+    view["version"] = str(final["updated_at"])
+    return view
+
+
+@app.patch("/api/jobs/{job_id}/review/groups/{group_id}")
+async def update_review_identity(job_id: str, group_id: str, request: Request):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    try:
+        editor.update_identity(
+            group_id,
+            customer=str(body.get("customer", "")),
+            product=str(body.get("product", "")),
+            expected_version=_version_from(body),
+        )
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "客户和产品已保存")
+
+
+@app.post("/api/jobs/{job_id}/review/groups/{group_id}/formulas")
+async def add_review_formula(job_id: str, group_id: str, request: Request):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    try:
+        formula_id = editor.add_formula(group_id, expected_version=_version_from(body))
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "已增加配方", formula_id=formula_id)
+
+
+@app.patch("/api/jobs/{job_id}/review/formulas/{formula_id}")
+async def update_review_formula(job_id: str, formula_id: str, request: Request):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    changes = {key: value for key, value in body.items() if key != "version"}
+    try:
+        editor.update_formula(
+            formula_id,
+            changes,
+            expected_version=_version_from(body),
+        )
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "配方信息已保存")
+
+
+@app.delete("/api/jobs/{job_id}/review/formulas/{formula_id}")
+async def delete_review_formula(job_id: str, formula_id: str, request: Request):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    if body.get("confirmed") is not True:
+        raise HTTPException(status_code=422, detail="请先确认删除整条配方。")
+    try:
+        editor.delete_formula(formula_id, expected_version=_version_from(body))
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "配方已删除，可立即撤销", undo_available=True)
+
+
+@app.post("/api/jobs/{job_id}/review/formulas/{formula_id}/materials")
+async def add_review_material(job_id: str, formula_id: str, request: Request):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    values = {key: body.get(key, "") for key in ("name", "amount", "unit")}
+    try:
+        material_id = editor.add_material(
+            formula_id, values, expected_version=_version_from(body)
+        )
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "材料已增加", material_id=material_id)
+
+
+@app.patch("/api/jobs/{job_id}/review/formulas/{formula_id}/materials/{material_id}")
+async def update_review_material(
+    job_id: str, formula_id: str, material_id: str, request: Request
+):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    changes = {key: value for key, value in body.items() if key != "version"}
+    try:
+        editor.update_material(
+            formula_id,
+            material_id,
+            changes,
+            expected_version=_version_from(body),
+        )
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "材料已保存")
+
+
+@app.post("/api/jobs/{job_id}/review/formulas/{formula_id}/materials/reorder")
+async def reorder_review_materials(job_id: str, formula_id: str, request: Request):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    material_ids = body.get("material_ids", [])
+    if not isinstance(material_ids, list):
+        raise HTTPException(status_code=422, detail="材料顺序必须是数组。")
+    try:
+        editor.reorder_materials(
+            formula_id,
+            [str(item) for item in material_ids],
+            expected_version=_version_from(body),
+        )
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "材料顺序已保存")
+
+
+@app.delete("/api/jobs/{job_id}/review/formulas/{formula_id}/materials/{material_id}")
+async def delete_review_material(
+    job_id: str, formula_id: str, material_id: str, request: Request
+):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    try:
+        editor.delete_material(
+            formula_id, material_id, expected_version=_version_from(body)
+        )
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "材料已删除，可立即撤销", undo_available=True)
+
+
+@app.post("/api/jobs/{job_id}/review/formulas/{formula_id}/process")
+async def add_review_process(job_id: str, formula_id: str, request: Request):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    values = {key: body.get(key, "") for key in ("name", "value", "unit")}
+    try:
+        parameter_id = editor.add_process_parameter(
+            formula_id, values, expected_version=_version_from(body)
+        )
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "工艺已增加", parameter_id=parameter_id)
+
+
+@app.patch("/api/jobs/{job_id}/review/formulas/{formula_id}/process/{parameter_id}")
+async def update_review_process(
+    job_id: str, formula_id: str, parameter_id: str, request: Request
+):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    changes = {key: value for key, value in body.items() if key != "version"}
+    try:
+        editor.update_process_parameter(
+            formula_id,
+            parameter_id,
+            changes,
+            expected_version=_version_from(body),
+        )
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "工艺已保存")
+
+
+@app.delete("/api/jobs/{job_id}/review/formulas/{formula_id}/process/{parameter_id}")
+async def delete_review_process(
+    job_id: str, formula_id: str, parameter_id: str, request: Request
+):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    try:
+        editor.delete_process_parameter(
+            formula_id, parameter_id, expected_version=_version_from(body)
+        )
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "工艺已删除，可立即撤销", undo_available=True)
+
+
+@app.post("/api/jobs/{job_id}/review/undo")
+async def undo_review_delete(job_id: str, request: Request):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    try:
+        editor.undo_last_delete(expected_version=_version_from(body))
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "已恢复刚才删除的内容")
+
+
+@app.post("/api/jobs/{job_id}/review/formulas/{formula_id}/confirm")
+async def confirm_review_formula(job_id: str, formula_id: str, request: Request):
+    _storage, _job, editor, state = _review_resources(job_id)
+    body = await request.json()
+    try:
+        result = confirm_formula(editor, state, formula_id, _version_from(body))
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return {
+        **_saved(editor, "这条配方已确认"),
+        "confirmed": result["confirmed"],
+    }
+
+
+# ─── 字段级兼容 API ─────────────────────────────────────────
 
 
 @app.get("/api/jobs/{job_id}")

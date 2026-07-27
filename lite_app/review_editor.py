@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -100,7 +100,7 @@ class ReviewEditor:
         expected_version: str,
     ) -> None:
         _reject_unknown(changes, {"formula_no", "record_date", "notes"})
-        if "record_date" in changes and changes["record_date"] and not ISO_DATE.fullmatch(
+        if "record_date" in changes and changes["record_date"] and not _is_iso_date(
             str(changes["record_date"])
         ):
             raise ReviewInputError("日期必须使用 YYYY-MM-DD 格式")
@@ -349,6 +349,16 @@ def _reject_unknown(values: dict[str, Any], allowed: set[str]) -> None:
     unknown = sorted(set(values) - allowed)
     if unknown:
         raise ReviewInputError(f"不支持的字段: {', '.join(unknown)}")
+
+
+def _is_iso_date(value: str) -> bool:
+    if not ISO_DATE.fullmatch(value):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _manual_status(value: Any) -> str:

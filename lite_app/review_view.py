@@ -29,6 +29,7 @@ def build_review_view(
     confirmed = confirmed or {}
     groups: list[dict[str, Any]] = []
     issue_count = 0
+    confirmed_count = 0
     formula_count = 0
 
     for page in final.get("pages", []):
@@ -51,6 +52,7 @@ def build_review_view(
             formulas.sort(key=lambda item: (not item["needs_confirmation"], item["sequence"]))
             formula_count += len(formulas)
             issue_count += sum(bool(item["needs_confirmation"]) for item in formulas)
+            confirmed_count += sum(bool(item["confirmed"]) for item in formulas)
             groups.append(
                 {
                     "id": str(section.get("section_id", "")),
@@ -64,7 +66,7 @@ def build_review_view(
         "summary": {
             "total_formulas": formula_count,
             "needs_confirmation": issue_count,
-            "confirmed": formula_count - issue_count,
+            "confirmed": confirmed_count,
         },
         "groups": groups,
         "advanced": {
@@ -110,6 +112,7 @@ def _present_formula(
         "process": process,
         "notes": notes,
         "needs_confirmation": needs_confirmation,
+        "confirmed": confirmed,
         "collapsed": not needs_confirmation,
         "blocking_message": _blocking_message(
             customer,
