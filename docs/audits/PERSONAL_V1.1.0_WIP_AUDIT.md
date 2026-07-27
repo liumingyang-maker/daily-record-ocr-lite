@@ -5,6 +5,16 @@
 开发分支：`feat/personal-knowledge-layer`
 本报告输入 HEAD：`21be721cb9ebbf18a685c0d9fe72f225ef07eac6`
 
+## GitHub 代码审查入口
+
+- 项目：`https://github.com/liumingyang-maker/daily-record-ocr-lite`
+- Draft PR：`https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/9`
+- 分支：`https://github.com/liumingyang-maker/daily-record-ocr-lite/tree/feat/personal-knowledge-layer`
+- 静态完整 Diff：`docs/audits/PR9_IMPLEMENTATION.diff`
+
+若审查环境无法跟随 GitHub PR patch 重定向，请直接读取分支内的静态 Diff；
+该文件包含 `feat/desktop-installers...feat/personal-knowledge-layer` 的完整实现差异。
+
 ## 可直接复制给独立 GPT 的审查任务
 
 ```text
