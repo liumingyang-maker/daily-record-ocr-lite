@@ -27,6 +27,7 @@ from .final_result import (
     FinalResultService,
     project_final_result,
 )
+from .presentation import present_stored_job
 from .readiness import (
     collect_unresolved_fields,
     evaluate_ready_gate,
@@ -230,7 +231,10 @@ async def index(request: Request):
     if _recognition_gate() == SetupState.SETUP_REQUIRED:
         return RedirectResponse(url="/setup", status_code=302)
     storage = _get_storage()
-    jobs = storage.list_jobs()[:20]
+    jobs = [
+        present_stored_job(job, storage.get_job_dir(job["id"]))
+        for job in storage.list_jobs()[:5]
+    ]
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -240,6 +244,17 @@ async def index(request: Request):
             "demo_mode": _demo_enabled(),
         },
     )
+
+
+@app.get("/jobs", response_class=HTMLResponse)
+async def job_records(request: Request):
+    """List recognition records using business language."""
+    storage = _get_storage()
+    jobs = [
+        present_stored_job(job, storage.get_job_dir(job["id"]))
+        for job in storage.list_jobs()
+    ]
+    return templates.TemplateResponse(request, "jobs.html", {"jobs": jobs})
 
 
 @app.get("/setup", response_class=HTMLResponse)

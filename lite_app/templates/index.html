@@ -2,7 +2,8 @@
 {% block title %}首页 - 手写记录识别{% endblock %}
 {% block content %}
 <section class="upload-section">
-    <h2>上传手写笔记</h2>
+    <h2>开始识别手写配方</h2>
+    <p class="subtitle">上传照片 → 自动整理配方 → 对照原图确认 → 保存并导出 Excel</p>
     <div id="engine-status" class="hint"></div>
     <p class="hint">支持一次上传多张图片（JPG/PNG/WebP），上传后自动进入后台识别。</p>
     <form action="/jobs" method="post" enctype="multipart/form-data">
@@ -28,32 +29,36 @@
         <a class="btn" href="/setup">先完成配置</a>
         {% endif %}
     </form>
-    <p style="margin-top:10px"><a href="/knowledge" class="btn btn-small">知识库管理</a></p>
 </section>
 
 <section class="jobs-section">
-    <h2>最近任务</h2>
+    <div class="section-heading">
+        <h2>最近识别</h2>
+        <a href="/jobs">查看全部记录</a>
+    </div>
     {% if jobs %}
     <table class="jobs-table">
         <thead>
             <tr>
-                <th>任务号</th>
+                <th>客户</th>
+                <th>产品/牌号</th>
+                <th>配方日期</th>
                 <th>状态</th>
                 <th>图片数</th>
                 <th>创建时间</th>
-                <th>Provider / Model</th>
-                <th>操作</th>
+                <th>下一步</th>
             </tr>
         </thead>
         <tbody>
             {% for job in jobs %}
             <tr>
-                <td class="mono">{{ job.id }}</td>
-                <td><span class="status status-{{ job.status | lower }}">{{ job.status }}</span></td>
-                <td>{{ job.images | length }}</td>
-                <td>{{ job.created_at[:19] }}</td>
-                <td>{{ job.provider or '-' }} / {{ job.model or '-' }}</td>
-                <td><a href="/jobs/{{ job.id }}" class="btn btn-small">详情</a></td>
+                <td>{{ job.customer }}</td>
+                <td>{{ job.product }}</td>
+                <td>{{ job.date_range }}</td>
+                <td><span class="status status-{{ job.status.tone }}">{{ job.status.label }}</span></td>
+                <td>{{ job.image_count }}</td>
+                <td>{{ job.created_at }}</td>
+                <td><a href="/jobs/{{ job.id }}" class="btn btn-small">{{ job.next_action }}</a></td>
             </tr>
             {% endfor %}
         </tbody>
