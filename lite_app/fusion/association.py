@@ -78,9 +78,13 @@ def associate_field(
     if page is None:
         return []
     by_id = {token.id: token for token in page.tokens}
+    numeric_field = field.field_type in {"amount", "numeric"}
 
     direct = [by_id[token_id] for token_id in field.evidence_token_ids if token_id in by_id]
-    if direct:
+    if direct and (
+        not numeric_field
+        or _tokens_within_region(direct, page, field.record_bbox)
+    ):
         return [
             _candidate(
                 direct,
@@ -94,6 +98,10 @@ def associate_field(
     if field.field_bbox:
         overlaps = []
         for token in page.tokens:
+            if numeric_field and not _tokens_within_region(
+                [token], page, field.record_bbox
+            ):
+                continue
             normalized = _normalize_bbox(token.bbox, page)
             iou = _iou(field.field_bbox, normalized)
             if iou >= 0.05:
@@ -101,6 +109,12 @@ def associate_field(
         if overlaps:
             seed = max(overlaps, key=lambda item: item[1])[0]
             tokens = _adjacent_tokens(seed, page.tokens, field.field_bbox, page)
+            if numeric_field:
+                tokens = [
+                    token
+                    for token in tokens
+                    if _tokens_within_region([token], page, field.record_bbox)
+                ]
             return [
                 _candidate(
                     tokens,
@@ -114,6 +128,10 @@ def associate_field(
         field_center = _center(field.field_bbox)
         distances: list[tuple[OCRToken, float]] = []
         for token in page.tokens:
+            if numeric_field and not _tokens_within_region(
+                [token], page, field.record_bbox
+            ):
+                continue
             token_center = _center(_normalize_bbox(token.bbox, page))
             distance = math.dist(field_center, token_center)
             if distance <= 0.05:
@@ -121,6 +139,12 @@ def associate_field(
         if distances:
             seed, distance = min(distances, key=lambda item: item[1])
             tokens = _adjacent_tokens(seed, page.tokens, field.field_bbox, page)
+            if numeric_field:
+                tokens = [
+                    token
+                    for token in tokens
+                    if _tokens_within_region([token], page, field.record_bbox)
+                ]
             return [
                 _candidate(
                     tokens,
@@ -187,17 +211,28 @@ def _from_layout(
         if not tokens:
             continue
         pair_center = _center(_normalize_bbox(tokens[0].bbox, page))
-        active_record = local_record or field.record_bbox
+        active_record = field.record_bbox or local_record
         if active_record and not _contains(active_record, pair_center):
+            continue
+        if not _tokens_within_region(tokens, page, active_record):
             continue
 
         score = float(pair.get("score", 0.65))
         name_ids = set(pair.get("name_token_ids", []))
-        if field.anchor_token_ids and name_ids.intersection(field.anchor_token_ids):
+        token_anchor = bool(
+            field.anchor_token_ids and name_ids.intersection(field.anchor_token_ids)
+        )
+        if token_anchor:
             score += 1.0
         pair_name = _normalize_text(str(pair.get("name", "")))
-        if field.anchor_value and pair_name == _normalize_text(field.anchor_value):
+        text_anchor = bool(
+            field.anchor_value
+            and pair_name
+            and pair_name == _normalize_text(field.anchor_value)
+        )
+        if text_anchor:
             score += 0.8
+        name_bbox: list[float] | None = None
         if field.anchor_bbox and name_ids:
             name_tokens = [
                 tokens_by_id[token_id]
@@ -210,6 +245,13 @@ def _from_layout(
                 ).bbox
                 if name_bbox:
                     score += _iou(field.anchor_bbox, name_bbox)
+        bbox_anchor = bool(
+            field.anchor_bbox
+            and name_bbox
+            and _iou(field.anchor_bbox, name_bbox) >= 0.05
+        )
+        if not (token_anchor or text_anchor or bbox_anchor):
+            continue
         candidates.append((score, pair, tokens))
 
     if not candidates:
@@ -230,6 +272,28 @@ def _from_layout(
     )
     candidate.requires_review = boundary_mismatch
     return candidate
+
+
+def _tokens_within_region(
+    tokens: list[OCRToken],
+    page: OCRPage,
+    region: list[float] | None,
+) -> bool:
+    if not tokens or not region:
+        return False
+    return all(
+        _contains_bbox(region, _normalize_bbox(token.bbox, page))
+        for token in tokens
+    )
+
+
+def _contains_bbox(container: list[float], value: list[float]) -> bool:
+    return (
+        container[0] <= value[0]
+        and container[1] <= value[1]
+        and value[2] <= container[2]
+        and value[3] <= container[3]
+    )
 
 
 def _adjacent_tokens(

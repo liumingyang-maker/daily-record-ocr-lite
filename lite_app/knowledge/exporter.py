@@ -58,10 +58,20 @@ def export_knowledge_history(db_path: Path, output_path: Path) -> Path:
 
 
 def _all_formula_ids(history: KnowledgeHistory) -> list[int]:
-    rows = history.database._get_conn().execute(
+    pairs = history.database._get_conn().execute(
         """
-        SELECT id FROM formulas
-        ORDER BY COALESCE(record_date, ''), COALESCE(confirmed_at, ''), id
+        SELECT DISTINCT c.name AS customer, p.name AS product
+        FROM formulas f
+        JOIN customers c ON c.id = f.customer_id
+        JOIN products p ON p.id = f.product_id
+        ORDER BY c.name, p.name
         """
     ).fetchall()
-    return [int(row["id"]) for row in rows]
+    return [
+        int(formula["id"])
+        for pair in pairs
+        for formula in history.timeline(
+            str(pair["customer"]),
+            str(pair["product"]),
+        )
+    ]

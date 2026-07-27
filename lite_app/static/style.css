@@ -161,6 +161,7 @@ footer { color: #888; font-size: 0.78rem; margin: 28px 0 12px; }
 }
 .review-field { display: grid; gap: 5px; flex: 1; min-width: 130px; }
 .review-field-label { color: #4b5563; font-size: 0.8rem; font-weight: 600; }
+.field-help { color: #5f6368; font-size: 0.8rem; }
 .review-field input {
     width: 100%;
     box-sizing: border-box;
@@ -215,6 +216,22 @@ footer { color: #888; font-size: 0.78rem; margin: 28px 0 12px; }
 .knowledge-heading, .knowledge-tools { display: flex; align-items: end; justify-content: space-between; gap: 16px; }
 .knowledge-tools { margin: 20px 0 14px; }
 .knowledge-tools .review-field { max-width: 480px; }
+.pending-review-panel {
+    margin: 16px 0;
+    padding: 14px 16px;
+    border: 1px solid #f0c36d;
+    border-radius: 10px;
+    background: #fffaf0;
+}
+.pending-review-panel summary { cursor: pointer; font-weight: 700; }
+.pending-review-card {
+    margin-top: 10px;
+    padding: 12px;
+    border: 1px solid #ead9b5;
+    border-radius: 8px;
+    background: #fff;
+}
+.pending-review-card p { margin: 6px 0; }
 .knowledge-layout { display: grid; grid-template-columns: minmax(260px, 0.8fr) minmax(420px, 1.7fr); gap: 18px; min-height: 460px; }
 .knowledge-tree, .knowledge-detail { border: 1px solid #dfe3e8; border-radius: 10px; background: #fff; padding: 16px; }
 .knowledge-tree { max-height: 680px; overflow-y: auto; }
@@ -327,4 +344,36 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
     .compact-settings { grid-template-columns: 1fr; }
     .settings-card-heading { flex-direction: column; }
     .setup-stages > li { padding-left: 48px; }
+}
+
+/* Formula evidence workbench: keep the current crop visible while editing. */
+.review-field input { min-height: 44px; }
+.formula-card { overflow: visible; }
+.formula-card-heading { border-radius: 9px 9px 0 0; }
+.formula-card-layout {
+    grid-template-columns: minmax(280px, 42fr) minmax(360px, 58fr);
+    border-radius: 0 0 9px 9px;
+}
+.evidence-caption {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    text-align: left;
+}
+.evidence-full-link { color: #1463d6; font-weight: 600; text-underline-offset: 2px; }
+.evidence-full-link:focus-visible {
+    outline: 3px solid #8ab4f8;
+    outline-offset: 3px;
+    border-radius: 2px;
+}
+.evidence-frame { aspect-ratio: 4 / 3; }
+.evidence-frame img { height: 100%; object-fit: contain; }
+
+@media (max-width: 900px) {
+    .formula-card-layout { grid-template-columns: 1fr; }
+    .evidence-card { position: static; }
+    .evidence-frame { aspect-ratio: auto; min-height: 0; }
+    .evidence-frame img { height: auto; max-height: none; }
+    .review-workspace .btn { min-height: 44px; }
 }

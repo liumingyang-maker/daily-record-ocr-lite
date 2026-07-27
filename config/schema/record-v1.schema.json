@@ -37,6 +37,33 @@
       "minItems": 4,
       "maxItems": 4
     },
+    "knowledgeTrace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "original_value",
+        "history_candidate",
+        "final_value",
+        "decision",
+        "score",
+        "margin",
+        "reasons"
+      ],
+      "properties": {
+        "original_value": {"type": "string"},
+        "history_candidate": {"type": "string"},
+        "final_value": {"type": "string"},
+        "decision": {
+          "enum": ["AUTO_CORRECT", "SUGGEST", "KEEP_RAW", "FORBIDDEN"]
+        },
+        "score": {"type": "number", "minimum": 0, "maximum": 1},
+        "margin": {"type": "number", "minimum": 0, "maximum": 1},
+        "reasons": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
     "evidenceField": {
       "type": "object",
       "additionalProperties": false,
@@ -71,6 +98,7 @@
           "type": "array",
           "items": {"type": "object"}
         },
+        "knowledge_trace": {"$ref": "#/$defs/knowledgeTrace"},
         "source_image_index": {"type": "integer", "minimum": 1},
         "record_bbox": {
           "anyOf": [
@@ -169,6 +197,7 @@
         "formula_id": {"type": "string", "minLength": 1},
         "formula_no": {"type": "string"},
         "formula_sequence": {"type": "integer", "minimum": 1},
+        "source_order": {"type": "integer", "minimum": 1},
         "record_date": {"$ref": "#/$defs/evidenceField"},
         "record_bbox": {
           "anyOf": [

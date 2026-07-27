@@ -77,3 +77,73 @@ def test_history_rejects_missing_or_stale_confirmation_hash(tmp_path):
     hashes[formula_id] = "stale"
     with pytest.raises(ValueError, match="确认"):
         history.append_confirmed_job(job, final, hashes)
+
+
+def test_history_keeps_unknown_date_as_formal_pending_metadata(tmp_path):
+    history = KnowledgeHistory(tmp_path / "knowledge.sqlite3")
+    job, final, hashes = _confirmed_job(
+        tmp_path,
+        "job-unknown-date",
+        "",
+    )
+
+    receipt = history.append_confirmed_job(job, final, hashes)
+    detail = history.formula_detail(receipt["formula_ids"][0])
+
+    assert detail["record_date"] == ""
+    assert detail["date_status"] == "UNKNOWN"
+
+
+def test_history_preserves_handwritten_date_and_exposes_sort_value(tmp_path):
+    history = KnowledgeHistory(tmp_path / "knowledge.sqlite3")
+    job, final, hashes = _confirmed_job(tmp_path, "job-handwritten-date", "24.7.19")
+
+    receipt = history.append_confirmed_job(job, final, hashes)
+    detail = history.formula_detail(receipt["formula_ids"][0])
+
+    assert detail["record_date"] == "24.7.19"
+    assert detail["record_date_sort"] == "2024-07-19"
+    assert detail["date_status"] == "KNOWN"
+
+
+def test_timeline_keeps_unknown_source_record_between_known_neighbors(tmp_path):
+    history = KnowledgeHistory(tmp_path / "knowledge.sqlite3")
+    connection = history.database._get_conn()
+    customer_id = connection.execute(
+        "INSERT INTO customers (name) VALUES ('联创')"
+    ).lastrowid
+    product_id = connection.execute(
+        "INSERT INTO products (customer_id, name) VALUES (?, 'G30A')",
+        (customer_id,),
+    ).lastrowid
+    rows = [
+        ("配方1", "24.1.1", "2024-01-01", "KNOWN", 1),
+        ("配方2", "", None, "UNKNOWN", 2),
+        ("配方3", "24.3.1", "2024-03-01", "KNOWN", 3),
+    ]
+    for formula_no, raw, sort_value, status, source_order in rows:
+        connection.execute(
+            """
+            INSERT INTO formulas (
+                customer_id, product_id, title, formula_no,
+                record_date_raw, record_date, date_status, source_order,
+                source_job_id, confirmed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'same-source', '2026-07-27T00:00:00+00:00')
+            """,
+            (
+                customer_id,
+                product_id,
+                formula_no,
+                formula_no,
+                raw,
+                sort_value,
+                status,
+                source_order,
+            ),
+        )
+    connection.commit()
+
+    timeline = history.timeline("联创", "G30A")
+
+    assert [item["formula_no"] for item in timeline] == ["配方1", "配方2", "配方3"]
+    assert [item["record_date"] for item in timeline] == ["24.1.1", "", "24.3.1"]

@@ -40,6 +40,7 @@
             timers.set(input, setTimeout(() => queueSave(() => onSave(input.value)), 450));
         });
         label.append(input);
+        if (options.help) label.append(node("small", "field-help", options.help));
         return label;
     }
 
@@ -179,7 +180,7 @@
         if (evidence.image_url) {
             const image = node("img");
             image.src = evidence.image_url;
-            image.alt = "原图证据";
+            image.alt = "当前配方的图片证据";
             frame.append(image);
             if (evidence.rect) {
                 const [x1, y1, x2, y2] = evidence.rect;
@@ -193,7 +194,16 @@
         } else {
             frame.append(node("p", "empty", "没有可显示的原图"));
         }
-        panel.append(frame, node("figcaption", "", "原图证据"));
+        const caption = node("figcaption", "evidence-caption");
+        caption.append(node("span", "", "当前配方证据"));
+        if (evidence.full_image_url) {
+            const fullImage = node("a", "evidence-full-link", "查看整图");
+            fullImage.href = evidence.full_image_url;
+            fullImage.target = "_blank";
+            fullImage.rel = "noopener";
+            caption.append(fullImage);
+        }
+        panel.append(frame, caption);
         return panel;
     }
 
@@ -207,8 +217,9 @@
         basics.append(
             field("配方", formula.formula_no, (value) => updateFormula({formula_no: value})),
             field("日期", formula.date.value, (value) => updateFormula({record_date: value}), {
-                type: "date",
                 issue: formula.date.needs_confirmation,
+                placeholder: "例如 24.7.19 或 22/9/27",
+                help: "保留原写法，系统用于排序",
             }),
         );
         editor.append(basics);

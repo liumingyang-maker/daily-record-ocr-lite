@@ -50,6 +50,40 @@
         });
     }
 
+    async function loadPending() {
+        const root = document.getElementById("pending-review-list");
+        const summary = document.getElementById("pending-review-summary");
+        if (!root || !summary) return;
+        const data = await getJson("/api/knowledge/pending?limit=100");
+        summary.textContent = `待确认资料（${data.total}）`;
+        root.replaceChildren();
+        if (!data.items.length) {
+            root.append(node("p", "empty", "没有待确认资料"));
+            return;
+        }
+        data.items.forEach((item) => {
+            const card = node("article", "pending-review-card");
+            card.append(
+                node(
+                    "strong",
+                    "",
+                    `${item.customer || "客户待确认"} / ${item.product || "产品待确认"} / ${item.formula_label || "配方"}`,
+                ),
+                node(
+                    "p",
+                    "",
+                    `材料：${item.materials.join("、") || "材料待确认"}`,
+                ),
+                node(
+                    "small",
+                    "",
+                    `${item.reason} · ${item.source_path} · ${item.sheet_name} · 第 ${item.rows[0]}-${item.rows[1]} 行`,
+                ),
+            );
+            root.append(card);
+        });
+    }
+
     function formulaButton(formula) {
         const row = node("div", "history-row");
         const checkbox = node("input");
@@ -100,6 +134,21 @@
             figure.append(image, node("figcaption", "", "原图证据"));
             detailRoot.append(figure);
         }
+        (detail.evidence || []).forEach((evidence) => {
+            const figure = node("figure", "knowledge-evidence");
+            const image = node("img");
+            image.src = evidence.image_url;
+            image.alt = `${evidence.kind} 证据`;
+            figure.append(
+                image,
+                node(
+                    "figcaption",
+                    "",
+                    `${evidence.source_path} · ${evidence.sheet_name} · ${evidence.cell_range}`,
+                ),
+            );
+            detailRoot.append(figure);
+        });
         detailRoot.append(renderRows("材料与数量", detail.materials, "amount"));
         if (detail.process.length) detailRoot.append(renderRows("工艺", detail.process, "value"));
     }
@@ -189,4 +238,5 @@
     });
 
     loadTree().catch(showError);
+    loadPending().catch(showError);
 })();

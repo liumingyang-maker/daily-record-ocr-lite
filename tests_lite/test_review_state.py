@@ -68,7 +68,6 @@ def test_edit_invalidates_confirmation(tmp_path):
     [
         ("customer", "客户"),
         ("product", "产品"),
-        ("date", "日期"),
         ("material_name", "材料名称"),
         ("material_amount", "材料数量"),
     ],
@@ -85,6 +84,21 @@ def test_formula_confirmation_rejects_missing_required_business_values(
             FORMULA_ID,
             _version(editor),
         )
+
+
+def test_formula_confirmation_allows_unknown_date(tmp_path):
+    editor = _editor(tmp_path, missing="date")
+
+    result = confirm_formula(
+        editor,
+        ReviewStateStore(tmp_path),
+        FORMULA_ID,
+        _version(editor),
+    )
+
+    assert result["confirmed"] is True
+    formula = editor.load()["pages"][0]["product_sections"][0]["formulas"][0]
+    assert formula["record_date"]["status"] == "MANUAL_CONFIRMED_EMPTY"
 
 
 def _version(editor: ReviewEditor) -> str:

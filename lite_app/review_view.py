@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote
 
+from .date_values import parse_record_date
+
 REVIEW_STATUSES = {"CONFLICT", "EMPTY", "NEED_REVIEW"}
 
 
@@ -24,9 +26,14 @@ def build_review_view(
     job: dict[str, Any],
     final: dict[str, Any],
     confirmed: dict[str, Any] | None = None,
+    *,
+    evidence_urls: dict[str, str] | None = None,
+    full_evidence_urls: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Group formulas into customer/product cards with evidence and issue state."""
     confirmed = confirmed or {}
+    evidence_urls = evidence_urls or {}
+    full_evidence_urls = full_evidence_urls or {}
     groups: list[dict[str, Any]] = []
     issue_count = 0
     confirmed_count = 0
@@ -45,6 +52,10 @@ def build_review_view(
                     customer=customer,
                     product=product,
                     image_url=image_url,
+                    crop_url=evidence_urls.get(str(formula.get("formula_id", "")), ""),
+                    full_crop_url=full_evidence_urls.get(
+                        str(formula.get("formula_id", "")), ""
+                    ),
                     confirmed=bool(confirmed.get(str(formula.get("formula_id", "")), False)),
                 )
                 for formula in section.get("formulas", [])
@@ -88,11 +99,21 @@ def _present_formula(
     customer: str,
     product: str,
     image_url: str,
+    crop_url: str,
+    full_crop_url: str,
     confirmed: bool,
 ) -> dict[str, Any]:
     formula_id = str(formula.get("formula_id", ""))
     formula_no = str(formula.get("formula_no", "")) or "未编号配方"
-    date = present_field(formula.get("record_date", {}), required=True)
+    date = present_field(formula.get("record_date", {}), required=False)
+    parsed_date = parse_record_date(date["value"])
+    date["sort_value"] = parsed_date.sort_value
+    date["parse_status"] = parsed_date.status
+    if parsed_date.status == "UNPARSED":
+        date["needs_confirmation"] = True
+    date_pending = not date["value"].strip()
+    if date_pending:
+        date["needs_confirmation"] = False
     notes = present_field(formula.get("notes", {}), required=False)
     materials = [_present_material(item) for item in formula.get("materials", [])]
     process = [_present_process(item) for item in formula.get("process_parameters", [])]
@@ -113,6 +134,7 @@ def _present_formula(
         "formula_no": formula_no,
         "sequence": int(formula.get("formula_sequence", 0)),
         "date": date,
+        "date_pending": date_pending,
         "materials": materials,
         "process": process,
         "notes": notes,
@@ -128,8 +150,9 @@ def _present_formula(
             process=process,
         ),
         "evidence": {
-            "image_url": image_url,
-            "rect": _normalized_rect(formula.get("record_bbox")),
+            "image_url": crop_url or image_url,
+            "full_image_url": full_crop_url or image_url,
+            "rect": None if crop_url else _normalized_rect(formula.get("record_bbox")),
         },
         "labels": {
             "date": "日期",
@@ -197,8 +220,6 @@ def _blocking_message(
     process: list[dict[str, Any]],
 ) -> str:
     prefix = f"待确认：{customer} / {product} / {formula_no}"
-    if not str(date["value"]).strip():
-        return f"{prefix} 缺少日期"
     if date["needs_confirmation"]:
         return f"{prefix} 日期需要确认"
     if any(item["name"]["needs_confirmation"] for item in materials):

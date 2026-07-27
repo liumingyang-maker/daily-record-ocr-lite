@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import logging
 import time
@@ -11,6 +12,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+from PIL import Image
 
 from .base import (
     VisionConfigurationError,
@@ -96,6 +98,7 @@ class OpenAICompatibleVisionProvider(VisionProvider):
         if self.is_alibaba_qwen37:
             body["response_format"] = {"type": "json_object"}
             body["enable_thinking"] = False
+            body["stream"] = True
 
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.api_key:
@@ -111,7 +114,33 @@ class OpenAICompatibleVisionProvider(VisionProvider):
             if self._transport is not None:
                 client_kwargs["transport"] = self._transport
             async with httpx.AsyncClient(**client_kwargs) as client:
-                resp = await client.post(self.url, json=body, headers=headers)
+                if self.is_alibaba_qwen37:
+                    async with client.stream(
+                        "POST",
+                        self.url,
+                        json=body,
+                        headers=headers,
+                    ) as resp:
+                        elapsed = time.time() - start
+                        logger.info(
+                            "模型响应头耗时: %.1f秒, 状态码: %d",
+                            elapsed,
+                            resp.status_code,
+                        )
+                        if resp.status_code < 200 or resp.status_code >= 300:
+                            await resp.aread()
+                            self._raise_http_error(resp)
+                        if "text/event-stream" in resp.headers.get(
+                            "content-type", ""
+                        ):
+                            return await self._extract_stream_content(resp)
+                        await resp.aread()
+                else:
+                    resp = await client.post(
+                        self.url,
+                        json=body,
+                        headers=headers,
+                    )
         except httpx.TimeoutException:
             raise VisionConnectionError(
                 f"视觉模型接口超时（{self.timeout}秒），请检查模型服务是否运行。"
@@ -127,14 +156,7 @@ class OpenAICompatibleVisionProvider(VisionProvider):
         logger.info("模型响应耗时: %.1f秒, 状态码: %d", elapsed, resp.status_code)
 
         if resp.status_code < 200 or resp.status_code >= 300:
-            body_text = resp.text[:500]
-            if resp.status_code == 401:
-                raise VisionConnectionError(
-                    f"视觉模型接口返回 HTTP 401，请检查 API Key。响应: {body_text}"
-                )
-            raise VisionConnectionError(
-                f"视觉模型接口返回 HTTP {resp.status_code}。响应: {body_text}"
-            )
+            self._raise_http_error(resp)
 
         try:
             data = resp.json()
@@ -144,6 +166,46 @@ class OpenAICompatibleVisionProvider(VisionProvider):
             )
 
         return self._extract_content(data)
+
+    @staticmethod
+    def _raise_http_error(resp: httpx.Response) -> None:
+        body_text = resp.text[:500]
+        if resp.status_code == 401:
+            raise VisionConnectionError(
+                "视觉模型接口返回 HTTP 401，请检查 API Key。"
+                f"响应: {body_text}"
+            )
+        raise VisionConnectionError(
+            f"视觉模型接口返回 HTTP {resp.status_code}。响应: {body_text}"
+        )
+
+    @staticmethod
+    async def _extract_stream_content(resp: httpx.Response) -> str:
+        fragments: list[str] = []
+        async for line in resp.aiter_lines():
+            line = line.strip()
+            if not line or not line.startswith("data:"):
+                continue
+            payload = line[5:].strip()
+            if payload == "[DONE]":
+                break
+            try:
+                event = json.loads(payload)
+            except json.JSONDecodeError as exc:
+                raise VisionConnectionError(
+                    "视觉模型流式响应包含非法 JSON 事件。"
+                ) from exc
+            choices = event.get("choices", [])
+            if not choices:
+                continue
+            delta = choices[0].get("delta", {})
+            content = delta.get("content", "")
+            if isinstance(content, str):
+                fragments.append(content)
+        result = "".join(fragments)
+        if not result:
+            raise VisionConnectionError("视觉模型流式响应未包含 content。")
+        return result
 
     def _extract_content(self, data: dict[str, Any]) -> str:
         try:
@@ -172,8 +234,20 @@ class OpenAICompatibleVisionProvider(VisionProvider):
             f"响应: {json.dumps(data, ensure_ascii=False)[:500]}"
         )
 
-    @staticmethod
-    def _image_to_data_url(image_path: Path) -> str:
+    def _image_to_data_url(self, image_path: Path) -> str:
         data = image_path.read_bytes()
+        if self.is_alibaba_qwen37:
+            with Image.open(io.BytesIO(data)) as image:
+                if max(image.size) > 1024:
+                    image = image.convert("RGB")
+                    image.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                    output = io.BytesIO()
+                    image.save(
+                        output,
+                        format="JPEG",
+                        quality=70,
+                        optimize=True,
+                    )
+                    data = output.getvalue()
         b64 = base64.b64encode(data).decode("ascii")
         return f"data:image/jpeg;base64,{b64}"

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime
+import unicodedata
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+from ..date_values import parse_record_date
 from ..grouping.service import final_result_fingerprint
 from ..readiness import validate_final_result_contract
 from ..review_state import formula_content_hash
@@ -63,17 +65,23 @@ class KnowledgeHistory:
                 product_id = self._select_or_insert_product(
                     connection, customer_id, product
                 )
-                formula_ids.append(
-                    self._insert_formula(
-                        connection,
-                        job_id=job_id,
-                        page=page,
-                        formula=formula,
-                        customer_id=customer_id,
-                        product_id=product_id,
-                        confirmed_at=confirmed_at,
-                        formula_hash=confirmed_hashes[str(formula["formula_id"])],
-                    )
+                formula_db_id = self._insert_formula(
+                    connection,
+                    job_id=job_id,
+                    page=page,
+                    formula=formula,
+                    customer_id=customer_id,
+                    product_id=product_id,
+                    confirmed_at=confirmed_at,
+                    formula_hash=confirmed_hashes[str(formula["formula_id"])],
+                )
+                formula_ids.append(formula_db_id)
+                self._learn_formula_terms(
+                    connection,
+                    customer=customer,
+                    product=product,
+                    formula=formula,
+                    confirmed_at=confirmed_at,
                 )
 
             receipt = {
@@ -112,25 +120,27 @@ class KnowledgeHistory:
             JOIN customers c ON c.id = f.customer_id
             JOIN products p ON p.id = f.product_id
             WHERE c.name = ? AND p.name = ?
-            ORDER BY COALESCE(f.record_date, ''), COALESCE(f.confirmed_at, ''), f.id
+            ORDER BY COALESCE(f.confirmed_at, ''), f.source_order, f.id
             """,
             (customer, product),
         ).fetchall()
-        return [dict(row) for row in rows]
+        normalized = [_present_history_row(dict(row)) for row in rows]
+        return sorted(normalized, key=lambda row: _timeline_sort_key(row, normalized))
 
     def tree(self, query: str = "") -> dict[str, Any]:
         connection = self.database._get_conn()
         pattern = f"%{query.strip()}%"
         rows = connection.execute(
             """
-            SELECT f.id, f.formula_no, f.record_date, f.confirmed_at,
+            SELECT f.id, f.formula_no, f.record_date, f.record_date_raw, f.date_status,
+                   f.confirmed_at, f.source_job_id, f.source_order,
                    c.id AS customer_id, c.name AS customer,
                    p.id AS product_id, p.name AS product
             FROM formulas f
             LEFT JOIN customers c ON c.id = f.customer_id
             LEFT JOIN products p ON p.id = f.product_id
             WHERE ? = '%%' OR COALESCE(c.name, '') LIKE ?
-                OR COALESCE(p.name, '') LIKE ? OR COALESCE(f.record_date, '') LIKE ?
+                OR COALESCE(p.name, '') LIKE ? OR COALESCE(f.record_date_raw, '') LIKE ?
             ORDER BY COALESCE(c.name, ''), COALESCE(p.name, ''),
                      COALESCE(f.record_date, ''), COALESCE(f.confirmed_at, ''), f.id
             """,
@@ -167,11 +177,24 @@ class KnowledgeHistory:
                 {
                     "id": int(row["id"]),
                     "formula_no": str(row["formula_no"] or "配方"),
-                    "record_date": str(row["record_date"] or ""),
+                    "record_date": str(
+                        row["record_date_raw"] or row["record_date"] or ""
+                    ),
+                    "record_date_sort": str(row["record_date"] or ""),
+                    "date_status": str(row["date_status"] or "UNKNOWN"),
                     "confirmed_at": str(row["confirmed_at"] or ""),
+                    "source_job_id": str(row["source_job_id"] or ""),
+                    "source_order": int(row["source_order"] or 0),
                 }
             )
             product["formula_count"] += 1
+        for product in products.values():
+            product["formulas"].sort(
+                key=lambda row: _timeline_sort_key(row, product["formulas"])
+            )
+            for formula in product["formulas"]:
+                formula.pop("source_job_id", None)
+                formula.pop("source_order", None)
         return {"customers": list(customers.values()), "query": query}
 
     def formula_detail(self, formula_id: int) -> dict[str, Any]:
@@ -202,12 +225,26 @@ class KnowledgeHistory:
             """,
             (formula_id,),
         ).fetchall()
+        evidence = connection.execute(
+            """
+            SELECT e.id, e.kind, e.relative_path, e.sha256,
+                   s.source_path, s.sheet_name, s.cell_range
+            FROM formula_evidence e
+            JOIN formula_sources s ON s.id = e.formula_source_id
+            WHERE e.formula_id = ?
+            ORDER BY s.id, CASE e.kind WHEN 'tight' THEN 0 ELSE 1 END
+            """,
+            (formula_id,),
+        ).fetchall()
         return {
             "id": int(row["id"]),
             "customer": str(row["customer"] or "未记录客户"),
             "product": str(row["product"] or "未记录产品"),
             "formula_no": str(row["formula_no"] or row["title"] or "配方"),
-            "record_date": str(row["record_date"] or ""),
+            "record_date": str(row["record_date_raw"] or row["record_date"] or ""),
+            "record_date_sort": str(row["record_date"] or ""),
+            "date_status": str(row["date_status"] or "UNKNOWN"),
+            "notes_raw": str(row["notes_raw"] or ""),
             "confirmed_at": str(row["confirmed_at"] or ""),
             "source_job_id": str(row["source_job_id"] or ""),
             "source_formula_id": str(row["source_formula_id"] or ""),
@@ -215,7 +252,55 @@ class KnowledgeHistory:
             "revision_of_id": row["revision_of_id"],
             "materials": [dict(item) for item in materials],
             "process": [dict(item) for item in process],
+            "evidence": [dict(item) for item in evidence],
         }
+
+    def pending_review(self, limit: int = 100) -> dict[str, Any]:
+        connection = self.database._get_conn()
+        rows = connection.execute(
+            """
+            SELECT id, source_path, sheet_name, start_row, end_row,
+                   reason, payload_json
+            FROM import_candidates
+            WHERE status = 'PENDING_REVIEW'
+            ORDER BY id
+            LIMIT ?
+            """,
+            (max(1, min(limit, 500)),),
+        ).fetchall()
+        total = connection.execute(
+            """
+            SELECT COUNT(*) FROM import_candidates
+            WHERE status = 'PENDING_REVIEW'
+            """
+        ).fetchone()[0]
+        items = []
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+            except json.JSONDecodeError:
+                payload = {}
+            formula = payload.get("formula") or {}
+            items.append(
+                {
+                    "id": int(row["id"]),
+                    "reason": str(row["reason"]),
+                    "source_path": str(row["source_path"]),
+                    "sheet_name": str(row["sheet_name"]),
+                    "rows": [int(row["start_row"]), int(row["end_row"])],
+                    "customer": str(formula.get("customer", "")),
+                    "product": str(formula.get("product", "")),
+                    "formula_label": str(
+                        formula.get("formula_label", "")
+                    ),
+                    "materials": [
+                        str(material.get("name_raw", ""))
+                        for material in formula.get("materials", [])
+                        if str(material.get("name_raw", "")).strip()
+                    ],
+                }
+            )
+        return {"total": int(total), "items": items}
 
     def compare(self, left_id: int, right_id: int) -> dict[str, Any]:
         left = self.formula_detail(left_id)
@@ -259,6 +344,85 @@ class KnowledgeHistory:
         )
         return int(cursor.lastrowid)
 
+    def _learn_formula_terms(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        customer: str,
+        product: str,
+        formula: dict[str, Any],
+        confirmed_at: str,
+    ) -> None:
+        terms: list[tuple[str, str]] = [
+            ("customer", customer),
+            ("product", product),
+        ]
+        terms.extend(
+            (
+                "material",
+                str(material.get("name", {}).get("value", "")),
+            )
+            for material in formula.get("materials", [])
+        )
+        terms.extend(
+            (
+                "process",
+                str(parameter.get("name", {}).get("value", "")),
+            )
+            for parameter in formula.get("process_parameters", [])
+        )
+        notes = str(formula.get("notes", {}).get("value", "")).strip()
+        if notes:
+            terms.append(("note_phrase", notes))
+        for term_type, value in terms:
+            value = value.strip()
+            normalized = _normalize_lexicon(value)
+            if not normalized:
+                continue
+            connection.execute(
+                """
+                INSERT INTO lexicon_terms (
+                    term_type, standard_value, normalized_value,
+                    source_quality, occurrence_count, accepted_count,
+                    rejected_count, created_at, updated_at
+                ) VALUES (?, ?, ?, 'confirmed', 1, 1, 0, ?, ?)
+                ON CONFLICT(term_type, normalized_value) DO UPDATE SET
+                    standard_value = excluded.standard_value,
+                    source_quality = 'confirmed',
+                    occurrence_count = occurrence_count + 1,
+                    accepted_count = accepted_count + 1,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    term_type,
+                    value,
+                    normalized,
+                    confirmed_at,
+                    confirmed_at,
+                ),
+            )
+            term_id = connection.execute(
+                """
+                SELECT id FROM lexicon_terms
+                WHERE term_type = ? AND normalized_value = ?
+                """,
+                (term_type, normalized),
+            ).fetchone()["id"]
+            connection.execute(
+                """
+                INSERT INTO lexicon_context_stats (
+                    term_id, customer_context, product_context,
+                    occurrence_count, accepted_count, rejected_count
+                ) VALUES (?, ?, ?, 1, 1, 0)
+                ON CONFLICT(
+                    term_id, customer_context, product_context
+                ) DO UPDATE SET
+                    occurrence_count = occurrence_count + 1,
+                    accepted_count = accepted_count + 1
+                """,
+                (term_id, customer, product),
+            )
+
     def _insert_formula(
         self,
         connection: sqlite3.Connection,
@@ -280,13 +444,16 @@ class KnowledgeHistory:
             """,
             (customer_id, product_id, formula_no),
         ).fetchone()
+        raw_date = str(formula.get("record_date", {}).get("value", ""))
+        parsed_date = parse_record_date(raw_date)
         cursor = connection.execute(
             """
             INSERT INTO formulas (
                 customer_id, product_id, title, fingerprint, formula_no,
-                record_date, confirmed_at, source_job_id, source_formula_id,
-                source_image_index, revision_of_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                record_date, record_date_raw, confirmed_at, source_job_id,
+                source_formula_id, source_image_index, revision_of_id,
+                date_status, source_order, notes_raw
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 customer_id,
@@ -294,12 +461,20 @@ class KnowledgeHistory:
                 formula_no or "配方",
                 formula_hash,
                 formula_no,
-                str(formula.get("record_date", {}).get("value", "")),
+                parsed_date.sort_value,
+                parsed_date.raw,
                 confirmed_at,
                 job_id,
                 str(formula["formula_id"]),
                 int(page.get("source_image_index", 1)),
                 int(revision["id"]) if revision else None,
+                parsed_date.status,
+                int(
+                    formula.get(
+                        "source_order", formula.get("formula_sequence", 0)
+                    )
+                ),
+                str(formula.get("notes", {}).get("value", "")),
             ),
         )
         formula_db_id = int(cursor.lastrowid)
@@ -381,6 +556,83 @@ def _number_or_none(value: str) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _normalize_lexicon(value: str) -> str:
+    return " ".join(
+        unicodedata.normalize("NFKC", value).casefold().split()
+    )
+
+
+def _present_history_row(row: dict[str, Any]) -> dict[str, Any]:
+    row["record_date_sort"] = str(row.get("record_date") or "")
+    row["record_date"] = str(
+        row.get("record_date_raw") or row.get("record_date") or ""
+    )
+    return row
+
+
+def _timeline_sort_key(
+    row: dict[str, Any],
+    rows: list[dict[str, Any]],
+) -> tuple[float, str, int, int]:
+    """Place undated source records between their dated source neighbors."""
+    sort_value = str(row.get("record_date_sort") or "")
+    if sort_value:
+        rank = float(date.fromisoformat(sort_value).toordinal())
+    else:
+        source_id = str(row.get("source_job_id") or "")
+        source_order = int(row.get("source_order") or 0)
+        source_rows = sorted(
+            (
+                candidate
+                for candidate in rows
+                if str(candidate.get("source_job_id") or "") == source_id
+            ),
+            key=lambda candidate: (
+                int(candidate.get("source_order") or 0),
+                int(candidate.get("id") or 0),
+            ),
+        )
+        before = [
+            candidate
+            for candidate in source_rows
+            if int(candidate.get("source_order") or 0) < source_order
+            and candidate.get("record_date_sort")
+        ]
+        after = [
+            candidate
+            for candidate in source_rows
+            if int(candidate.get("source_order") or 0) > source_order
+            and candidate.get("record_date_sort")
+        ]
+        previous = before[-1] if before else None
+        following = after[0] if after else None
+        if previous and following:
+            low = date.fromisoformat(str(previous["record_date_sort"])).toordinal()
+            high = date.fromisoformat(str(following["record_date_sort"])).toordinal()
+            low_order = int(previous.get("source_order") or 0)
+            high_order = int(following.get("source_order") or 0)
+            fraction = (source_order - low_order) / max(1, high_order - low_order)
+            rank = low + ((high - low) * fraction)
+        elif previous:
+            low = date.fromisoformat(str(previous["record_date_sort"])).toordinal()
+            rank = low + min(0.99, max(0.01, (source_order - int(previous.get("source_order") or 0)) / 1000))
+        elif following:
+            high = date.fromisoformat(str(following["record_date_sort"])).toordinal()
+            rank = high - min(0.99, max(0.01, (int(following.get("source_order") or 0) - source_order) / 1000))
+        else:
+            confirmed = str(row.get("confirmed_at") or "")[:10]
+            try:
+                rank = float(date.fromisoformat(confirmed).toordinal())
+            except ValueError:
+                rank = float("inf")
+    return (
+        rank,
+        str(row.get("confirmed_at") or ""),
+        int(row.get("source_order") or 0),
+        int(row.get("id") or 0),
+    )
 
 
 def _compare_named_rows(

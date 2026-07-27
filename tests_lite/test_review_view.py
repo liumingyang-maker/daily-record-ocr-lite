@@ -27,7 +27,8 @@ def test_review_view_groups_by_customer_product_and_prioritizes_issues():
     assert formula["evidence"]["rect"] == [0.05, 0.18, 0.95, 0.55]
     assert "field_id" not in formula["materials"][0]
     assert formula["materials"][0]["amount"]["needs_confirmation"] is True
-    assert formula["blocking_message"] == "待确认：联创 / G30A / 配方1 缺少日期"
+    assert formula["date_pending"] is True
+    assert formula["blocking_message"] == "待确认：联创 / G30A / 配方1 材料数量需要确认"
 
 
 def test_review_view_uses_business_labels_and_separates_technical_metadata():
@@ -66,3 +67,52 @@ def test_review_view_orders_issue_formulas_before_confirmed_formulas():
     assert [item["formula_no"] for item in formulas] == ["配方1", "配方0"]
     assert formulas[0]["collapsed"] is False
     assert formulas[1]["collapsed"] is True
+
+
+def test_review_view_preserves_date_text_and_exposes_internal_sort_state():
+    final = make_review_final("job-review")
+    formula = final["pages"][0]["product_sections"][0]["formulas"][0]
+    formula["record_date"]["value"] = "24.7.19"
+    formula["record_date"]["status"] = "AUTO_ACCEPT"
+
+    view = build_review_view(_job(), final, confirmed={})
+    date = view["groups"][0]["formulas"][0]["date"]
+
+    assert date["value"] == "24.7.19"
+    assert date["sort_value"] == "2024-07-19"
+    assert date["parse_status"] == "KNOWN"
+
+
+def test_unparsed_nonempty_date_is_explicitly_marked_for_confirmation():
+    final = make_review_final("job-review")
+    formula = final["pages"][0]["product_sections"][0]["formulas"][0]
+    formula["record_date"]["value"] = "date unclear"
+    formula["record_date"]["status"] = "AUTO_ACCEPT"
+    formula["materials"][0]["amount"]["status"] = "AUTO_ACCEPT"
+
+    view = build_review_view(_job(), final, confirmed={})
+    presented = view["groups"][0]["formulas"][0]
+
+    assert presented["date"]["parse_status"] == "UNPARSED"
+    assert presented["date"]["needs_confirmation"] is True
+    assert presented["needs_confirmation"] is True
+
+
+def test_review_view_prefers_verified_crop_but_always_keeps_full_image_url():
+    final = make_review_final("job-review")
+    formula_id = final["pages"][0]["product_sections"][0]["formulas"][0][
+        "formula_id"
+    ]
+    crop_url = f"/api/jobs/job-review/review/evidence/{formula_id}"
+
+    view = build_review_view(
+        _job(),
+        final,
+        confirmed={},
+        evidence_urls={formula_id: crop_url},
+    )
+    evidence = view["groups"][0]["formulas"][0]["evidence"]
+
+    assert evidence["image_url"] == crop_url
+    assert evidence["full_image_url"].endswith("source/a.jpg")
+    assert evidence["rect"] is None

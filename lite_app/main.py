@@ -23,12 +23,18 @@ from fastapi.templating import Jinja2Templates
 from . import __version__
 from .config import DATA_ROOT, get_config, load_recognition_config
 from .contracts import normalize_legacy_result, validate_record_result
+from .evidence_regions import (
+    formula_evidence_contexts,
+    load_formula_evidence_manifest,
+    verified_evidence_path,
+)
 from .exporter import ExportError, export_job
 from .final_result import (
     FinalResultError,
     FinalResultService,
     project_final_result,
 )
+from .knowledge.path import resolve_knowledge_db_path
 from .presentation import present_stored_job
 from .readiness import (
     collect_unresolved_fields,
@@ -943,6 +949,15 @@ async def export_api(job_id: str):
 @app.get("/jobs/{job_id}/files/{filename:path}")
 async def download_file(job_id: str, filename: str):
     storage = _get_storage()
+    normalized = "/".join(
+        part
+        for part in str(filename).replace("\\", "/").split("/")
+        if part not in {"", "."}
+    )
+    if normalized == "review/evidence_regions.json" or normalized.startswith(
+        "review/evidence/"
+    ):
+        raise HTTPException(status_code=404, detail="文件不存在。")
     try:
         file_path = storage.get_file_path(job_id, filename)
     except (FileNotFoundError, ValueError) as e:
@@ -1012,14 +1027,103 @@ def _saved(editor: ReviewEditor, message: str, **extra) -> dict:
 
 @app.get("/api/jobs/{job_id}/review")
 async def get_review(job_id: str):
-    _storage, job, editor, state = _review_resources(job_id)
+    storage, job, editor, state = _review_resources(job_id)
     try:
         final = editor.load()
     except FinalResultError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    view = build_review_view(job, final, state.confirmation_map(final))
+    job_dir = storage.get_job_dir(job_id)
+    evidence_hash_cache: dict[Path, str] = {}
+    evidence_manifest = load_formula_evidence_manifest(job_dir)
+    evidence_contexts = formula_evidence_contexts(final)
+    evidence_urls = (
+        {}
+        if evidence_manifest is None
+        else {
+            formula_id: (
+                f"/api/jobs/{quote(job_id, safe='')}/review/evidence/"
+                f"{quote(formula_id, safe='')}"
+            )
+            for formula_id in _formula_ids(final)
+            if verified_evidence_path(
+                job_dir,
+                formula_id,
+                job=job,
+                final=final,
+                hash_cache=evidence_hash_cache,
+                manifest=evidence_manifest,
+                formula_contexts=evidence_contexts,
+            )
+            is not None
+        }
+    )
+    full_evidence_urls = {
+        formula_id: (
+            f"/api/jobs/{quote(job_id, safe='')}/review/evidence/"
+            f"{quote(formula_id, safe='')}/full"
+        )
+        for formula_id in evidence_urls
+    }
+    view = build_review_view(
+        job,
+        final,
+        state.confirmation_map(final),
+        evidence_urls=evidence_urls,
+        full_evidence_urls=full_evidence_urls,
+    )
     view["version"] = str(final["updated_at"])
     return view
+
+
+@app.get("/api/jobs/{job_id}/review/evidence/{formula_id}")
+async def get_review_evidence(job_id: str, formula_id: str):
+    storage, job, editor, _state = _review_resources(job_id)
+    try:
+        final = editor.load()
+    except FinalResultError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if formula_id not in _formula_ids(final):
+        raise HTTPException(status_code=404, detail="配方证据不存在。")
+    path = verified_evidence_path(
+        storage.get_job_dir(job_id),
+        formula_id,
+        job=job,
+        final=final,
+    )
+    if path is None:
+        raise HTTPException(status_code=404, detail="配方证据不存在或校验失败。")
+    return FileResponse(path, media_type="image/jpeg")
+
+
+@app.get("/api/jobs/{job_id}/review/evidence/{formula_id}/full")
+async def get_review_full_image(job_id: str, formula_id: str):
+    storage, job, editor, _state = _review_resources(job_id)
+    try:
+        final = editor.load()
+    except FinalResultError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if formula_id not in _formula_ids(final):
+        raise HTTPException(status_code=404, detail="配方证据不存在。")
+    path = verified_evidence_path(
+        storage.get_job_dir(job_id),
+        formula_id,
+        job=job,
+        final=final,
+        kind="full",
+    )
+    if path is None:
+        raise HTTPException(status_code=404, detail="整图证据不存在或校验失败。")
+    return FileResponse(path, media_type="image/jpeg")
+
+
+def _formula_ids(final: dict) -> set[str]:
+    return {
+        str(formula.get("formula_id", ""))
+        for page in final.get("pages", [])
+        for section in page.get("product_sections", [])
+        for formula in section.get("formulas", [])
+        if formula.get("formula_id")
+    }
 
 
 @app.patch("/api/jobs/{job_id}/review/groups/{group_id}")
@@ -1312,7 +1416,7 @@ async def update_field(job_id: str, field_id: str, request: Request):
     # 记录修正日志
     try:
         from .knowledge.database import KnowledgeDB
-        db = KnowledgeDB(DATA_ROOT / "knowledge.sqlite3")
+        db = KnowledgeDB(resolve_knowledge_db_path())
         db.initialize()
         from .review.corrections import CorrectionService
         svc = CorrectionService(db)
@@ -1374,9 +1478,7 @@ def _finalize_job(job_id: str) -> dict:
     from .knowledge.history import KnowledgeHistory
 
     state = ReviewStateStore(job_dir)
-    history = KnowledgeHistory(
-        Path(os.environ.get("KNOWLEDGE_DB_PATH", DATA_ROOT / "knowledge.sqlite3"))
-    )
+    history = KnowledgeHistory(resolve_knowledge_db_path())
     try:
         receipt = history.append_confirmed_job(
             job,
@@ -1650,7 +1752,7 @@ async def save_company_alias(job_id: str, company_id: str, request: Request):
         raise HTTPException(status_code=400, detail="别名不能为空。")
 
     standard_name = body.get("standard_name", alias).strip()
-    db = KnowledgeDB(DATA_ROOT / "knowledge.sqlite3")
+    db = KnowledgeDB(resolve_knowledge_db_path())
     db.initialize()
 
     # 查找或创建公司（使用 customers 表）
@@ -1716,7 +1818,7 @@ async def save_product_alias(job_id: str, product_id: str, request: Request):
         raise HTTPException(status_code=400, detail="别名不能为空。")
 
     standard_name = body.get("standard_name", alias).strip()
-    db = KnowledgeDB(DATA_ROOT / "knowledge.sqlite3")
+    db = KnowledgeDB(resolve_knowledge_db_path())
     db.initialize()
 
     # 查找或创建产品（使用 products 表）
@@ -1739,12 +1841,7 @@ async def save_product_alias(job_id: str, product_id: str, request: Request):
 
 
 def _knowledge_db_path() -> Path:
-    return Path(
-        os.environ.get(
-            "KNOWLEDGE_DB_PATH",
-            DATA_ROOT / "knowledge.sqlite3",
-        )
-    )
+    return resolve_knowledge_db_path()
 
 
 @app.get("/api/knowledge/tree")
@@ -1782,7 +1879,54 @@ async def knowledge_formula(formula_id: int):
                 )
         except (FileNotFoundError, ValueError, IndexError):
             pass
+    for evidence in detail.get("evidence", []):
+        evidence["image_url"] = (
+            f"/api/knowledge/evidence/{int(evidence['id'])}"
+        )
     return detail
+
+
+@app.get("/api/knowledge/pending")
+async def knowledge_pending(limit: int = 100):
+    from .knowledge.history import KnowledgeHistory
+
+    history = KnowledgeHistory(_knowledge_db_path())
+    try:
+        return history.pending_review(limit)
+    finally:
+        history.close()
+
+
+@app.get("/api/knowledge/evidence/{evidence_id}")
+async def knowledge_evidence(evidence_id: int):
+    import hashlib
+
+    from .knowledge.database import KnowledgeDB
+
+    database = KnowledgeDB(_knowledge_db_path())
+    database.initialize()
+    connection = database._get_conn()
+    row = connection.execute(
+        """
+        SELECT relative_path, sha256 FROM formula_evidence WHERE id = ?
+        """,
+        (evidence_id,),
+    ).fetchone()
+    database.close()
+    if row is None:
+        raise HTTPException(status_code=404, detail="证据不存在")
+    data_root = _knowledge_db_path().parent.resolve()
+    path = (data_root / str(row["relative_path"])).resolve()
+    try:
+        path.relative_to(data_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="证据路径无效") from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="证据文件不存在")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != str(row["sha256"]):
+        raise HTTPException(status_code=409, detail="证据校验失败")
+    return FileResponse(path, media_type="image/png")
 
 
 @app.get("/api/knowledge/compare")

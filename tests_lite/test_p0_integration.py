@@ -43,6 +43,7 @@ class TestSpatialAssociation:
             "records": [{
                 "record_id": "r1",
                 "source_image_indexes": [1],
+                "record_bbox": [0.05, 0.20, 0.25, 0.35],
                 "materials": [{
                     "field_id": "r1_m0",
                     "name": {"value": "PA66", "confidence": 0.9, "evidence_token_ids": ["p1_t002"]},
@@ -77,6 +78,7 @@ class TestSpatialAssociation:
             "records": [{
                 "record_id": "r1",
                 "source_image_indexes": [1],
+                "record_bbox": [0.05, 0.20, 0.25, 0.35],
                 "materials": [{
                     "field_id": "r1_m0",
                     "name": {"value": "EBS", "confidence": 0.88},

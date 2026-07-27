@@ -211,6 +211,71 @@ def test_page_coverage_requires_upload_order_and_projection_reuses_source_id():
     ]
 
 
+def test_compact_records_preserve_page_customer_and_product_context():
+    from lite_app.contracts import normalize_legacy_result, validate_page_coverage
+
+    raw = {
+        "records": [
+            {
+                "source_image_index": 1,
+                "company": "客户甲",
+                "product_or_series": "G30A",
+                "formula_no": "配方1",
+                "record_date": "2024-07-01",
+                "materials": [{"name": "PA66-G30", "amount": "25", "unit": "kg"}],
+                "process_parameters": [],
+                "notes": "先混合",
+                "confidence": 0.92,
+            },
+            {
+                "source_image_index": 2,
+                "company": "客户乙",
+                "product_or_series": "G35B",
+                "formula_no": "配方2",
+                "record_date": "",
+                "materials": [{"name": "PA66-G35", "amount": "18", "unit": ""}],
+                "process_parameters": [],
+                "notes": "",
+                "confidence": 0.81,
+            },
+        ],
+        "warnings": [],
+    }
+
+    normalized = normalize_legacy_result(raw, "job-compact")
+
+    assert validate_page_coverage(normalized, expected_pages=2) == []
+    assert [page["company"]["standard_value"] for page in normalized["pages"]] == [
+        "客户甲",
+        "客户乙",
+    ]
+    assert [
+        page["product_sections"][0]["product_or_series"]["value"]
+        for page in normalized["pages"]
+    ] == ["G30A", "G35B"]
+    assert normalized["pages"][0]["product_sections"][0]["formulas"][0][
+        "materials"
+    ][0]["amount"]["value"] == "25"
+
+
+def test_compact_records_preserve_interleaved_page_source_order():
+    from lite_app.contracts import normalize_legacy_result
+
+    raw = {
+        "records": [
+            {"source_image_index": 1, "company": "C", "product_or_series": "A", "formula_no": "A1"},
+            {"source_image_index": 1, "company": "C", "product_or_series": "B", "formula_no": "B1"},
+            {"source_image_index": 1, "company": "C", "product_or_series": "A", "formula_no": "A2"},
+        ]
+    }
+
+    normalized = normalize_legacy_result(raw, "job-order")
+    sections = normalized["pages"][0]["product_sections"]
+
+    assert [formula["source_order"] for formula in sections[0]["formulas"]] == [1, 3]
+    assert [formula["source_order"] for formula in sections[1]["formulas"]] == [2]
+
+
 def test_v1_error_taxonomy_is_importable():
     from lite_app.exporter import UnresolvedReviewError
     from lite_app.fusion.association import AssociationError
@@ -451,7 +516,7 @@ def test_center_distance_is_independent_of_iou():
             field_type="amount",
             source_image_index=1,
             field_bbox=[0.158, 0.132, 0.198, 0.157],
-            record_bbox=None,
+            record_bbox=[0.0, 0.0, 0.5, 0.5],
             evidence_token_ids=[],
             vlm_value="0.5",
         ),
@@ -486,7 +551,7 @@ def test_multitoken_decimal_candidate_preserves_all_evidence():
             field_type="amount",
             source_image_index=1,
             field_bbox=[0.10, 0.10, 0.16, 0.13],
-            record_bbox=None,
+            record_bbox=[0.0, 0.0, 0.5, 0.5],
             evidence_token_ids=["p1_t001", "p1_t002", "p1_t003"],
             vlm_value="0.5",
         ),
@@ -557,6 +622,54 @@ def test_layout_fallback_selects_material_pair_within_matching_record():
     assert len(candidates) == 1
     assert candidates[0].value == "0.25"
     assert candidates[0].token_ids == ["p1_t004"]
+
+
+def test_layout_fallback_rejects_unanchored_coarse_amount_pair():
+    from lite_app.fusion.association import FieldEvidence, associate_field
+
+    page = OCRPage(
+        image_index=1,
+        width=1000,
+        height=1000,
+        tokens=[
+            _token("p1_t001", "Material A Material B", [100, 100, 420, 140]),
+            _token("p1_t002", "123456", [100, 170, 260, 210]),
+        ],
+        average_confidence=0.95,
+        provider="paddleocr_v6",
+        model="PP-OCRv6_medium",
+        elapsed_ms=1,
+    )
+    layout = {
+        "pairs": {
+            "1": [
+                {
+                    "name_token_ids": ["p1_t001"],
+                    "amount_token_ids": ["p1_t002"],
+                    "name": "Material A Material B",
+                    "score": 0.99,
+                }
+            ]
+        },
+        "records": {"1": [{"bbox": [0, 0, 1000, 1000]}]},
+    }
+
+    candidates = associate_field(
+        FieldEvidence(
+            field_id="formula_001__material_001__amount",
+            field_type="amount",
+            source_image_index=1,
+            field_bbox=None,
+            record_bbox=None,
+            evidence_token_ids=[],
+            vlm_value="12",
+            anchor_value="Material A",
+        ),
+        [page],
+        layout,
+    )
+
+    assert candidates == []
 
 
 def test_record_boundary_mismatch_is_explicit_review_signal():

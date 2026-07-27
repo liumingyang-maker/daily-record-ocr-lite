@@ -119,12 +119,23 @@ def test_editor_rejects_stale_version_and_invalid_or_unknown_values(tmp_path):
 
     with pytest.raises(ReviewVersionConflict):
         editor.add_formula("section_001", expected_version=stale)
-    with pytest.raises(ReviewInputError, match="日期"):
-        editor.update_formula(
-            "job-editor__page_001__formula_001",
-            {"record_date": "2026/07/27"},
-            expected_version=_version(editor),
-        )
+    editor.update_formula(
+        "job-editor__page_001__formula_001",
+        {"record_date": "22/9/27"},
+        expected_version=_version(editor),
+    )
+    assert _formula(
+        _assert_valid(editor), "job-editor__page_001__formula_001"
+    )["record_date"]["value"] == "22/9/27"
+
+    editor.update_formula(
+        "job-editor__page_001__formula_001",
+        {"record_date": "24.7.19"},
+        expected_version=_version(editor),
+    )
+    assert _formula(
+        _assert_valid(editor), "job-editor__page_001__formula_001"
+    )["record_date"]["value"] == "24.7.19"
     with pytest.raises(ReviewInputError, match="日期"):
         editor.update_formula(
             "job-editor__page_001__formula_001",
