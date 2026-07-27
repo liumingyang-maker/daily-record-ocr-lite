@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -112,6 +113,18 @@ def test_import_writes_validated_personal_database(tmp_path: Path) -> None:
     )
     assert receipt["formulas_imported"] == 1
     assert receipt["source_count"] == 1
+    with sqlite3.connect(database) as connection:
+        evidence_paths = [
+            row[0]
+            for row in connection.execute(
+                "SELECT relative_path FROM formula_evidence ORDER BY kind"
+            )
+        ]
+    assert evidence_paths
+    assert all(
+        path.startswith("personal_imports/test-run/evidence/")
+        for path in evidence_paths
+    )
 
 
 def test_rejects_output_inside_the_source_tree(tmp_path: Path) -> None:

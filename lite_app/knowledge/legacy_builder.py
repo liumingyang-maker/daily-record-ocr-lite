@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,6 +18,8 @@ from .import_records import (
 from .import_service import PersonalImportBatch, StagedIssue
 from .source_scanner import SourceDecision, scan_sources
 from .workbook_reader import read_workbook
+
+RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 @dataclass(frozen=True)
@@ -35,8 +38,8 @@ def prepare_personal_import(
     source = Path(source_root).resolve()
     staging = Path(staging_dir).resolve()
     _validate_output_boundary(source, staging)
-    if not run_id.strip():
-        raise ValueError("run_id 不能为空")
+    if not RUN_ID_PATTERN.fullmatch(run_id):
+        raise ValueError("run_id 只能包含字母、数字、点、下划线和连字符")
     staging.mkdir(parents=True, exist_ok=True)
     evidence_dir = staging / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -107,10 +110,12 @@ def prepare_personal_import(
                         tight_evidence=_relative_to_staging(
                             rendered.tight_path,
                             staging,
+                            run_id,
                         ),
                         context_evidence=_relative_to_staging(
                             rendered.context_path,
                             staging,
+                            run_id,
                         ),
                         tight_sha256=_sha256(rendered.tight_path),
                         context_sha256=_sha256(rendered.context_path),
@@ -168,8 +173,13 @@ def _validate_output_boundary(source: Path, output: Path) -> None:
         raise ValueError("原始资料目录不能位于输出目录内")
 
 
-def _relative_to_staging(path: Path, staging: Path) -> str:
-    return path.resolve().relative_to(staging.resolve()).as_posix()
+def _relative_to_staging(
+    path: Path,
+    staging: Path,
+    run_id: str,
+) -> str:
+    relative = path.resolve().relative_to(staging.resolve())
+    return (Path("personal_imports") / run_id / relative).as_posix()
 
 
 def _sha256(path: Path) -> str:
