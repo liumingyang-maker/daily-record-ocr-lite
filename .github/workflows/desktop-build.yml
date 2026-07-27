@@ -64,6 +64,17 @@ jobs:
             if ($process.ExitCode -ne 0 -and (Test-Path $stderr)) { Get-Content $stderr }
             if ($process.ExitCode -ne 0) { throw "$mode failed with exit code $($process.ExitCode)" }
           }
+      - name: Package verified models for native CI
+        shell: pwsh
+        run: |
+          $models = Join-Path $env:RUNNER_TEMP "daily-record-ocr-data\models\paddlex\official_models\*"
+          Compress-Archive -Path $models -DestinationPath artifacts\verified-desktop-models.zip -CompressionLevel Optimal
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-desktop-models-for-native-ci
+          path: artifacts/verified-desktop-models.zip
+          if-no-files-found: error
+          retention-days: 1
       - name: Build unsigned Inno Setup installer
         shell: pwsh
         run: |
@@ -84,6 +95,7 @@ jobs:
           retention-days: 7
 
   macos-arm64-unsigned:
+    needs: windows-x64-unsigned
     runs-on: macos-14
     timeout-minutes: 90
     env:
@@ -116,6 +128,16 @@ jobs:
           python scripts/assert_junit_passed.py artifacts/real-ocr-macos.xml
       - name: Build PyInstaller app bundle
         run: python -m PyInstaller --noconfirm --clean packaging/desktop/daily_record_ocr.spec
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-desktop-models-for-native-ci
+          path: ${{ runner.temp }}/verified-desktop-models
+      - name: Seed cross-platform models verified by the Windows network gate
+        run: |
+          DATA="$RUNNER_TEMP/daily-record-ocr-data"
+          MODELS="$DATA/models/paddlex/official_models"
+          mkdir -p "$MODELS"
+          unzip -q "$RUNNER_TEMP/verified-desktop-models/verified-desktop-models.zip" -d "$MODELS"
       - name: Frozen launcher, health and real OCR gates
         run: |
           APP="dist/DailyRecordOCR.app/Contents/MacOS/DailyRecordOCR"

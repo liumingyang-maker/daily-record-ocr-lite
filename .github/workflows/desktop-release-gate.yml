@@ -64,6 +64,17 @@ jobs:
           & $signTool.FullName verify /pa $installer
           python scripts/build_desktop.py metadata windows x64 $env:GITHUB_SHA artifacts $installer
           Remove-Item -LiteralPath $certificate -Force
+      - name: Package verified models for native release CI
+        shell: pwsh
+        run: |
+          $models = Join-Path $env:RUNNER_TEMP "daily-record-ocr-data\models\paddlex\official_models\*"
+          Compress-Archive -Path $models -DestinationPath artifacts\verified-desktop-models.zip -CompressionLevel Optimal
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-desktop-models-for-native-release-ci
+          path: artifacts/verified-desktop-models.zip
+          if-no-files-found: error
+          retention-days: 1
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x64-signed-release-candidate
@@ -74,6 +85,7 @@ jobs:
           if-no-files-found: error
 
   macos-notarized-candidate:
+    needs: windows-signed-candidate
     runs-on: macos-14
     timeout-minutes: 120
     env:
@@ -105,6 +117,10 @@ jobs:
           security import "$CERTIFICATE" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
           security list-keychain -d user -s "$KEYCHAIN"
           security set-key-partition-list -S apple-tool:,apple: -s -k runner "$KEYCHAIN"
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-desktop-models-for-native-release-ci
+          path: ${{ runner.temp }}/verified-desktop-models
       - name: Install, test and build
         run: |
           test "$(uname -m)" = "arm64"
@@ -114,10 +130,14 @@ jobs:
           python -m pytest -m real_ocr -q -s --junitxml=real-ocr-macos.xml
           python scripts/assert_junit_passed.py real-ocr-macos.xml
           python -m PyInstaller --noconfirm --clean packaging/desktop/daily_record_ocr.spec
+          DATA="$RUNNER_TEMP/daily-record-ocr-data"
+          MODELS="$DATA/models/paddlex/official_models"
+          mkdir -p "$MODELS"
+          unzip -q "$RUNNER_TEMP/verified-desktop-models/verified-desktop-models.zip" -d "$MODELS"
           APP="dist/DailyRecordOCR.app/Contents/MacOS/DailyRecordOCR"
-          "$APP" --smoke-test --data-dir "$RUNNER_TEMP/daily-record-ocr-data"
-          "$APP" --install-models --data-dir "$RUNNER_TEMP/daily-record-ocr-data"
-          "$APP" --ocr-test --data-dir "$RUNNER_TEMP/daily-record-ocr-data"
+          "$APP" --smoke-test --data-dir "$DATA"
+          "$APP" --install-models --data-dir "$DATA"
+          "$APP" --ocr-test --data-dir "$DATA"
       - name: Sign, notarize and staple DMG
         run: |
           version="$(python -c 'from lite_app import __version__; print(__version__)')"

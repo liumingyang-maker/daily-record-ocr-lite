@@ -82,6 +82,9 @@ def test_native_workflows_require_frozen_health_real_ocr_and_formal_secrets():
     assert "windows-latest" in test_build and "macos-14" in test_build
     assert "python -m pip install paddlepaddle==3.3.1\n" in test_build
     assert "paddlepaddle.org.cn/packages" not in test_build
+    assert "needs: windows-x64-unsigned" in test_build
+    assert "verified-desktop-models-for-native-ci" in test_build
+    assert "actions/download-artifact@v4" in test_build
     assert '"--smoke-test", "--install-models", "--ocr-test"' in test_build
     assert "--ocr-test" in test_build
     assert "APPLE_NOTARY_PASSWORD" in release
