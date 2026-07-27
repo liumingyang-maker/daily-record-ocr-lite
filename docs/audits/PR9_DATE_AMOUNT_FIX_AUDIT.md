@@ -181,4 +181,25 @@ The remediation now:
 - adds explicit regression tests for all four cases;
 - removes all trailing whitespace reported by range `git diff --check`.
 
-A second independent review is required before Draft push. The formal real-job Gate remains blocked regardless of the code-review outcome.
+The required second independent review is recorded below. The formal real-job Gate remains blocked regardless of the code-review outcome.
+
+## Second independent GPT review
+
+Reviewed head: `7adc37b0157e08a2aba51c87c7160548ba1f82e9`
+
+The reviewer reran the previous direct-evidence and coarse-record-bbox reproductions. In both cases the later formula retained its independent VLM value, while the earlier formula's numeric OCR token was absent from the candidates. Direct-id, bbox, center-distance, and layout association paths also rejected numeric OCR tokens outside the current formula region.
+
+Review result:
+
+```text
+P0: 0
+P1: 0
+P2: 1 non-blocking future knowledge-path integration test
+Draft push: ALLOWED
+PR Ready: NO
+Merge: NO
+Tag: NO
+Release: NO
+```
+
+The formal real-job and product Gates remain blocked. This review authorizes only updating the existing Draft PR with the remediated code and audit evidence.
