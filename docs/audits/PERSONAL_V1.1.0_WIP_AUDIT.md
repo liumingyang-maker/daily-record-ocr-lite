@@ -1,8 +1,8 @@
 # daily-record-ocr-lite 个人版 v1.1.0 阶段审计
 
-审计日期：2026-07-27  
-审计状态：WIP / 禁止发布  
-开发分支：`feat/personal-knowledge-layer`  
+审计日期：2026-07-27
+审计状态：WIP / 禁止发布
+开发分支：`feat/personal-knowledge-layer`
 本报告输入 HEAD：`21be721cb9ebbf18a685c0d9fe72f225ef07eac6`
 
 ## 可直接复制给独立 GPT 的审查任务
