@@ -34,8 +34,8 @@
 - 基线分支：`feat/evidence-first-product-workflow`
 - 实现分支：`feat/desktop-installers`
 - 基线 SHA：`50e9039cd998403ffe7270e3f0b1f15eaae05b4e`
-- 桌面实现 SHA：`fb7f1cf`
-- Draft PR：创建后回填
+- 桌面实现与原生 CI 修复 SHA：`4cbbd78`
+- Draft PR：<https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/8>
 - 合并：未执行
 - Tag：未创建
 - Release：未创建
@@ -69,8 +69,8 @@
 
 ### 源码 Gate
 
-- `python -m pytest -m "not real_ocr" -q`：359 passed，5 deselected。
-- `python -m pytest -m real_ocr -q -s`：5 passed，359 deselected；真实推理 3 tokens，2500ms。
+- `python -m pytest -m "not real_ocr" -q`：362 passed，5 deselected。
+- `python -m pytest -m real_ocr -q -s`：5 passed，362 deselected；真实推理 3 tokens，12592ms。
 - `ruff check .`：All checks passed。
 - `git diff --check`：通过。
 - 源码 `--self-test`：OK，数据目录可写、单实例、仅回环地址。
@@ -97,23 +97,46 @@
 
 ## 6. 原生 CI 与发布 Gate
 
-- Windows x64 PR Gate：待 Draft PR 原生 CI 回填。
-- macOS arm64 PR Gate：待 Draft PR 原生 CI 回填。
+- GitHub Actions run：<https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/runs/30236999505>。
+- Windows x64 PR Gate：SUCCESS，9m10s。
+- macOS arm64 PR Gate：SUCCESS，3m37s（在 Windows Gate 成功后串行执行）。
+- Windows 测试工件：`windows-x64-unsigned-test-installer`，171,394,186 bytes。
+- macOS 测试工件：`macos-arm64-unsigned-test-dmg`，273,629,450 bytes。
+- 内部模型工件：`verified-desktop-models-for-native-ci`，111,455,355 bytes，保留 1 天。
+- 所有可安装 PR 工件都明确标记为 unsigned test，不是正式 Release 资产。
 - Windows 正式签名 Gate：未执行，无正式签名资产。
 - Apple Developer ID 签名、公证、staple、Gatekeeper Gate：未执行，无正式公证资产。
-- Inno Setup 安装器未在本机 Windows 环境编译；由 Windows 原生 CI 验证。
-- macOS DMG 无法在 Windows 本机生成；由 `macos-14` arm64 原生 CI 验证。
+- Inno Setup 安装器已由 Windows 原生 CI 编译并通过测试 Gate；本机未安装 Inno Setup。
+- macOS DMG 已由 `macos-14` arm64 原生 CI 构建并通过 `hdiutil verify`。
+
+### macOS 模型网络限制（必须保留的审计说明）
+
+GitHub 的 macOS runner 访问 Paddle 官方 BOS 模型地址时返回 HTTP 403；`httpx` 与 Paddle
+官方客户端同类的 `requests` 均得到相同结果，因此判定为 runner 到 BOS 的网络限制，不通过
+伪造 User-Agent、镜像或取消哈希解决。PR Gate 采用以下严格串行流程：
+
+1. Windows Gate 从清单中的 Paddle 官方 BOS URL 真实下载模型。
+2. Windows 冻结程序校验归档 SHA-256、解压安全和逐文件 SHA-256，并完成真实 OCR。
+3. Windows 仅上传 1 天保留的内部跨平台模型工件。
+4. macOS 下载该内部工件，`--install-models` 在本机再次逐文件 SHA-256，随后完成冻结真实 OCR
+   和 DMG Gate。
+
+因此 macOS CI 证明了 arm64 冻结程序、模型文件校验、真实推理和 DMG 均可用，但不证明
+GitHub macOS runner 能直接从 BOS 下载。桌面运行时仍只使用官方 URL；下载客户端使用
+`requests`，保留 Range 续传、HTTPS、归档 SHA-256 和逐文件 SHA-256。
 
 ## 7. 公开文档依据
 
 - GitHub 托管 runner：<https://docs.github.com/en/actions/reference/runners/github-hosted-runners>
 - PaddlePaddle macOS pip 安装：<https://www.paddlepaddle.org.cn/documentation/docs/en/install/pip/macos-pip_en.html>
+- PaddlePaddle 官方 PyPI 发行物：<https://pypi.org/project/paddlepaddle/>
 - PyInstaller spec：<https://pyinstaller.org/en/stable/spec-files.html>
 - PyInstaller 6.21.0：<https://pypi.org/project/pyinstaller/>
 
 ## 8. 当前审计结论
 
-本地源码 Gate 与 Windows PyInstaller 冻结程序 Gate 已通过，且 Secret 扫描为 0/0。
-当前只能得出“实现已进入原生 CI 审核阶段”的结论。原生 Windows 安装器与 macOS DMG CI
-未通过前，PR 必须保持 Draft；签名、公证、独立 GPT 审计和 Release Gate 未完成前，不得合并、
-打 Tag 或发布正式资产。
+本地源码 Gate、Windows PyInstaller 冻结程序 Gate、Windows x64 原生安装器测试 Gate 与
+macOS arm64 原生 DMG 测试 Gate 已通过，Secret 扫描为 0/0。当前只能得出“无签名测试构建
+通过，等待独立审计与正式签名 Gate”的结论。PR 继续保持 Draft；Phase 1 基线、独立 GPT 审计、
+Windows Authenticode、Apple Developer ID 签名/公证和 Release Gate 未完成前，不得合并、打 Tag
+或发布正式资产。
