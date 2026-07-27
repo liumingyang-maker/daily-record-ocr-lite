@@ -236,6 +236,7 @@
 - [x] 非法非空日期进入待确认；窄屏按钮与输入达到约 44px；review 请求复用哈希缓存。
 - [x] 全量 Gate：491 passed、5 deselected；Ruff、diff check、Secret 扫描通过。
 - [x] 真实 2 图 / 7 配方页面复核：桌面 sticky、手机单列、7/7 证据加载、0 console error。
-- [ ] 独立 GPT 对 `132e0b6..887b603` 的最终复审回填。
+- [x] 独立 GPT 对证据整改进行复审；首轮发现结构分界 P1 和重复读取 P2 后继续整改，
+  最终对 `0a0b389..15d8776` 复审为 P0/P1 无问题、实现检查点通过。
 
 本任务仍不解除产品 Gate：PR #9 保持 Draft，禁止 Merge、Tag、Release。

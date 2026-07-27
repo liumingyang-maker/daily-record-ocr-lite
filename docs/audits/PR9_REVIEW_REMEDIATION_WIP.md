@@ -384,3 +384,60 @@ manifest 条目交换、当前批次绑定、旧证据失效、通用路由绕�
 
 结论：本轮修复了独立审查提出的证据正确性、安全绑定、顺序和迁移回滚问题，
 但没有解除产品发布 Gate。PR #9 必须继续保持 Draft；禁止 Merge、Tag、Release。
+
+## 2026-07-27 第四轮独立审查整改：结构锚点与批量校验
+
+### 整改范围
+
+- 前一轮审查基线：`0a0b389bbda46d9cc77bf12398565186c520a8d6`
+- 本轮实现提交：`15d8776756d07cfec9881dbbedcea6cc9a027fb7`
+- 实际审查 Diff：`0a0b389..15d8776`
+- PR：<https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/9>
+- PR 状态：Draft；未 Merge、未 Tag、未 Release。
+
+### 本轮修复
+
+1. 页面内多条配方不再只依赖等高分槽。定位器优先使用每条配方已有的配方号/日期锚点；
+   明确锚点不足时，再识别 Layout 中的“配方 + 序号”标题或 `24.7.19`、`22/9/27`
+   等日期形态。
+2. 相邻配方按锚点中心的中线划分纵向边界，支持高度不均的配方；额外页眉 record 不再导致
+   配方与 record 按位置错绑。
+3. Layout records 只能在已经确定的配方区间内辅助横向覆盖，不能改变纵向中线；高度达到页面
+   75% 或面积达到页面 70% 的粗粒度记录被拒绝。
+4. 结构锚点不足时静默回退原有安全分槽或较大区域/整图，不向用户显示“裁剪待确认”，也不把
+   裁剪结果写回 FinalResult。
+5. 审核页一次请求只读取一次 evidence manifest、只建立一次 FinalResult formula context 索引，
+   并在全部配方间复用 SHA-256 缓存；单张证据独立 HTTP 请求仍逐次 fail-closed 校验。
+
+### 自动化与页面证据
+
+| Gate | 结果 |
+|---|---|
+| 新增结构定位测试 | 标题中点 + 额外 header record；FinalResult 日期缺失时按日期形态分界，均通过 |
+| 证据/API 定向测试 | 32 passed |
+| 非真实全量测试 | **493 passed, 5 deselected** |
+| Ruff | `python -m ruff check .` 通过 |
+| Diff check | `git diff --check` 通过 |
+| tracked Secret scan | 0 match |
+| working diff Secret scan | 0 match |
+| 真实持久化 Job 只读复核 | 2 图、7 配方、7/7 crop、7/7“查看整图”，未调用模型、未改 FinalResult |
+| 桌面页面 | 证据图 7/7 加载；sticky；滚动后证据 top 约 118px；无横向溢出 |
+
+### 独立 GPT 最终代码复审
+
+独立审查者只读核验 `0a0b389..15d8776`，未读取私人 `data/`、原图、模型响应或 Secret：
+
+- P0：无；路径、recognition run、公式归属和 SHA 校验仍保持 fail-closed；
+- P1：无；formula/date 结构锚点、相邻中心点边界和 extra record 过滤已关闭上一轮错误裁剪问题；
+- P2：重复 I/O 已关闭；manifest、formula context 和 SHA cache 均按 review 请求复用；
+- 本轮实现检查点：**Pass**；
+- PR Ready / Merge：仍为 **No**，因为产品 Gate 与本轮代码检查点是两件事。
+
+### 仍然阻塞的产品 Gate
+
+- 同图 Knowledge OFF/ON 两份成功 FinalResult 尚未完成；
+- 用户真实确认 → READY → 知识写回 → 正式 Excel 尚未完成；
+- 尚未达到 10～20 张独立真实个人样图；
+- 私人 Windows 安装器升级闭环尚未完成。
+
+最终决策：本轮代码检查点通过，但 PR #9 继续保持 Draft；禁止 Merge、Tag、Release。
