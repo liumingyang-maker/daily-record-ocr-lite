@@ -345,3 +345,34 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
     .settings-card-heading { flex-direction: column; }
     .setup-stages > li { padding-left: 48px; }
 }
+
+/* Formula evidence workbench: keep the current crop visible while editing. */
+.review-field input { min-height: 44px; }
+.formula-card { overflow: visible; }
+.formula-card-heading { border-radius: 9px 9px 0 0; }
+.formula-card-layout {
+    grid-template-columns: minmax(280px, 42fr) minmax(360px, 58fr);
+    border-radius: 0 0 9px 9px;
+}
+.evidence-caption {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    text-align: left;
+}
+.evidence-full-link { color: #1463d6; font-weight: 600; text-underline-offset: 2px; }
+.evidence-full-link:focus-visible {
+    outline: 3px solid #8ab4f8;
+    outline-offset: 3px;
+    border-radius: 2px;
+}
+.evidence-frame { aspect-ratio: 4 / 3; }
+.evidence-frame img { height: 100%; object-fit: contain; }
+
+@media (max-width: 900px) {
+    .formula-card-layout { grid-template-columns: 1fr; }
+    .evidence-card { position: static; }
+    .evidence-frame { aspect-ratio: auto; min-height: 0; }
+    .evidence-frame img { height: auto; max-height: none; }
+}

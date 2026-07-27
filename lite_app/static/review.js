@@ -180,7 +180,7 @@
         if (evidence.image_url) {
             const image = node("img");
             image.src = evidence.image_url;
-            image.alt = "原图证据";
+            image.alt = "当前配方的图片证据";
             frame.append(image);
             if (evidence.rect) {
                 const [x1, y1, x2, y2] = evidence.rect;
@@ -194,7 +194,16 @@
         } else {
             frame.append(node("p", "empty", "没有可显示的原图"));
         }
-        panel.append(frame, node("figcaption", "", "原图证据"));
+        const caption = node("figcaption", "evidence-caption");
+        caption.append(node("span", "", "当前配方证据"));
+        if (evidence.full_image_url) {
+            const fullImage = node("a", "evidence-full-link", "查看整图");
+            fullImage.href = evidence.full_image_url;
+            fullImage.target = "_blank";
+            fullImage.rel = "noopener";
+            caption.append(fullImage);
+        }
+        panel.append(frame, caption);
         return panel;
     }
 
