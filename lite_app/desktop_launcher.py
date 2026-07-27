@@ -444,6 +444,9 @@ def main(argv: list[str] | None = None) -> int:
                 "error_category": "MODEL_INSTALL_FAILED",
                 "error_type": type(exc).__name__,
             }
+            http_status = getattr(getattr(exc, "response", None), "status_code", None)
+            if isinstance(http_status, int):
+                result["http_status"] = http_status
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0 if result.get("status") == "READY" else 5
     return run_desktop(args.data_dir)

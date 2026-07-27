@@ -56,7 +56,12 @@ jobs:
           $exe = Join-Path $PWD "dist\DailyRecordOCR\DailyRecordOCR.exe"
           $data = Join-Path $env:RUNNER_TEMP "daily-record-ocr-data"
           foreach ($mode in @("--self-test", "--smoke-test", "--install-models", "--ocr-test")) {
-            $process = Start-Process -FilePath $exe -ArgumentList @($mode, "--data-dir", $data) -Wait -PassThru -WindowStyle Hidden
+            $label = $mode.TrimStart("-")
+            $stdout = Join-Path $env:RUNNER_TEMP "$label.stdout.log"
+            $stderr = Join-Path $env:RUNNER_TEMP "$label.stderr.log"
+            $process = Start-Process -FilePath $exe -ArgumentList @($mode, "--data-dir", $data) -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+            if (Test-Path $stdout) { Get-Content $stdout }
+            if ($process.ExitCode -ne 0 -and (Test-Path $stderr)) { Get-Content $stderr }
             if ($process.ExitCode -ne 0) { throw "$mode failed with exit code $($process.ExitCode)" }
           }
       - name: Build unsigned Inno Setup installer

@@ -2,6 +2,7 @@ import json
 import socket
 from pathlib import Path
 
+import httpx
 import pytest
 
 
@@ -135,6 +136,30 @@ def test_model_install_cli_reports_only_safe_exception_type(
     assert payload == {
         "error_category": "MODEL_INSTALL_FAILED",
         "error_type": "FileNotFoundError",
+        "status": "FAILED",
+    }
+
+
+def test_model_install_cli_reports_http_status_without_response_body(
+    monkeypatch, tmp_path: Path, capsys
+):
+    import lite_app.desktop_launcher as launcher
+    import lite_app.model_packages as model_packages
+
+    request = httpx.Request("GET", "https://models.example.invalid/archive.tar")
+    response = httpx.Response(302, request=request, text="private upstream response")
+
+    def fail_install(_path):
+        raise httpx.HTTPStatusError("private message", request=request, response=response)
+
+    monkeypatch.setattr(model_packages, "install_model_packages", fail_install)
+
+    assert launcher.main(["--install-models", "--data-dir", str(tmp_path)]) == 5
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "error_category": "MODEL_INSTALL_FAILED",
+        "error_type": "HTTPStatusError",
+        "http_status": 302,
         "status": "FAILED",
     }
 
