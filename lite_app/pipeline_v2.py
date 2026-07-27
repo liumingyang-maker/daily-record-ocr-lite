@@ -37,6 +37,7 @@ from .fusion.association import (
     associate_field,
     record_boundary_mismatch,
 )
+from .fusion.date_recovery import recover_formula_date
 from .fusion.engine import Candidate, FusedField, FusionEngine
 from .image_utils_v2 import ImageProcessError, prepare_dual_images
 from .knowledge.correction import (
@@ -503,6 +504,16 @@ def _build_fusion_result(
             .get(str(image_index), {})
             .get(formula_id)
         )
+        fields.append(
+            _fuse_record_date(
+                engine,
+                formula_id,
+                record.get("record_date", {}),
+                image_index,
+                ocr_results,
+                layout,
+            )
+        )
         for material_index, material in enumerate(record.get("materials", []), 1):
             legacy_base = material.get("field_id")
             material_id = material.get(
@@ -606,6 +617,66 @@ def _formula_regions_by_page(
             page,
             layout_by_page.get(str(image_index), {}),
         )
+    return result
+
+
+def _fuse_record_date(
+    engine: FusionEngine,
+    formula_id: str,
+    field_object: Any,
+    image_index: int,
+    ocr_results: list[OCRPage],
+    layout: dict[str, Any] | None,
+) -> dict[str, Any]:
+    field_id = f"{formula_id}__record_date"
+    value, confidence, evidence_ids, bbox = _extract_field_info(field_object)
+    candidates: list[Candidate] = []
+    association = None
+    if value:
+        candidates.append(
+            Candidate(
+                value=value,
+                normalized_value=value,
+                source="vlm",
+                confidence=confidence,
+                evidence=evidence_ids,
+            )
+        )
+    else:
+        page = next(
+            (page for page in ocr_results if page.image_index == image_index),
+            None,
+        )
+        if page is not None:
+            association = recover_formula_date(
+                formula_id=formula_id,
+                vlm_value=value,
+                page=page,
+                formula_regions=(layout or {})
+                .get("formula_regions", {})
+                .get(str(image_index), {}),
+            )
+        if association is not None:
+            candidates.append(
+                Candidate(
+                    value=association.value,
+                    normalized_value=association.value,
+                    source="ocr_base",
+                    confidence=association.confidence,
+                    evidence=association.token_ids,
+                )
+            )
+    result = _fused_to_dict(engine.fuse_field(field_id, "date", candidates))
+    result = _apply_knowledge_correction(result, "date", [])
+    result["bbox"] = association.bbox if association is not None else bbox
+    result["source_image_index"] = image_index
+    if association is not None:
+        result["status"] = "NEED_REVIEW"
+        result["association"] = {
+            "method": association.method,
+            "score": association.association_score,
+            "reasons": association.reasons,
+        }
     return result
 
 

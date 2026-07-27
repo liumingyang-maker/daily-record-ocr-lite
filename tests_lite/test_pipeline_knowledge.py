@@ -875,6 +875,76 @@ def test_pipeline_date_field_type_is_forbidden() -> None:
     ]["value"] == "2024-01-01"
 
 
+def test_pipeline_recovers_formula_local_date_as_review_only() -> None:
+    structured = _structured("Material A")
+    formula = structured["pages"][0]["product_sections"][0]["formulas"][0]
+    formula["record_date"] = {"value": "", "confidence": 0.0}
+    page = OCRPage(
+        image_index=1,
+        width=1000,
+        height=1000,
+        tokens=[
+            OCRToken(
+                id="p1_t001",
+                text="22/9/3 (kg)",
+                confidence=0.94,
+                polygon=[[80, 160], [260, 160], [260, 200], [80, 200]],
+                bbox=[80, 160, 260, 200],
+                center_x=170,
+                center_y=180,
+            )
+        ],
+        average_confidence=0.94,
+        provider="paddleocr_v6",
+        model="PP-OCRv6_medium",
+        elapsed_ms=1,
+    )
+    layout = {
+        "pairs": {"1": []},
+        "records": {"1": []},
+        "formula_regions": {"1": {"formula_001": [0.0, 0.0, 1.0, 0.5]}},
+    }
+
+    fusion = _build_fusion_result(structured, [page], {}, layout)
+    field = next(
+        item
+        for item in fusion["fields"]
+        if item["field_id"] == "formula_001__record_date"
+    )
+    final = project_final_result("job-date-recovery", structured, fusion)
+    projected = final["pages"][0]["product_sections"][0]["formulas"][0][
+        "record_date"
+    ]
+
+    assert field["final_value"] == "22/9/3"
+    assert field["status"] == "NEED_REVIEW"
+    assert field["association"]["method"] == "formula_local_date"
+    assert projected["value"] == "22/9/3"
+    assert projected["status"] == "NEED_REVIEW"
+
+
+def test_pipeline_does_not_replace_existing_vlm_date() -> None:
+    structured = _structured("Material A")
+    formula = structured["pages"][0]["product_sections"][0]["formulas"][0]
+    formula["record_date"] = {"value": "24.7.19", "confidence": 0.9}
+    page = _ocr_page("22/9/3")
+    layout = {
+        "pairs": {"1": []},
+        "records": {"1": []},
+        "formula_regions": {"1": {"formula_001": [0.0, 0.0, 1.0, 0.5]}},
+    }
+
+    fusion = _build_fusion_result(structured, [page], {}, layout)
+    field = next(
+        item
+        for item in fusion["fields"]
+        if item["field_id"] == "formula_001__record_date"
+    )
+
+    assert field["final_value"] == "24.7.19"
+    assert [candidate["value"] for candidate in field["candidates"]] == ["24.7.19"]
+
+
 def test_formula_number_never_auto_correct() -> None:
     structured = _structured()
     formula = structured["pages"][0]["product_sections"][0]["formulas"][0]
