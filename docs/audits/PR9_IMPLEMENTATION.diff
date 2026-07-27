@@ -5,23 +5,23 @@ index 024995e..043ed3e 100644
 @@ -39,20 +39,22 @@ data/knowledge.sqlite3
  data/knowledge.sqlite3-wal
  data/knowledge.sqlite3-shm
- 
+
  # Models
  data/models/*
  !data/models/.gitkeep
- 
+
  # Private test fixtures
  tests/fixtures/private/*
  !tests/fixtures/private/.gitkeep
  !tests/fixtures/private/golden_cases.yaml
- 
+
  # OS
  .DS_Store
  Thumbs.db
- 
+
  # Legacy
  *.db
- 
+
  data/diagnostics/
 +data/personal_imports/
 +data/personal_build/
@@ -31,10 +31,10 @@ index 841bd4e..f50075f 100644
 +++ b/README.md
 @@ -1,25 +1,32 @@
  # daily-record-ocr-lite
- 
+
  [![CI](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/ci.yml)
  [![Real OCR](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/real-ocr.yml/badge.svg?branch=master)](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/real-ocr.yml)
- 
+
 +## 让其他 AI 整理历史配方
 +
 +请让 AI 生成带 Manifest、JSONL、必要证据和 SHA-256 的标准 ZIP，不要让 AI
@@ -44,23 +44,23 @@ index 841bd4e..f50075f 100644
 +
  将中文手写生产记录、配方记录或日常记录图片，通过 PP-OCRv6、Qwen3.7 Plus 视觉模型、
  OCR/Layout/Vision 融合和人工复核，转换为结构化记录，并导出为 Excel。
- 
+
  **主要流程：**
- 
+
  上传图片 → OCR → Vision → 配方卡片确认 → 追加到知识库 → READY → Excel 导出
- 
+
  > **注意：** 人工复核是正式导出的安全步骤，不是可选功能。
- 
+
  ## 当前版本状态
- 
+
  - **当前稳定 Release：** [`v1.0.1`](https://github.com/liumingyang-maker/daily-record-ocr-lite/releases/tag/v1.0.1)
  - **下一版本 Draft：**
    - [PR #7](https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/7)：证据优先的配方卡片审查与按日期追加的知识历史
    - [PR #8](https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/8)：Windows x64 EXE 与 Apple Silicon macOS DMG 安装层
    - PR #8 的 Windows/macOS 未签名原生测试 Gate 已通过；正式签名、公证、合并和 Release 尚未执行
- 
+
  **普通用户只使用最新稳定 Release；开发或抢先体验用户才使用 Draft 分支或 master。**
- 
+
  ## 选择安装方式
 diff --git a/config/recognition.yaml b/config/recognition.yaml
 index 47860a3..b60d2a5 100644
@@ -68,7 +68,7 @@ index 47860a3..b60d2a5 100644
 +++ b/config/recognition.yaml
 @@ -8,40 +8,42 @@ upload:
    max_total_upload_mb: 200
- 
+
  preprocess:
    max_side_vlm: 2400
    max_side_ocr: 2600
@@ -80,7 +80,7 @@ index 47860a3..b60d2a5 100644
    enable_shadow_reduction: true
    enable_clahe: true
    generate_enhanced_variant: adaptive
- 
+
  ocr:
    enabled: "${OCR_ENABLED:-true}"
    provider: "${OCR_PROVIDER:-paddleocr_v6}"
@@ -93,7 +93,7 @@ index 47860a3..b60d2a5 100644
    use_doc_unwarping: false
    use_textline_orientation: true
    warmup_on_start: false
- 
+
  vision:
    batch_size: 3
    preserve_upload_order: true
@@ -2651,27 +2651,27 @@ index b1c8fb0..9402a17 100644
 +++ b/lite_app/knowledge/history.py
 @@ -1,26 +1,27 @@
  """Transactional, append-only customer/product formula history."""
- 
+
  from __future__ import annotations
- 
+
  import json
  import sqlite3
 +import unicodedata
  from datetime import UTC, datetime
  from pathlib import Path
  from typing import Any
- 
+
  from ..grouping.service import final_result_fingerprint
  from ..readiness import validate_final_result_contract
  from ..review_state import formula_content_hash
  from .database import KnowledgeDB
- 
- 
+
+
  class KnowledgeHistory:
      def __init__(self, db_path: Path) -> None:
          self.database = KnowledgeDB(db_path)
          self.database.initialize()
- 
+
      def append_confirmed_job(
          self,
          job: dict[str, Any],
@@ -2688,7 +2688,7 @@ index b1c8fb0..9402a17 100644
                  receipt = json.loads(str(existing["receipt_json"]))
                  connection.rollback()
                  return receipt
- 
+
              confirmed_at = datetime.now(UTC).isoformat()
              formula_ids: list[int] = []
              for page, section, formula in formulas:
@@ -2727,7 +2727,7 @@ index b1c8fb0..9402a17 100644
 +                    formula=formula,
 +                    confirmed_at=confirmed_at,
                  )
- 
+
              receipt = {
                  "schema_version": 1,
                  "source_job_id": job_id,
@@ -2761,7 +2761,7 @@ index b1c8fb0..9402a17 100644
              (customer, product),
          ).fetchall()
          return [dict(row) for row in rows]
- 
+
      def tree(self, query: str = "") -> dict[str, Any]:
          connection = self.database._get_conn()
          pattern = f"%{query.strip()}%"
@@ -2817,7 +2817,7 @@ index b1c8fb0..9402a17 100644
              )
              product["formula_count"] += 1
          return {"customers": list(customers.values()), "query": query}
- 
+
      def formula_detail(self, formula_id: int) -> dict[str, Any]:
          connection = self.database._get_conn()
          row = connection.execute(
@@ -2874,7 +2874,7 @@ index b1c8fb0..9402a17 100644
              "process": [dict(item) for item in process],
 +            "evidence": [dict(item) for item in evidence],
          }
- 
+
 +    def pending_review(self, limit: int = 100) -> dict[str, Any]:
 +        connection = self.database._get_conn()
 +        rows = connection.execute(
@@ -2931,10 +2931,10 @@ index b1c8fb0..9402a17 100644
              "materials": _compare_named_rows(left["materials"], right["materials"], "amount"),
              "process": _compare_named_rows(left["process"], right["process"], "value"),
          }
- 
+
      def close(self) -> None:
          self.database.close()
- 
+
      def _select_or_insert_customer(
          self, connection: sqlite3.Connection, name: str
      ) -> int:
@@ -2947,7 +2947,7 @@ index b1c8fb0..9402a17 100644
              (name, "[]"),
          )
          return int(cursor.lastrowid)
- 
+
      def _select_or_insert_product(
          self, connection: sqlite3.Connection, customer_id: int, name: str
      ) -> int:
@@ -2962,7 +2962,7 @@ index b1c8fb0..9402a17 100644
              (customer_id, name, "[]"),
          )
          return int(cursor.lastrowid)
- 
+
 +    def _learn_formula_terms(
 +        self,
 +        connection: sqlite3.Connection,
@@ -3114,26 +3114,26 @@ index b1c8fb0..9402a17 100644
                      name,
                      amount,
 @@ -366,36 +523,42 @@ class KnowledgeHistory:
- 
+
  def _iter_formula_contexts(final: dict[str, Any]):
      for page in final.get("pages", []):
          for section in page.get("product_sections", []):
              for formula in section.get("formulas", []):
                  yield page, section, formula
- 
- 
+
+
  def _company_name(page: dict[str, Any]) -> str:
      company = page.get("company", {})
      return str(company.get("standard_value") or company.get("raw_value") or "").strip()
- 
- 
+
+
  def _number_or_none(value: str) -> float | None:
      try:
          return float(value)
      except (TypeError, ValueError):
          return None
- 
- 
+
+
 +def _normalize_lexicon(value: str) -> str:
 +    return " ".join(
 +        unicodedata.normalize("NFKC", value).casefold().split()
@@ -4110,13 +4110,13 @@ index ab8fc6a..787bf2a 100644
 +++ b/lite_app/knowledge/migrations.py
 @@ -1,124 +1,318 @@
  """Non-destructive SQLite migrations for dated formula history."""
- 
+
  from __future__ import annotations
- 
+
  import sqlite3
  from datetime import UTC, datetime
  from pathlib import Path
- 
+
  V2_VERSION = 2
 +V3_VERSION = 3
  V2_COLUMNS = {
@@ -4134,8 +4134,8 @@ index ab8fc6a..787bf2a 100644
 +    "notes_raw": "TEXT",
 +    "deleted_at": "TEXT",
 +}
- 
- 
+
+
  def apply_migrations(connection: sqlite3.Connection, db_path: Path) -> Path | None:
 -    """Apply v2 once and return the pre-migration backup path, if created."""
 -    if _migration_applied(connection, V2_VERSION):
@@ -4386,8 +4386,8 @@ index ab8fc6a..787bf2a 100644
 +        "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
 +        (V3_VERSION, datetime.now(UTC).isoformat()),
 +    )
- 
- 
+
+
  def _migration_applied(connection: sqlite3.Connection, version: int) -> bool:
      table = connection.execute(
          "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
@@ -4400,8 +4400,8 @@ index ab8fc6a..787bf2a 100644
          ).fetchone()
          is not None
      )
- 
- 
+
+
  def _backup_if_legacy_data(
 -    connection: sqlite3.Connection, db_path: Path
 +    connection: sqlite3.Connection,
@@ -4424,8 +4424,8 @@ index ab8fc6a..787bf2a 100644
      finally:
          backup.close()
      return backup_path
- 
- 
+
+
  def _table_has_rows(connection: sqlite3.Connection, table: str) -> bool:
      exists = connection.execute(
          "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
@@ -4433,8 +4433,8 @@ index ab8fc6a..787bf2a 100644
      if not exists:
          return False
      return connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None
- 
- 
+
+
  def _columns(connection: sqlite3.Connection, table: str) -> set[str]:
      return {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")}
 diff --git a/lite_app/knowledge/package.py b/lite_app/knowledge/package.py
@@ -5787,8 +5787,8 @@ index 35827b5..7688060 100644
 +            f"/api/knowledge/evidence/{int(evidence['id'])}"
 +        )
      return detail
- 
- 
+
+
 +@app.get("/api/knowledge/pending")
 +async def knowledge_pending(limit: int = 100):
 +    from .knowledge.history import KnowledgeHistory
@@ -5835,7 +5835,7 @@ index 35827b5..7688060 100644
  @app.get("/api/knowledge/compare")
  async def compare_knowledge(left: int, right: int):
      from .knowledge.history import KnowledgeHistory
- 
+
      history = KnowledgeHistory(_knowledge_db_path())
      try:
          return history.compare(left, right)
@@ -5843,12 +5843,12 @@ index 35827b5..7688060 100644
          raise HTTPException(status_code=404, detail=str(exc)) from exc
      finally:
          history.close()
- 
- 
+
+
  @app.get("/api/knowledge/export")
  async def export_knowledge():
      from .knowledge.exporter import export_knowledge_history
- 
+
      output = (
          _knowledge_db_path().parent
          / "exports"
@@ -5857,14 +5857,14 @@ index 397e147..e5be5c5 100644
 --- a/lite_app/ocr/base.py
 +++ b/lite_app/ocr/base.py
 @@ -2,65 +2,67 @@
- 
+
  from __future__ import annotations
- 
+
  from abc import ABC, abstractmethod
  from dataclasses import dataclass, field
  from pathlib import Path
- 
- 
+
+
  @dataclass
  class OCRToken:
      """单个 OCR 识别文本框。"""
@@ -5879,8 +5879,8 @@ index 397e147..e5be5c5 100644
      source_variant: str = "base"
 +    candidate_only: bool = False
      raw: dict = field(default_factory=dict)
- 
- 
+
+
  @dataclass
  class OCRPage:
      """单张图片的 OCR 识别结果。"""
@@ -5893,7 +5893,7 @@ index 397e147..e5be5c5 100644
      model: str
      elapsed_ms: int
      warnings: list[str] = field(default_factory=list)
- 
+
      def to_evidence_json(self) -> dict:
          """转为传给视觉模型的压缩证据格式（归一化坐标）。"""
          w, h = self.width, self.height
@@ -5920,8 +5920,8 @@ index 397e147..e5be5c5 100644
              "image_size": [w, h],
              "ocr_tokens": tokens,
          }
- 
- 
+
+
  def scope_token_ids(page: OCRPage, image_index: int) -> OCRPage:
      """Make every token ID globally unique within a multi-page job."""
 diff --git a/lite_app/ocr/manager.py b/lite_app/ocr/manager.py
@@ -5930,18 +5930,18 @@ index 71f36fe..86787d6 100644
 +++ b/lite_app/ocr/manager.py
 @@ -71,40 +71,49 @@ class OCRModelManager:
          return self._config.get("provider", "none")
- 
+
      def get_provider(self) -> OCRProvider:
          """获取或创建 OCR Provider（惰性加载）。"""
          if self._provider is not None:
              return self._provider
- 
+
          with self._provider_lock:
              if self._provider is not None:
                  return self._provider
- 
+
              provider_name = self._config.get("provider", "")
- 
+
              if provider_name == "paddleocr_v6":
                  try:
                      from .paddleocr_v6 import PaddleOCRv6Provider
@@ -5967,9 +5967,9 @@ index 71f36fe..86787d6 100644
                  self._provider = MockOCRProvider()
              else:
                  raise OCRUnavailableError(f"OCR Provider 未配置或不支持: {provider_name!r}")
- 
+
              return self._provider
- 
+
      def ensure_loaded(self) -> None:
          """确保模型已加载。"""
          provider = self.get_provider()
@@ -5989,15 +5989,15 @@ index 1670398..48b01e1 100644
      }
      for tier in ("tiny", "small", "medium")
  }
- 
- 
+
+
  class OCRResultParseError(RuntimeError):
      """PaddleOCR returned a shape the installed adapter cannot interpret."""
- 
- 
+
+
  class PaddleOCRv6Provider(OCRProvider):
      """PP-OCRv6 真实 OCR Provider。模型只初始化一次并复用。"""
- 
+
      def __init__(
          self,
          device: str = "cpu",
@@ -6025,11 +6025,11 @@ index 1670398..48b01e1 100644
          self._use_textline_orientation = use_textline_orientation
          self._model: Any = None
          self._lock = threading.Lock()
- 
+
      @property
      def is_loaded(self) -> bool:
          return self._model is not None
- 
+
      def load(self) -> None:
          """惰性加载 PaddleOCR 模型（线程安全）。"""
          if self._model is not None:
@@ -6043,34 +6043,34 @@ index 1670398..48b01e1 100644
                  from paddleocr import PaddleOCR
              except ImportError as e:
 @@ -89,59 +100,71 @@ class PaddleOCRv6Provider(OCRProvider):
- 
+
      def recognize(self, image_path: Path) -> OCRPage:
          """识别单张图片。"""
          if not self.is_loaded:
              self.load()
- 
+
          from PIL import Image
          img = Image.open(image_path)
          width, height = img.size
- 
+
          start = time.time()
          try:
              result = self._model.predict(str(image_path))
          except Exception as e:
              raise RuntimeError(f"PaddleOCR 推理失败: {e}") from e
- 
+
          elapsed = int((time.time() - start) * 1000)
          tokens = self._parse_result(result, width, height)
- 
+
          # 过滤低置信度
 -        tokens = [t for t in tokens if t.confidence >= self._minimum_score]
 +        tokens = self.retain_tokens(tokens)
          avg_conf = sum(t.confidence for t in tokens) / len(tokens) if tokens else 0.0
- 
+
          warnings: list[str] = []
          if not tokens:
              warnings.append("OCR 未检测到任何文本框")
- 
+
          return OCRPage(
              image_index=1,
              width=width,
@@ -6082,7 +6082,7 @@ index 1670398..48b01e1 100644
              elapsed_ms=elapsed,
              warnings=warnings,
          )
- 
+
 +    def retain_tokens(self, tokens: list[OCRToken]) -> list[OCRToken]:
 +        retained = [
 +            token
@@ -6103,7 +6103,7 @@ index 1670398..48b01e1 100644
              page_result = result[0]
          else:
              page_result = result
- 
+
          data: Any = page_result
          if not isinstance(data, dict) and hasattr(page_result, "json"):
              data = page_result.json
@@ -6111,7 +6111,7 @@ index 1670398..48b01e1 100644
                  data = data()
          if isinstance(data, dict) and isinstance(data.get("res"), dict):
              data = data["res"]
- 
+
          if isinstance(data, dict):
              rec_texts = data.get("rec_texts")
              rec_scores = data.get("rec_scores")
@@ -6245,8 +6245,8 @@ index db9ed30..e70b882 100644
 --- a/lite_app/pipeline_v2.py
 +++ b/lite_app/pipeline_v2.py
 @@ -715,65 +715,67 @@ def _fused_to_dict(fused: FusedField) -> dict[str, Any]:
- 
- 
+
+
  def _ocr_page_to_dict(page: OCRPage) -> dict[str, Any]:
      return {
          "image_index": page.image_index,
@@ -6271,8 +6271,8 @@ index db9ed30..e70b882 100644
          ],
          "warnings": page.warnings,
      }
- 
- 
+
+
  def _reconstruct_ocr_page(data: dict[str, Any]) -> OCRPage:
      tokens = []
      for item in data.get("tokens", []):
@@ -6305,8 +6305,8 @@ index db9ed30..e70b882 100644
          elapsed_ms=int(data.get("elapsed_ms", 0)),
          warnings=list(data.get("warnings", [])),
      )
- 
- 
+
+
  def _hash_payload(payload: Any) -> str:
      encoded = json.dumps(
          payload,
@@ -6326,8 +6326,8 @@ index 3e79a61..8175bd4 100644
          "content_hash": entry["content_hash"],
          "version": final["updated_at"],
      }
- 
- 
+
+
  def _validate_business_requirements(
      page: dict[str, Any], section: dict[str, Any], formula: dict[str, Any]
  ) -> None:
@@ -6352,8 +6352,8 @@ index 3e79a61..8175bd4 100644
              raise ReviewInputError(f"第 {index} 项工艺名称不能为空")
          if not str(parameter.get("value", {}).get("value", "")).strip():
              raise ReviewInputError(f"第 {index} 项工艺内容不能为空")
- 
- 
+
+
  def _formula_fields(formula: dict[str, Any]):
      yield formula["record_date"]
      yield formula["notes"]
@@ -6372,8 +6372,8 @@ index 09d500e..b6a30d7 100644
              "schema_version": str(final.get("schema_version", "")),
          },
      }
- 
- 
+
+
  def _present_formula(
      formula: dict[str, Any],
      *,
@@ -6431,7 +6431,7 @@ index 09d500e..b6a30d7 100644
          "labels": {
              "date": "日期",
 @@ -180,34 +184,32 @@ def _image_url(job: dict[str, Any], image_index: int) -> str:
- 
+
  def _normalized_rect(value: Any) -> list[float] | None:
      if not isinstance(value, list) or len(value) != 4:
          return None
@@ -6439,8 +6439,8 @@ index 09d500e..b6a30d7 100644
          return [min(1.0, max(0.0, float(coordinate))) for coordinate in value]
      except (TypeError, ValueError):
          return None
- 
- 
+
+
  def _blocking_message(
      customer: str,
      product: str,
@@ -6489,7 +6489,7 @@ index 37a48be..887ed3d 100644
              treeRoot.append(customerBlock);
          });
      }
- 
+
 +    async function loadPending() {
 +        const root = document.getElementById("pending-review-list");
 +        const summary = document.getElementById("pending-review-summary");
@@ -6550,7 +6550,7 @@ index 37a48be..887ed3d 100644
              showError(error);
          }
      }
- 
+
      function renderDetail(detail) {
          detailRoot.replaceChildren();
          detailRoot.append(
@@ -6583,7 +6583,7 @@ index 37a48be..887ed3d 100644
          detailRoot.append(renderRows("材料与数量", detail.materials, "amount"));
          if (detail.process.length) detailRoot.append(renderRows("工艺", detail.process, "value"));
      }
- 
+
      function renderRows(title, rows, valueKey) {
          const section = node("section", "history-values");
          section.append(node("h3", "", title));
@@ -6597,14 +6597,14 @@ index 37a48be..887ed3d 100644
          });
          return section;
      }
- 
+
      compareButton.addEventListener("click", async () => {
          if (selected.size !== 2) return;
 @@ -172,21 +221,22 @@
              showError(error);
          }
      });
- 
+
      document.getElementById("import-form").addEventListener("submit", async (event) => {
          event.preventDefault();
          const file = document.getElementById("import-file").files[0];
@@ -6619,7 +6619,7 @@ index 37a48be..887ed3d 100644
              showError(error);
          }
      });
- 
+
      loadTree().catch(showError);
 +    loadPending().catch(showError);
  })();
@@ -6643,7 +6643,7 @@ index e9c2e88..7bcdae3 100644
  .job-actions { margin-top: 28px; padding-top: 18px; border-top: 1px solid #e5e7eb; }
  .advanced-diagnostics { margin-top: 18px; color: #5f6368; font-size: 0.85rem; }
  .empty-state { padding: 32px; text-align: center; background: #f8fafc; border-radius: 10px; }
- 
+
  /* 客户 / 产品 / 日期知识历史 */
  .knowledge-heading, .knowledge-tools { display: flex; align-items: end; justify-content: space-between; gap: 16px; }
  .knowledge-tools { margin: 20px 0 14px; }
@@ -6700,7 +6700,7 @@ index 64498b1..cff9a88 100644
      </div>
      <a class="btn" href="/api/knowledge/export">导出全部历史</a>
  </section>
- 
+
  <section class="knowledge-tools">
      <label class="review-field">
          <span class="review-field-label">搜索客户、产品或日期</span>
@@ -6723,7 +6723,7 @@ index 64498b1..cff9a88 100644
          </div>
      </main>
  </div>
- 
+
  <details class="material-dictionary">
      <summary>物料字典（{{ materials | length }} 项）</summary>
      <p>物料别名和默认单位用于辅助识别，日常查看配方时无需操作这里。</p>
@@ -7604,19 +7604,19 @@ index 496ca0a..876d899 100644
 @@ -60,20 +60,35 @@ def test_history_rolls_back_every_row_on_insert_failure(tmp_path, monkeypatch):
      with pytest.raises(RuntimeError, match="controlled"):
          history.append_confirmed_job(job, final, hashes)
- 
+
      connection = sqlite3.connect(tmp_path / "knowledge.sqlite3")
      assert connection.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 0
      assert connection.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 0
      assert connection.execute("SELECT COUNT(*) FROM formulas").fetchone()[0] == 0
      connection.close()
- 
- 
+
+
  def test_history_rejects_missing_or_stale_confirmation_hash(tmp_path):
      history = KnowledgeHistory(tmp_path / "knowledge.sqlite3")
      job, final, hashes = _confirmed_job(tmp_path, "job-stale", "2026-07-27")
      formula_id = next(iter(hashes))
- 
+
      with pytest.raises(ValueError, match="确认"):
          history.append_confirmed_job(job, final, {})
      hashes[formula_id] = "stale"
@@ -7990,19 +7990,19 @@ index d94a95e..3d7da92 100644
 +++ b/tests_lite/test_knowledge_pages.py
 @@ -1,66 +1,141 @@
  from __future__ import annotations
- 
+
 +import hashlib
 +import sqlite3
 +from datetime import UTC, datetime
  from pathlib import Path
- 
+
  import pytest
  from fastapi.testclient import TestClient
- 
+
  from lite_app.storage import JobStorage
  from tests_lite.knowledge_fixtures import seed_dated_history
- 
- 
+
+
  @pytest.fixture
  def knowledge_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
      jobs_dir = tmp_path / "jobs"
@@ -8075,16 +8075,16 @@ index d94a95e..3d7da92 100644
 +    )
 +    connection.commit()
 +    connection.close()
- 
+
      from lite_app import main
- 
+
      with TestClient(main.app) as client:
          yield client, formula_ids, source_jobs
- 
- 
+
+
  def test_knowledge_tree_detail_and_comparison(knowledge_client):
      client, (older, newer), source_jobs = knowledge_client
- 
+
      tree = client.get("/api/knowledge/tree?q=G30A").json()
      product = tree["customers"][0]["products"][0]
      assert product["formula_count"] == 2
@@ -8092,7 +8092,7 @@ index d94a95e..3d7da92 100644
          "2026-07-27",
          "2026-07-28",
      ]
- 
+
      detail = client.get(f"/api/knowledge/formulas/{newer}").json()
      assert detail["record_date"] == "2026-07-28"
      assert detail["materials"][0]["amount"] == "62"
@@ -8101,19 +8101,19 @@ index d94a95e..3d7da92 100644
 +    evidence = client.get(detail["evidence"][0]["image_url"])
 +    assert evidence.status_code == 200
 +    assert evidence.content == b"\x89PNG\r\n\x1a\nEVIDENCE"
- 
+
      comparison = client.get(f"/api/knowledge/compare?left={older}&right={newer}").json()
      assert comparison["materials"]["PA66"]["before"] == "60"
      assert comparison["materials"]["PA66"]["after"] == "62"
      assert comparison["process"]["温度"]["before"] == "260"
      assert comparison["process"]["温度"]["after"] == "265"
- 
- 
+
+
  def test_knowledge_page_is_customer_product_date_timeline(knowledge_client):
      client, _formula_ids, _source_jobs = knowledge_client
- 
+
      page = client.get("/knowledge")
- 
+
      assert page.status_code == 200
      assert "客户 / 产品 / 日期" in page.text
      assert "比较配方" in page.text
@@ -8610,8 +8610,8 @@ index 243e687..85cd25a 100644
      with TestClient(main.app) as client:
          yield client, storage, job["id"]
      clear_config_cache()
- 
- 
+
+
  def test_review_api_edits_and_confirms_a_whole_formula(review_client):
      client, _storage, job_id = review_client
      response = client.get(f"/api/jobs/{job_id}/review")
@@ -8621,7 +8621,7 @@ index 243e687..85cd25a 100644
 -    assert formula["blocking_message"].endswith("缺少日期")
 +    assert formula["date_pending"] is True
 +    assert formula["blocking_message"].endswith("材料数量需要确认")
- 
+
      response = client.patch(
          f"/api/jobs/{job_id}/review/formulas/{formula['id']}",
          json={"version": view["version"], "record_date": "2026-07-27"},
@@ -8634,7 +8634,7 @@ index 243e687..85cd25a 100644
      )
      assert response.status_code == 200
      version = response.json()["version"]
- 
+
      response = client.post(
          f"/api/jobs/{job_id}/review/formulas/{formula['id']}/confirm",
          json={"version": version},
@@ -8651,16 +8651,16 @@ index 67c9b6f..d3eac1e 100644
      store = ReviewStateStore(tmp_path)
      final = editor.load()
      store.confirm(final, FORMULA_ID)
- 
+
      editor.update_formula(
          FORMULA_ID,
          {"record_date": "2026-07-28"},
          expected_version=final["updated_at"],
      )
- 
+
      assert store.is_confirmed(editor.load(), FORMULA_ID) is False
- 
- 
+
+
  @pytest.mark.parametrize(
      ("missing", "label"),
      [
@@ -8675,7 +8675,7 @@ index 67c9b6f..d3eac1e 100644
      tmp_path, missing, label
  ):
      editor = _editor(tmp_path, missing=missing)
- 
+
      with pytest.raises(ReviewInputError, match=label):
          confirm_formula(
              editor,
@@ -8683,8 +8683,8 @@ index 67c9b6f..d3eac1e 100644
              FORMULA_ID,
              _version(editor),
          )
- 
- 
+
+
 +def test_formula_confirmation_allows_unknown_date(tmp_path):
 +    editor = _editor(tmp_path, missing="date")
 +
@@ -8712,11 +8712,11 @@ index 57af10a..bf097bc 100644
          "status": "REVIEW_REQUIRED",
          "images": [{"source": "source/a.jpg"}],
      }
- 
- 
+
+
  def test_review_view_groups_by_customer_product_and_prioritizes_issues():
      view = build_review_view(_job(), make_review_final("job-review"), confirmed={})
- 
+
      group = view["groups"][0]
      formula = group["formulas"][0]
      assert group["customer"] == "联创"
@@ -8730,12 +8730,12 @@ index 57af10a..bf097bc 100644
 -    assert formula["blocking_message"] == "待确认：联创 / G30A / 配方1 缺少日期"
 +    assert formula["date_pending"] is True
 +    assert formula["blocking_message"] == "待确认：联创 / G30A / 配方1 材料数量需要确认"
- 
- 
+
+
  def test_review_view_uses_business_labels_and_separates_technical_metadata():
      view = build_review_view(_job(), make_review_final("job-review"), confirmed={})
      formula = view["groups"][0]["formulas"][0]
- 
+
      assert formula["labels"] == {
          "date": "日期",
          "materials": "材料与数量",
@@ -8749,7 +8749,7 @@ index 57af10a..bf097bc 100644
      assert "VLM" not in visible
      assert "BBox" not in visible
      assert view["advanced"]["job_id"] == "job-review"
- 
+
 diff --git a/tests_lite/test_source_scanner.py b/tests_lite/test_source_scanner.py
 new file mode 100644
 index 0000000..435f5e1
