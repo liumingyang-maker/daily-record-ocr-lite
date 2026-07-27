@@ -1,7 +1,7 @@
 # 日期恢复与数量关联安全修复设计
 
-日期：2026-07-28  
-分支：`feat/personal-knowledge-layer`  
+日期：2026-07-28
+分支：`feat/personal-knowledge-layer`
 PR：#9（继续保持 Draft）
 
 ## 目标

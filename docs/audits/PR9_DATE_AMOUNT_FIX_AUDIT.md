@@ -1,9 +1,9 @@
 # PR #9 Date and Numeric Association Remediation Audit
 
-Date: 2026-07-28  
-Branch: `feat/personal-knowledge-layer`  
-PR: #9 (must remain Draft)  
-Audit head before independent review: `33028a61582072539490f18cc03a7f31c8881716`
+Date: 2026-07-28
+Branch: `feat/personal-knowledge-layer`
+PR: #9 (must remain Draft)
+Remediated code head: `851f2f779770856a6289405e694690d7fb2aac4d`
 
 ## Decision
 
@@ -65,12 +65,12 @@ Knowledge pages, recognition retrieval, confirmation write-back, correction logg
 Final non-real suite:
 
 ```text
-520 passed, 5 deselected
+524 passed, 5 deselected
 ```
 
 Focused evidence:
 
-- 77 association/Fusion/evidence-region tests passed after the numeric fix.
+- 82 association/Fusion/date-safety tests passed after independent-review remediation.
 - 59 date, date-sort, Pipeline, and knowledge-history tests passed.
 - 43 Pipeline/FinalResult/review/export integration tests passed.
 - 18 knowledge path/page/write-back/export/API tests passed.
@@ -161,3 +161,24 @@ Release: NO
 ```
 
 The current commits may be pushed for Draft review only after an independent GPT review finds no P0/P1 code or privacy regression.
+
+## Independent GPT review remediation
+
+The first independent review correctly blocked the push and reproduced four gaps:
+
+1. direct numeric evidence ids could bypass formula containment;
+2. numeric bbox association could bypass formula containment;
+3. a coarse VLM record bbox could override the safer local formula region;
+4. one OCR numeric token could be claimed by multiple fields, while a coarse date token could cross a formula boundary.
+
+The remediation now:
+
+- requires every direct-id, bbox, center-distance, and layout numeric candidate to be fully contained by the current formula region;
+- prefers the local formula region over the VLM record bbox for association;
+- performs a Fusion-batch ownership pass and removes a reused OCR numeric token from every affected field;
+- preserves each field's VLM value, forces `NEED_REVIEW`, and records `OCR_NUMERIC_TOKEN_REUSED`;
+- requires the complete date token bbox to remain within the current formula's date band;
+- adds explicit regression tests for all four cases;
+- removes all trailing whitespace reported by range `git diff --check`.
+
+A second independent review is required before Draft push. The formal real-job Gate remains blocked regardless of the code-review outcome.
