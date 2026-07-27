@@ -119,6 +119,26 @@ def test_model_install_cli_requires_verified_ready_state(monkeypatch, tmp_path: 
     assert launcher.main(["--install-models", "--data-dir", str(tmp_path)]) == 5
 
 
+def test_model_install_cli_reports_only_safe_exception_type(
+    monkeypatch, tmp_path: Path, capsys
+):
+    import lite_app.desktop_launcher as launcher
+    import lite_app.model_packages as model_packages
+
+    def fail_install(_path):
+        raise FileNotFoundError("private local path must not be printed")
+
+    monkeypatch.setattr(model_packages, "install_model_packages", fail_install)
+
+    assert launcher.main(["--install-models", "--data-dir", str(tmp_path)]) == 5
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "error_category": "MODEL_INSTALL_FAILED",
+        "error_type": "FileNotFoundError",
+        "status": "FAILED",
+    }
+
+
 def test_local_diagnostics_redact_api_keys(monkeypatch):
     import lite_app.desktop_launcher as launcher
 

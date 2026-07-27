@@ -438,8 +438,12 @@ def main(argv: list[str] | None = None) -> int:
             from .model_packages import install_model_packages
 
             result = install_model_packages(args.data_dir)
-        except Exception:
-            result = {"status": "FAILED", "error_category": "MODEL_INSTALL_FAILED"}
+        except Exception as exc:
+            result = {
+                "status": "FAILED",
+                "error_category": "MODEL_INSTALL_FAILED",
+                "error_type": type(exc).__name__,
+            }
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0 if result.get("status") == "READY" else 5
     return run_desktop(args.data_dir)

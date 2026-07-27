@@ -16,6 +16,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     env:
+      PYTHONUTF8: "1"
       WINDOWS_SIGN_CERT_BASE64: ${{ secrets.WINDOWS_SIGN_CERT_BASE64 }}
       WINDOWS_SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
       PADDLE_PDX_MODEL_SOURCE: BOS

@@ -22,6 +22,7 @@ jobs:
     timeout-minutes: 90
     env:
       PADDLE_PDX_MODEL_SOURCE: BOS
+      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
