@@ -118,6 +118,115 @@ class KnowledgeHistory:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def tree(self, query: str = "") -> dict[str, Any]:
+        connection = self.database._get_conn()
+        pattern = f"%{query.strip()}%"
+        rows = connection.execute(
+            """
+            SELECT f.id, f.formula_no, f.record_date, f.confirmed_at,
+                   c.id AS customer_id, c.name AS customer,
+                   p.id AS product_id, p.name AS product
+            FROM formulas f
+            LEFT JOIN customers c ON c.id = f.customer_id
+            LEFT JOIN products p ON p.id = f.product_id
+            WHERE ? = '%%' OR COALESCE(c.name, '') LIKE ?
+                OR COALESCE(p.name, '') LIKE ? OR COALESCE(f.record_date, '') LIKE ?
+            ORDER BY COALESCE(c.name, ''), COALESCE(p.name, ''),
+                     COALESCE(f.record_date, ''), COALESCE(f.confirmed_at, ''), f.id
+            """,
+            (pattern, pattern, pattern, pattern),
+        ).fetchall()
+        customers: dict[tuple[int | None, str], dict[str, Any]] = {}
+        products: dict[tuple[tuple[int | None, str], int | None, str], dict[str, Any]] = {}
+        for row in rows:
+            customer_key = (row["customer_id"], str(row["customer"] or "未记录客户"))
+            customer = customers.setdefault(
+                customer_key,
+                {
+                    "id": row["customer_id"],
+                    "name": customer_key[1],
+                    "products": [],
+                },
+            )
+            product_key = (
+                customer_key,
+                row["product_id"],
+                str(row["product"] or "未记录产品"),
+            )
+            product = products.get(product_key)
+            if product is None:
+                product = {
+                    "id": row["product_id"],
+                    "name": product_key[2],
+                    "formula_count": 0,
+                    "formulas": [],
+                }
+                products[product_key] = product
+                customer["products"].append(product)
+            product["formulas"].append(
+                {
+                    "id": int(row["id"]),
+                    "formula_no": str(row["formula_no"] or "配方"),
+                    "record_date": str(row["record_date"] or ""),
+                    "confirmed_at": str(row["confirmed_at"] or ""),
+                }
+            )
+            product["formula_count"] += 1
+        return {"customers": list(customers.values()), "query": query}
+
+    def formula_detail(self, formula_id: int) -> dict[str, Any]:
+        connection = self.database._get_conn()
+        row = connection.execute(
+            """
+            SELECT f.*, c.name AS customer, p.name AS product
+            FROM formulas f
+            LEFT JOIN customers c ON c.id = f.customer_id
+            LEFT JOIN products p ON p.id = f.product_id
+            WHERE f.id = ?
+            """,
+            (formula_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"历史配方不存在: {formula_id}")
+        materials = connection.execute(
+            """
+            SELECT seq, material_name AS name, amount, unit
+            FROM formula_items WHERE formula_id = ? ORDER BY seq, id
+            """,
+            (formula_id,),
+        ).fetchall()
+        process = connection.execute(
+            """
+            SELECT seq, name, value, unit
+            FROM formula_process_parameters WHERE formula_id = ? ORDER BY seq, id
+            """,
+            (formula_id,),
+        ).fetchall()
+        return {
+            "id": int(row["id"]),
+            "customer": str(row["customer"] or "未记录客户"),
+            "product": str(row["product"] or "未记录产品"),
+            "formula_no": str(row["formula_no"] or row["title"] or "配方"),
+            "record_date": str(row["record_date"] or ""),
+            "confirmed_at": str(row["confirmed_at"] or ""),
+            "source_job_id": str(row["source_job_id"] or ""),
+            "source_formula_id": str(row["source_formula_id"] or ""),
+            "source_image_index": int(row["source_image_index"] or 0),
+            "revision_of_id": row["revision_of_id"],
+            "materials": [dict(item) for item in materials],
+            "process": [dict(item) for item in process],
+        }
+
+    def compare(self, left_id: int, right_id: int) -> dict[str, Any]:
+        left = self.formula_detail(left_id)
+        right = self.formula_detail(right_id)
+        return {
+            "left": left,
+            "right": right,
+            "materials": _compare_named_rows(left["materials"], right["materials"], "amount"),
+            "process": _compare_named_rows(left["process"], right["process"], "value"),
+        }
+
     def close(self) -> None:
         self.database.close()
 
@@ -272,3 +381,21 @@ def _number_or_none(value: str) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _compare_named_rows(
+    before_rows: list[dict[str, Any]],
+    after_rows: list[dict[str, Any]],
+    value_key: str,
+) -> dict[str, dict[str, str]]:
+    before = {str(row["name"]): row for row in before_rows}
+    after = {str(row["name"]): row for row in after_rows}
+    return {
+        name: {
+            "before": str(before.get(name, {}).get(value_key, "")),
+            "after": str(after.get(name, {}).get(value_key, "")),
+            "unit_before": str(before.get(name, {}).get("unit", "")),
+            "unit_after": str(after.get(name, {}).get("unit", "")),
+        }
+        for name in sorted(set(before) | set(after))
+    }

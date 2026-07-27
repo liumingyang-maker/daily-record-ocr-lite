@@ -1,144 +1,74 @@
 {% extends "base.html" %}
-{% block title %}知识库管理 - 手写记录识别{% endblock %}
+{% block title %}配方知识库 - 手写配方识别{% endblock %}
 {% block content %}
-<section>
-    <h2>知识库管理</h2>
-    <p class="hint">管理物料、别名和历史配方，用于识别时的历史匹配和纠错。</p>
+<section class="knowledge-heading">
+    <div>
+        <p class="eyebrow">已确认的配方历史</p>
+        <h2>客户 / 产品 / 日期</h2>
+        <p>同一客户和产品的新配方会按日期追加，不会覆盖以前的记录。</p>
+    </div>
+    <a class="btn" href="/api/knowledge/export">导出全部历史</a>
 </section>
 
-<section>
-    <h3>添加物料</h3>
-    <div id="material-feedback" class="feedback" style="display:none"></div>
-    <form id="material-form" onsubmit="addMaterial(event)">
-        <div class="form-group">
-            <label>物料名称：</label>
-            <input type="text" id="mat-name" required placeholder="如 PA66、抗氧剂1010">
-        </div>
-        <div class="form-group">
-            <label>分类：</label>
-            <input type="text" id="mat-category" placeholder="如 尼龙、助剂">
-        </div>
-        <div class="form-group">
-            <label>默认单位：</label>
-            <input type="text" id="mat-unit" placeholder="如 kg、%">
-        </div>
-        <div class="form-group">
-            <label>别名（逗号分隔）：</label>
-            <input type="text" id="mat-aliases" placeholder="如 聚酰胺66,PA-66">
-        </div>
-        <button type="submit" class="btn btn-primary">添加</button>
-    </form>
+<section class="knowledge-tools">
+    <label class="review-field">
+        <span class="review-field-label">搜索客户、产品或日期</span>
+        <input type="search" id="knowledge-search" placeholder="例如：联创、G30A、2026-07">
+    </label>
+    <button type="button" class="btn" id="compare-formulas" disabled>比较配方（请选择两条）</button>
 </section>
-
-<section>
-    <h3>批量导入</h3>
-    <div id="import-feedback" class="feedback" style="display:none"></div>
-    <form id="import-form" onsubmit="importFile(event)">
-        <div class="form-group">
-            <label>选择文件（.xlsx 或 .csv）：</label>
-            <input type="file" id="import-file" accept=".xlsx,.csv" required>
+<div id="knowledge-feedback" class="feedback" hidden></div>
+<div class="knowledge-layout">
+    <aside id="knowledge-tree" class="knowledge-tree" aria-label="配方历史"></aside>
+    <main id="knowledge-detail" class="knowledge-detail">
+        <div class="empty-state">
+            <h3>选择一条日期记录</h3>
+            <p>这里会显示材料、数量、工艺和原图证据。</p>
         </div>
-        <p class="hint">支持列：物料名称/name、单位/unit、分类/category、别名/aliases（分号分隔）</p>
-        <button type="submit" class="btn">导入</button>
-    </form>
-</section>
+    </main>
+</div>
 
-<section>
-    <h3>物料列表 ({{ materials | length }})</h3>
+<details class="material-dictionary">
+    <summary>物料字典（{{ materials | length }} 项）</summary>
+    <p>物料别名和默认单位用于辅助识别，日常查看配方时无需操作这里。</p>
+    <div class="dictionary-grid">
+        <section>
+            <h3>添加物料</h3>
+            <form id="material-form">
+                <label>物料名称<input type="text" id="mat-name" required></label>
+                <label>分类<input type="text" id="mat-category"></label>
+                <label>默认单位<input type="text" id="mat-unit"></label>
+                <label>别名（逗号分隔）<input type="text" id="mat-aliases"></label>
+                <button type="submit" class="btn">添加</button>
+            </form>
+        </section>
+        <section>
+            <h3>批量导入</h3>
+            <form id="import-form">
+                <input type="file" id="import-file" accept=".xlsx,.csv" required>
+                <button type="submit" class="btn">导入文件</button>
+            </form>
+        </section>
+    </div>
     {% if materials %}
     <table class="jobs-table">
         <thead><tr><th>名称</th><th>分类</th><th>单位</th><th>使用次数</th></tr></thead>
         <tbody>
-            {% for m in materials %}
+        {% for material in materials %}
             <tr>
-                <td>{{ m.standard_name }}</td>
-                <td>{{ m.category or '-' }}</td>
-                <td>{{ m.default_unit or '-' }}</td>
-                <td>{{ m.usage_count }}</td>
+                <td>{{ material.standard_name }}</td>
+                <td>{{ material.category or '-' }}</td>
+                <td>{{ material.default_unit or '-' }}</td>
+                <td>{{ material.usage_count }}</td>
             </tr>
-            {% endfor %}
+        {% endfor %}
         </tbody>
     </table>
     {% else %}
-    <p class="empty">暂无物料数据。可通过上方表单添加，或导入历史 Excel。</p>
+    <p class="empty">物料字典还是空的，确认配方后会自动积累。</p>
     {% endif %}
-</section>
-
-<section>
-    <h3>历史配方 ({{ formulas | length }})</h3>
-    {% if formulas %}
-    <table class="jobs-table">
-        <thead><tr><th>标题</th><th>使用次数</th><th>最后使用</th></tr></thead>
-        <tbody>
-            {% for f in formulas %}
-            <tr>
-                <td>{{ f.title or '-' }}</td>
-                <td>{{ f.usage_count }}</td>
-                <td>{{ f.last_used_at or '-' }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p class="empty">暂无历史配方。确认识别结果后可保存为历史配方。</p>
-    {% endif %}
-</section>
+</details>
 {% endblock %}
-
 {% block scripts %}
-<script>
-function addMaterial(e) {
-    e.preventDefault();
-    const name = document.getElementById('mat-name').value.trim();
-    const category = document.getElementById('mat-category').value.trim();
-    const unit = document.getElementById('mat-unit').value.trim();
-    const aliasesStr = document.getElementById('mat-aliases').value.trim();
-    const aliases = aliasesStr ? aliasesStr.split(',').map(s => s.trim()).filter(Boolean) : [];
-
-    fetch('/knowledge/materials', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({name, category, unit, aliases})
-    })
-    .then(r => r.json())
-    .then(data => {
-        const fb = document.getElementById('material-feedback');
-        fb.style.display = 'block';
-        fb.className = 'feedback feedback-ok';
-        fb.textContent = '已添加: ' + data.name;
-        setTimeout(() => location.reload(), 800);
-    })
-    .catch(err => {
-        const fb = document.getElementById('material-feedback');
-        fb.style.display = 'block';
-        fb.className = 'feedback feedback-error';
-        fb.textContent = '添加失败: ' + err.message;
-    });
-}
-
-function importFile(e) {
-    e.preventDefault();
-    const fileInput = document.getElementById('import-file');
-    if (!fileInput.files.length) return;
-    const formData = new FormData();
-    formData.append('file', fileInput.files[0]);
-
-    const fb = document.getElementById('import-feedback');
-    fb.style.display = 'block';
-    fb.className = 'feedback feedback-warn';
-    fb.textContent = '正在导入...';
-
-    fetch('/knowledge/import', {method: 'POST', body: formData})
-    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-    .then(data => {
-        fb.className = 'feedback feedback-ok';
-        fb.textContent = data.message || ('导入完成: ' + data.imported + ' 条');
-        setTimeout(() => location.reload(), 1000);
-    })
-    .catch(err => {
-        fb.className = 'feedback feedback-error';
-        fb.textContent = '导入失败: ' + err.message;
-    });
-}
-</script>
+<script src="/static/knowledge.js" defer></script>
 {% endblock %}

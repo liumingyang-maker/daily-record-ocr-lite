@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -1608,31 +1608,106 @@ async def save_product_alias(job_id: str, product_id: str, request: Request):
 # ─── 知识库管理 ─────────────────────────────────────────────
 
 
+def _knowledge_db_path() -> Path:
+    return Path(
+        os.environ.get(
+            "KNOWLEDGE_DB_PATH",
+            PROJECT_ROOT / "data" / "knowledge.sqlite3",
+        )
+    )
+
+
+@app.get("/api/knowledge/tree")
+async def knowledge_tree(q: str = ""):
+    from .knowledge.history import KnowledgeHistory
+
+    history = KnowledgeHistory(_knowledge_db_path())
+    try:
+        return history.tree(q)
+    finally:
+        history.close()
+
+
+@app.get("/api/knowledge/formulas/{formula_id}")
+async def knowledge_formula(formula_id: int):
+    from .knowledge.history import KnowledgeHistory
+
+    history = KnowledgeHistory(_knowledge_db_path())
+    try:
+        detail = history.formula_detail(formula_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        history.close()
+    detail["evidence_image_url"] = ""
+    source_job_id = detail.get("source_job_id")
+    image_index = int(detail.get("source_image_index", 0))
+    if source_job_id and image_index > 0:
+        try:
+            source_job = _get_storage().get_job(str(source_job_id))
+            source = str(source_job.get("images", [])[image_index - 1].get("source", ""))
+            if source:
+                detail["evidence_image_url"] = (
+                    f"/jobs/{quote(str(source_job_id), safe='')}/files/{quote(source, safe='/')}"
+                )
+        except (FileNotFoundError, ValueError, IndexError):
+            pass
+    return detail
+
+
+@app.get("/api/knowledge/compare")
+async def compare_knowledge(left: int, right: int):
+    from .knowledge.history import KnowledgeHistory
+
+    history = KnowledgeHistory(_knowledge_db_path())
+    try:
+        return history.compare(left, right)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        history.close()
+
+
+@app.get("/api/knowledge/export")
+async def export_knowledge():
+    from .knowledge.exporter import export_knowledge_history
+
+    output = (
+        _knowledge_db_path().parent
+        / "exports"
+        / f"formula-knowledge-{int(time.time())}.xlsx"
+    )
+    export_knowledge_history(_knowledge_db_path(), output)
+    return FileResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename="配方知识库.xlsx",
+    )
+
+
 @app.get("/knowledge", response_class=HTMLResponse)
 async def knowledge_page(request: Request):
     """知识库管理页面。"""
-    from .config import PROJECT_ROOT
     from .knowledge.database import KnowledgeDB
-    db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+    db = KnowledgeDB(_knowledge_db_path())
     db.initialize()
     materials = db.get_all_materials()
-    formulas = db.get_all_formulas()
+    db.close()
     return templates.TemplateResponse(
-        request, "knowledge.html", {"materials": materials, "formulas": formulas}
+        request, "knowledge.html", {"materials": materials}
     )
 
 
 @app.post("/knowledge/materials")
 async def add_material(request: Request):
     """添加物料。"""
-    from .config import PROJECT_ROOT
     from .knowledge.database import KnowledgeDB
     body = await request.json()
     name = body.get("name", "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="物料名称不能为空。")
 
-    db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+    db = KnowledgeDB(_knowledge_db_path())
     db.initialize()
     mid = db.add_material(name, body.get("category", ""), body.get("unit", ""))
 
@@ -1650,7 +1725,6 @@ async def import_knowledge(file: UploadFile = File(...)):
     import csv
     import io as _io
 
-    from .config import PROJECT_ROOT
     from .knowledge.database import KnowledgeDB
 
     if not file.filename:
@@ -1664,7 +1738,7 @@ async def import_knowledge(file: UploadFile = File(...)):
     if not content:
         raise HTTPException(status_code=400, detail="文件为空。")
 
-    db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+    db = KnowledgeDB(_knowledge_db_path())
     db.initialize()
 
     imported_count = 0
