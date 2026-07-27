@@ -20,8 +20,91 @@
 7. 根据真实 A/B/C 证据判断 PR 是否仍应保持 Draft。
 
 请输出 P0/P1/P2、Secret/私人数据边界、是否允许 Ready、是否允许 Merge。
-真实完整链目前没有生成 structured_result、FinalResult 和 Excel，禁止给出允许发布结论。
+真实 Knowledge ON 已生成 structured_result 和 FinalResult，但 OFF 对照失败，
+且用户尚未确认问题字段、未生成正式 Excel；禁止给出允许发布结论。
 ```
+
+## 2026-07-27 最新整改与真实 Gate（本节覆盖下方较早结论）
+
+### 独立审查意见的代码处置
+
+- 已增加并通过 `test_knowledge_trace_matches_final_value`、
+  `test_knowledge_trace_survives_reload`、`test_final_result_contains_all_trace`。
+- 已增加并通过 amount/date/formula_no 的流水线保护测试；历史知识不能覆盖
+  数量、日期、配方号、编号或单位。
+- VLM 前的知识候选改为先确定唯一高分 customer/product 上下文，再检索
+  material/process；无客户上下文时不向 Prompt 注入材料或工艺历史。
+- 已增加跨客户隔离回归；客户 B 不会收到只属于客户 A 的材料候选。
+- Qwen3.7 Plus 使用 `json_object`、`enable_thinking=false` 和 SSE 流式接收；
+  其他 OpenAI 兼容模型维持原请求路径。
+- 官方阿里云 `*.aliyuncs.com` 的 qwen3.7-plus 使用紧凑业务 JSON 合同，
+  返回后由本地代码补齐 record-v1，再执行原 Schema、Fusion、FinalResult 和
+  Ready Gate；没有降低或绕过 Schema。
+- 紧凑合同保留 source image、客户、产品、日期、材料、原始数量、单位、工艺、
+  注意事项和置信度；本地归一化支持同页多产品和多图来源。
+- 紧凑合同仅按解析后的官方阿里云 hostname 启用；伪装域名和其他模型已有
+  反向测试。
+
+### 最新真实两图 Knowledge ON Gate
+
+全部使用本机私密按量配置；Key、Authorization、完整模型响应、私人数据库和
+原图均未进入 Git 或本报告。
+
+| 项目 | 结果 |
+|---|---|
+| Job | `20260727-200139-4e9558` |
+| 图片数 | 2 张不同的真实个人样图 |
+| OCR | 21,906 ms；1 张缓存命中 |
+| Vision | 81,939 ms；收到流式 content |
+| JSON / structured_result | 成功；59,969 B |
+| Schema | `VALID`；0 issue |
+| 记录 | 2 页、7 条配方 |
+| Fusion | 成功；`fusion/result.json` 生成 |
+| FinalResult | 成功；`review/final_result.json` 生成 |
+| Job 状态 | `REVIEW_REQUIRED` |
+| knowledge_trace | 57 `KEEP_RAW`、114 `FORBIDDEN`；trace/final 不一致 0 |
+
+### Prompt 语义复验
+
+Job `20260727-200552-b00c4a` 使用同两图、同模型、Knowledge ON，只增加以下
+已复现版面规则：配方序号只读数字、日期归属当前配方、横向材料/数量对齐、仅
+明确“工艺”行进入工艺字段、数字符号逐字符保留。
+
+- OCR 3,485 ms（2 张缓存命中）；Vision 80,552 ms。
+- 收到 content，2 页 7 条配方，Schema `VALID`，Fusion 与 FinalResult 均生成。
+- 第 2 页材料/工艺误分得到改善；但第 1 页日期仍缺失，配方号仍需人工确认。
+- 本地 OCR 对第 1 页日期已有串行错误，因此不能声称数字/日期准确率 Gate 全过。
+
+### Knowledge OFF 对照
+
+Job `20260727-200756-d3d1ec` 使用同图、同代码、Knowledge OFF。单次请求在响应头
+前远端断开，未收到 content，也未生成 structured_result/FinalResult。按既定
+规则未重试、未继续增加超时。
+
+因此当前只能证明 Knowledge ON 完整链可运行，不能计算可靠的 OFF/ON 净提升；
+本次 ON 结果也没有发生 `AUTO_CORRECT`，所以不得宣称知识纠偏已经提高准确率。
+
+### Excel Gate
+
+真实 ON Job 正确进入 `REVIEW_REQUIRED`：100 个 `NEED_REVIEW`、21 个 `CONFLICT`
+字段尚待用户核对。正式导出器只允许 READY 且无未确认字段的 FinalResult。
+本次没有伪造用户确认，因此尚未生成正式 Excel；这项发布 Gate 仍阻塞。
+
+### 最新自动化结果
+
+- 项目 `.venv`：`453 passed, 5 deselected`。
+- `python -m ruff check lite_app tests_lite scripts`：通过。
+- `git diff --check`：通过。
+- 全局 Python 因缺少开发依赖 `xlwt` 在收集阶段退出；改用项目规定的 `.venv`
+  后全绿，该环境差异不计作代码失败。
+
+### 最新决策
+
+- PR #9：继续 **Draft**。
+- 已解除：真实 Qwen Knowledge ON 无 structured_result/FinalResult 的阻塞。
+- 仍阻塞：Knowledge OFF/ON 净提升、用户确认后的 READY/Excel、更多真实样图准确率、
+  私人安装器升级闭环。
+- Ready / Merge / Tag / Release：均不允许。
 
 ## 审查发现处置
 

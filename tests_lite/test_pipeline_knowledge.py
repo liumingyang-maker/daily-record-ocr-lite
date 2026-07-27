@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import copy
 from datetime import UTC, datetime
 from pathlib import Path
 
-from lite_app.final_result import project_final_result
+from lite_app.final_result import FinalResultService, project_final_result
 from lite_app.knowledge.database import KnowledgeDB
 from lite_app.ocr.base import OCRPage, OCRToken
 from lite_app.pipeline_v2 import (
     _apply_knowledge_correction,
+    _build_compact_qwen_prompt,
     _build_fusion_result,
     _build_knowledge_prompt,
     _history_candidates,
     _knowledge_assist_enabled,
+    _uses_compact_qwen_contract,
 )
 
 
@@ -70,6 +73,23 @@ def _ocr_page(text: str) -> OCRPage:
     )
 
 
+def _ocr_page_many(*texts: str) -> OCRPage:
+    page = _ocr_page(texts[0])
+    page.tokens = [
+        OCRToken(
+            id=f"p1_t{index:03d}",
+            text=text,
+            confidence=0.92,
+            polygon=[[10, 10], [90, 10], [90, 30], [10, 30]],
+            bbox=[10, 10, 90, 30],
+            center_x=50,
+            center_y=20,
+        )
+        for index, text in enumerate(texts, 1)
+    ]
+    return page
+
+
 def _structured(material: str = "PA66 GF3O") -> dict:
     return {
         "pages": [
@@ -107,17 +127,36 @@ def test_knowledge_references_enter_prompt_as_non_numeric_hints(
     db_path = tmp_path / "knowledge.sqlite3"
     _seed_term(
         db_path,
+        term_type="customer",
+        value="联创",
+        customer="联创",
+    )
+    _seed_term(
+        db_path,
+        term_type="product",
+        value="G30A",
+        customer="联创",
+    )
+    _seed_term(
+        db_path,
         term_type="material",
         value="PA66 GF30",
         customer="联创",
         product="G30A",
     )
 
-    prompt = _build_knowledge_prompt([_ocr_page("PA66 GF3O")], db_path)
+    prompt = _build_knowledge_prompt(
+        [_ocr_page_many("联创", "G30A", "PA66 GF3O")],
+        db_path,
+    )
 
-    assert prompt["references"][0]["raw_text"] == "PA66 GF3O"
-    assert prompt["references"][0]["candidate"] == "PA66 GF30"
-    assert prompt["references"][0]["term_type"] == "material"
+    material = next(
+        item
+        for item in prompt["references"]
+        if item["term_type"] == "material"
+    )
+    assert material["raw_text"] == "PA66 GF3O"
+    assert material["candidate"] == "PA66 GF30"
     assert prompt["policy"]["never_override"] == [
         "amount",
         "date",
@@ -125,6 +164,100 @@ def test_knowledge_references_enter_prompt_as_non_numeric_hints(
         "identifier",
         "unit",
     ]
+
+
+def test_prompt_material_candidates_are_scoped_to_inferred_customer_product(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "knowledge.sqlite3"
+    _seed_term(
+        db_path,
+        term_type="customer",
+        value="客户B",
+        customer="客户B",
+    )
+    _seed_term(
+        db_path,
+        term_type="product",
+        value="G30A",
+        customer="客户B",
+    )
+    _seed_term(
+        db_path,
+        term_type="material",
+        value="PA66-G30",
+        customer="客户A",
+        product="G30A",
+    )
+    _seed_term(
+        db_path,
+        term_type="material",
+        value="PA66-G35",
+        customer="客户B",
+        product="G30A",
+    )
+
+    prompt = _build_knowledge_prompt(
+        [_ocr_page_many("客户B", "G30A", "PA66-G30")],
+        db_path,
+    )
+
+    materials = [
+        item["candidate"]
+        for item in prompt["references"]
+        if item["term_type"] == "material"
+    ]
+    assert "PA66-G30" not in materials
+    assert "PA66-G35" in materials
+    assert prompt["context"] == {"customer": "客户B", "product": "G30A"}
+
+
+def test_compact_qwen_prompt_keeps_business_and_safety_contract() -> None:
+    prompt = _build_compact_qwen_prompt(
+        instructions="full record-v1 instructions that must not be copied",
+        ocr_evidence=[{"image_index": 1, "tokens": [{"id": "p1_t001", "text": "25"}]}],
+        layout_prompt={"1": {"records": [{"token_ids": ["p1_t001"]}]}},
+        knowledge_prompt={
+            "policy": {"never_override": ["amount", "date", "formula_no", "unit"]},
+            "context": {"customer": "客户甲", "product": "G30A"},
+            "references": [],
+        },
+    )
+
+    assert "JSON" in prompt
+    assert "source_image_index" in prompt
+    assert "company" in prompt
+    assert "product_or_series" in prompt
+    assert "amount" in prompt
+    assert "date" in prompt
+    assert "formula_no" in prompt
+    assert "unit" in prompt
+    assert "只填写可见的数字序号" in prompt
+    assert "日期行" in prompt
+    assert "只有明确写有“工艺”" in prompt
+    assert "逐字符保留" in prompt
+    assert "full record-v1 instructions" not in prompt
+
+
+def test_compact_qwen_contract_is_limited_to_official_alibaba_host() -> None:
+    assert _uses_compact_qwen_contract(
+        {
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen3.7-plus",
+        }
+    )
+    assert not _uses_compact_qwen_contract(
+        {
+            "base_url": "https://dashscope.aliyuncs.com.example.invalid/v1",
+            "model": "qwen3.7-plus",
+        }
+    )
+    assert not _uses_compact_qwen_contract(
+        {
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "other-model",
+        }
+    )
 
 
 def test_knowledge_assistance_can_be_disabled_for_ab_gate(monkeypatch) -> None:
@@ -159,6 +292,45 @@ def test_post_vision_retrieval_is_typed_and_context_scoped(
     assert candidate["term_type"] == "material"
     assert candidate["context_aligned"] is True
     assert "product_context" in candidate["reasons"]
+
+
+def test_same_material_different_customer_is_review(tmp_path: Path) -> None:
+    db_path = tmp_path / "knowledge.sqlite3"
+    _seed_term(
+        db_path,
+        term_type="material",
+        value="PA66-G30",
+        customer="客户A",
+        product="G30A",
+    )
+    structured = _structured("PA66-G3O")
+    structured["pages"][0]["company"]["standard_value"] = "客户B"
+    matches = _history_candidates(structured, db_path)
+    result = {
+        "final_value": "PA66-G3O",
+        "final_source": "vlm",
+        "final_confidence": 0.91,
+        "status": "AUTO_ACCEPT",
+        "reasons": [],
+        "candidates": [
+            {
+                "value": "PA66-G3O",
+                "source": "vlm",
+                "confidence": 0.91,
+                "evidence": ["p1_t001"],
+            }
+        ],
+    }
+
+    decided = _apply_knowledge_correction(
+        result,
+        "material",
+        matches["formula_001__material_001__name"],
+    )
+
+    assert decided["final_value"] == "PA66-G3O"
+    assert decided["status"] == "NEED_REVIEW"
+    assert decided["knowledge_trace"]["decision"] == "SUGGEST"
 
 
 def test_unique_contextual_history_correction_writes_reversible_trace() -> None:
@@ -248,6 +420,136 @@ def test_final_result_preserves_field_level_knowledge_trace() -> None:
     assert projected["knowledge_trace"] == trace
 
 
+def test_knowledge_trace_matches_final_value() -> None:
+    result = {
+        "final_value": "PA66 GF3O",
+        "final_source": "vlm",
+        "final_confidence": 0.91,
+        "status": "AUTO_ACCEPT",
+        "reasons": [],
+        "candidates": [
+            {
+                "value": "PA66 GF3O",
+                "source": "vlm",
+                "confidence": 0.91,
+                "evidence": ["p1_t001"],
+            }
+        ],
+    }
+    corrected = _apply_knowledge_correction(
+        result,
+        "material",
+        [
+            {
+                "value": "PA66 GF30",
+                "score": 0.97,
+                "context_aligned": True,
+                "reasons": ["product_context"],
+            }
+        ],
+    )
+
+    assert corrected["knowledge_trace"]["final_value"] == corrected["final_value"]
+
+
+def test_knowledge_trace_survives_reload(
+    tmp_path: Path,
+) -> None:
+    from tests_lite.test_pipeline_v2_e2e import _vision_result
+
+    strict_result = _vision_result()
+    formula = strict_result["pages"][0]["product_sections"][0]["formulas"][0]
+    formula["formula_id"] = "formula_001"
+    material = formula["materials"][0]
+    material["material_id"] = "material_001"
+    field_id = "formula_001__material_001__name"
+    trace = {
+        "original_value": material["name"]["value"],
+        "history_candidate": "PA66 GF30",
+        "final_value": "PA66 GF30",
+        "decision": "AUTO_CORRECT",
+        "score": 0.97,
+        "margin": 0.97,
+        "reasons": ["product_context"],
+    }
+    final = project_final_result(
+        "job-trace",
+        strict_result,
+        {
+            "fields": [
+                {
+                    "field_id": field_id,
+                    "final_value": "PA66 GF30",
+                    "final_source": "knowledge_assisted",
+                    "final_confidence": 0.97,
+                    "status": "AUTO_ACCEPT",
+                    "candidates": [],
+                    "knowledge_trace": trace,
+                }
+            ]
+        },
+    )
+    service = FinalResultService(tmp_path / "job")
+
+    service.replace(final)
+    loaded = service.load()
+    reloaded = loaded["pages"][0]["product_sections"][0]["formulas"][0][
+        "materials"
+    ][0]["name"]
+
+    assert reloaded["knowledge_trace"] == trace
+    assert reloaded["knowledge_trace"]["final_value"] == reloaded["value"]
+
+
+def test_final_result_contains_all_trace() -> None:
+    from tests_lite.test_pipeline_v2_e2e import _vision_result
+
+    structured = _vision_result()
+    formula = structured["pages"][0]["product_sections"][0]["formulas"][0]
+    formula["formula_id"] = "formula_001"
+    first = formula["materials"][0]
+    first["material_id"] = "material_001"
+    second = copy.deepcopy(first)
+    second["material_id"] = "material_002"
+    formula["materials"].append(second)
+    fields = []
+    for index in (1, 2):
+        value = f"规范材料{index}"
+        fields.append(
+            {
+                "field_id": f"formula_001__material_{index:03d}__name",
+                "final_value": value,
+                "final_source": "knowledge_assisted",
+                "final_confidence": 0.97,
+                "status": "AUTO_ACCEPT",
+                "candidates": [],
+                "knowledge_trace": {
+                    "original_value": "原始材料",
+                    "history_candidate": value,
+                    "final_value": value,
+                    "decision": "AUTO_CORRECT",
+                    "score": 0.97,
+                    "margin": 0.97,
+                    "reasons": ["product_context"],
+                },
+            }
+        )
+
+    final = project_final_result("job-all-traces", structured, {"fields": fields})
+    names = [
+        material["name"]
+        for material in final["pages"][0]["product_sections"][0]["formulas"][0][
+            "materials"
+        ]
+    ]
+
+    assert [name["knowledge_trace"]["final_value"] for name in names] == [
+        "规范材料1",
+        "规范材料2",
+    ]
+    assert all(name["knowledge_trace"]["final_value"] == name["value"] for name in names)
+
+
 def test_knowledge_changes_final_result_only_through_safe_fusion() -> None:
     structured = _structured("PA66 GF3O")
     history = {
@@ -318,3 +620,76 @@ def test_history_cannot_override_date() -> None:
 
 def test_history_cannot_override_formula_number() -> None:
     _assert_history_cannot_override("formula_no", "配方2")
+
+
+def test_pipeline_amount_field_type_is_forbidden() -> None:
+    structured = _structured()
+    material = structured["pages"][0]["product_sections"][0]["formulas"][0][
+        "materials"
+    ][0]
+    material["amount"] = {
+        "value": "45",
+        "confidence": 0.95,
+        "evidence_token_ids": ["p1_t001"],
+    }
+    fusion = _build_fusion_result(
+        structured,
+        [_ocr_page("45")],
+        {
+            "formula_001__material_001__amount": [
+                {
+                    "value": "50",
+                    "score": 1.0,
+                    "context_aligned": True,
+                    "reasons": ["normalized_exact"],
+                }
+            ]
+        },
+    )
+    amount = next(
+        field
+        for field in fusion["fields"]
+        if field["field_id"].endswith("__amount")
+    )
+
+    assert amount["final_value"] == "45"
+    assert amount["knowledge_trace"]["decision"] == "FORBIDDEN"
+
+
+def test_pipeline_date_field_type_is_forbidden() -> None:
+    structured = _structured()
+    formula = structured["pages"][0]["product_sections"][0]["formulas"][0]
+    formula["record_date"] = {"value": "2024-01-01"}
+    final = project_final_result(
+        "job-date",
+        structured,
+        _build_fusion_result(
+            structured,
+            [_ocr_page("2024-01-01")],
+            {"formula_001__record_date": [{"value": "2025-01-01", "score": 1.0}]},
+        ),
+    )
+
+    assert formula["record_date"]["value"] == "2024-01-01"
+    assert final["pages"][0]["product_sections"][0]["formulas"][0][
+        "record_date"
+    ]["value"] == "2024-01-01"
+
+
+def test_formula_number_never_auto_correct() -> None:
+    structured = _structured()
+    formula = structured["pages"][0]["product_sections"][0]["formulas"][0]
+    formula["formula_no"] = "配方2"
+    final = project_final_result(
+        "job-formula-no",
+        structured,
+        _build_fusion_result(
+            structured,
+            [_ocr_page("配方2")],
+            {"formula_001__formula_no": [{"value": "配方1", "score": 1.0}]},
+        ),
+    )
+
+    assert final["pages"][0]["product_sections"][0]["formulas"][0][
+        "formula_no"
+    ] == "配方2"

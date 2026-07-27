@@ -211,6 +211,53 @@ def test_page_coverage_requires_upload_order_and_projection_reuses_source_id():
     ]
 
 
+def test_compact_records_preserve_page_customer_and_product_context():
+    from lite_app.contracts import normalize_legacy_result, validate_page_coverage
+
+    raw = {
+        "records": [
+            {
+                "source_image_index": 1,
+                "company": "客户甲",
+                "product_or_series": "G30A",
+                "formula_no": "配方1",
+                "record_date": "2024-07-01",
+                "materials": [{"name": "PA66-G30", "amount": "25", "unit": "kg"}],
+                "process_parameters": [],
+                "notes": "先混合",
+                "confidence": 0.92,
+            },
+            {
+                "source_image_index": 2,
+                "company": "客户乙",
+                "product_or_series": "G35B",
+                "formula_no": "配方2",
+                "record_date": "",
+                "materials": [{"name": "PA66-G35", "amount": "18", "unit": ""}],
+                "process_parameters": [],
+                "notes": "",
+                "confidence": 0.81,
+            },
+        ],
+        "warnings": [],
+    }
+
+    normalized = normalize_legacy_result(raw, "job-compact")
+
+    assert validate_page_coverage(normalized, expected_pages=2) == []
+    assert [page["company"]["standard_value"] for page in normalized["pages"]] == [
+        "客户甲",
+        "客户乙",
+    ]
+    assert [
+        page["product_sections"][0]["product_or_series"]["value"]
+        for page in normalized["pages"]
+    ] == ["G30A", "G35B"]
+    assert normalized["pages"][0]["product_sections"][0]["formulas"][0][
+        "materials"
+    ][0]["amount"]["value"] == "25"
+
+
 def test_v1_error_taxonomy_is_importable():
     from lite_app.exporter import UnresolvedReviewError
     from lite_app.fusion.association import AssociationError

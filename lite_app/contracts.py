@@ -142,35 +142,60 @@ def normalize_legacy_result(result: dict[str, Any], job_id: str = "legacy") -> d
 
     pages: dict[int, dict[str, Any]] = {}
     for sequence, record in enumerate(records, 1):
-        indexes = record.get("source_image_indexes") or [1]
+        indexes = record.get("source_image_indexes") or [
+            record.get("source_image_index", 1)
+        ]
         image_index = int(indexes[0])
+        company = str(
+            record.get("company")
+            or record.get("customer")
+            or result.get("page_heading", "")
+        )
         page = pages.setdefault(
             image_index,
             {
                 "page_id": f"page_{image_index:03d}",
                 "source_image_index": image_index,
                 "company": {
-                    "raw_value": str(result.get("page_heading", "")),
-                    "standard_value": str(result.get("page_heading", "")),
+                    "raw_value": company,
+                    "standard_value": company,
                     "confidence": 0.0,
                     "bbox": None,
                     "evidence_token_ids": [],
                     "match_source": "legacy",
                     "review_status": "NEED_REVIEW",
                 },
-                "product_sections": [
-                    {
-                        "section_id": f"page_{image_index:03d}__section_001",
-                        "product_or_series": _legacy_field(""),
-                        "product_type": "unknown",
-                        "section_bbox": None,
-                        "formulas": [],
-                        "warnings": [],
-                    }
-                ],
+                "product_sections": [],
                 "warnings": [],
             },
         )
+        if company and not page["company"]["standard_value"]:
+            page["company"]["raw_value"] = company
+            page["company"]["standard_value"] = company
+        product = str(
+            record.get("product_or_series") or record.get("product") or ""
+        )
+        section = next(
+            (
+                item
+                for item in page["product_sections"]
+                if item["product_or_series"]["value"] == product
+            ),
+            None,
+        )
+        if section is None:
+            section = {
+                "section_id": (
+                    f"page_{image_index:03d}__section_"
+                    f"{len(page['product_sections']) + 1:03d}"
+                ),
+                "product_or_series": _legacy_field(product),
+                "product_type": "unknown",
+                "section_bbox": None,
+                "formulas": [],
+                "warnings": [],
+            }
+            page["product_sections"].append(section)
         formula_id = f"{job_id}__page_{image_index:03d}__formula_{sequence:03d}"
         materials = []
         for index, material in enumerate(record.get("materials", []), 1):
@@ -194,7 +219,7 @@ def normalize_legacy_result(result: dict[str, Any], job_id: str = "legacy") -> d
                     "warnings": [],
                 }
             )
-        page["product_sections"][0]["formulas"].append(
+        section["formulas"].append(
             {
                 "formula_id": formula_id,
                 "formula_no": str(record.get("formula_no", "")),

@@ -10,6 +10,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from .cache import FileRecognitionCache, compute_image_hash
 from .config import (
@@ -290,16 +291,30 @@ async def analyze_job_v2(
             }
         )
         job["knowledge_assist_enabled"] = knowledge_enabled
-        user_prompt = (
-            f"{schema_config.get('instructions', '')}\n\n"
-            "以下 OCR 与本地布局仅为辅助证据，可能有误：\n"
-            f"OCR={json.dumps(ocr_evidence, ensure_ascii=False)}\n"
-            f"LAYOUT={json.dumps(layout_prompt, ensure_ascii=False)}\n"
-            "以下知识候选仅用于核对文字名称，不是图片事实；"
-            "新名称必须保留，数量、日期、配方号、编号和单位绝不按历史修改：\n"
-            f"KNOWLEDGE={json.dumps(knowledge_prompt, ensure_ascii=False)}\n"
-            "只返回严格符合 JSON Schema 的 JSON。"
-        )
+        compact_qwen = _uses_compact_qwen_contract(vision_config)
+        if compact_qwen:
+            system_prompt = (
+                "你是中文手写配方录入员。以原图为准，OCR、布局和历史知识仅为"
+                "辅助。不得猜测看不清的值。只返回 JSON 对象，不要 Markdown。"
+            )
+            user_prompt = _build_compact_qwen_prompt(
+                instructions=schema_config.get("instructions", ""),
+                ocr_evidence=ocr_evidence,
+                layout_prompt=layout_prompt,
+                knowledge_prompt=knowledge_prompt,
+            )
+        else:
+            system_prompt = schema_config.get("system_prompt", "")
+            user_prompt = (
+                f"{schema_config.get('instructions', '')}\n\n"
+                "以下 OCR 与本地布局仅为辅助证据，可能有误：\n"
+                f"OCR={json.dumps(ocr_evidence, ensure_ascii=False)}\n"
+                f"LAYOUT={json.dumps(layout_prompt, ensure_ascii=False)}\n"
+                "以下知识候选仅用于核对文字名称，不是图片事实；"
+                "新名称必须保留，数量、日期、配方号、编号和单位绝不按历史修改：\n"
+                f"KNOWLEDGE={json.dumps(knowledge_prompt, ensure_ascii=False)}\n"
+                "只返回严格符合 JSON Schema 的 JSON。"
+            )
         vision_key = _hash_payload(
             {
                 "images": [compute_image_hash(path) for path in vlm_paths],
@@ -310,7 +325,10 @@ async def analyze_job_v2(
                     vision_config.get("endpoint"),
                 ),
                 "prompt_version": schema_config.get("prompt_version"),
-                "prompt": schema_config.get("system_prompt", "") + user_prompt,
+                "prompt": system_prompt + user_prompt,
+                "contract": (
+                    "compact-records-v1" if compact_qwen else "record-v1"
+                ),
                 "schema": schema,
                 "ocr": ocr_evidence,
                 "layout": layout_prompt,
@@ -332,7 +350,7 @@ async def analyze_job_v2(
         else:
             raw_response = await vision_provider.analyze(
                 vlm_paths,
-                schema_config.get("system_prompt", ""),
+                system_prompt,
                 user_prompt,
                 schema,
             )
@@ -637,6 +655,76 @@ def _knowledge_assist_enabled() -> bool:
     return _as_bool(os.environ.get("KNOWLEDGE_ASSIST_ENABLED", "true"))
 
 
+def _uses_compact_qwen_contract(vision_config: dict[str, Any]) -> bool:
+    hostname = (
+        urlparse(str(vision_config.get("base_url", ""))).hostname or ""
+    ).lower()
+    model = str(vision_config.get("model", "")).lower()
+    return hostname.endswith(".aliyuncs.com") and model == "qwen3.7-plus"
+
+
+def _build_compact_qwen_prompt(
+    *,
+    instructions: str,
+    ocr_evidence: list[dict[str, Any]],
+    layout_prompt: dict[str, Any],
+    knowledge_prompt: dict[str, Any],
+) -> str:
+    del instructions
+    compact_ocr = [
+        {
+            "image_index": page.get("image_index"),
+            "tokens": [
+                {
+                    "id": token.get("id"),
+                    "text": token.get("text"),
+                    "confidence": token.get("confidence"),
+                    "bbox": token.get("bbox"),
+                }
+                for token in page.get("ocr_tokens", page.get("tokens", []))
+            ],
+        }
+        for page in ocr_evidence
+    ]
+    compact_layout = {
+        page_index: {"records": evidence.get("records", [])}
+        for page_index, evidence in layout_prompt.items()
+    }
+    contract = {
+        "records": [
+            {
+                "source_image_index": 1,
+                "company": "",
+                "product_or_series": "",
+                "formula_no": "",
+                "record_date": "",
+                "materials": [{"name": "", "amount": "", "unit": ""}],
+                "process_parameters": [
+                    {"name": "", "value": "", "unit": ""}
+                ],
+                "notes": "",
+                "confidence": 0.0,
+            }
+        ],
+        "warnings": [],
+    }
+    return (
+        "每个可见配方输出一条 records 记录；source_image_index 是从 1 开始的图片"
+        "序号。formula_no 只填写可见的数字序号，不翻译、不补写“配方”。"
+        "每条配方下方的日期行写入该条 record_date。材料名称横排及其正下方"
+        "对齐的全部数量都写入 materials；只有明确写有“工艺”的行才写入"
+        "process_parameters。数字、小数点、加减号、斜杠和范围连接符逐字符保留。"
+        "保留原始数量文本、日期、单位、工艺和注意事项。看不清就留空。"
+        "知识候选只允许核对客户、产品、材料、工艺名称；新名称必须保留；"
+        "amount、date、formula_no、identifier、unit 绝不按历史改写。"
+        "只返回符合下列紧凑合同的 JSON 对象：\n"
+        f"CONTRACT={json.dumps(contract, ensure_ascii=False)}\n"
+        f"OCR={json.dumps(compact_ocr, ensure_ascii=False)}\n"
+        f"LAYOUT={json.dumps(compact_layout, ensure_ascii=False)}\n"
+        f"KNOWLEDGE={json.dumps(knowledge_prompt, ensure_ascii=False)}"
+    )
+
+
 def _build_knowledge_prompt(
     ocr_pages: list[OCRPage],
     database_path: Path,
@@ -652,50 +740,119 @@ def _build_knowledge_prompt(
         ],
     }
     if not database_path.exists():
-        return {"policy": policy, "references": []}
+        return {
+            "policy": policy,
+            "context": {"customer": "", "product": ""},
+            "references": [],
+        }
     references: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
     retrieval = KnowledgeRetrieval(database_path)
     try:
-        for page in ocr_pages:
-            for token in page.tokens[:80]:
-                raw_text = token.text.strip()
-                if not _knowledge_text_candidate(raw_text):
+        tokens = [
+            (page, token, token.text.strip())
+            for page in ocr_pages
+            for token in page.tokens[:80]
+            if _knowledge_text_candidate(token.text.strip())
+        ]
+        customer = _infer_prompt_context(tokens, retrieval, "customer")
+        product = _infer_prompt_context(
+            tokens,
+            retrieval,
+            "product",
+            customer=customer,
+        )
+        for page, token, raw_text in tokens:
+            for term_type in ("customer", "product", "material", "process"):
+                if term_type in {"material", "process"} and not customer:
                     continue
-                for term_type in ("customer", "product", "material", "process"):
-                    matches = retrieval.retrieve(
-                        RetrievalRequest(
-                            raw_text=raw_text,
-                            term_type=term_type,
-                            limit=1,
-                        )
+                matches = retrieval.retrieve(
+                    RetrievalRequest(
+                        raw_text=raw_text,
+                        term_type=term_type,
+                        customer=(
+                            customer if term_type != "customer" else ""
+                        ),
+                        product=(
+                            product
+                            if term_type in {"material", "process"}
+                            else ""
+                        ),
+                        limit=1,
                     )
-                    if not matches or matches[0].score < 0.88:
-                        continue
-                    match = matches[0]
-                    key = (raw_text, term_type, match.value)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    references.append(
-                        {
-                            "raw_text": raw_text,
-                            "candidate": match.value,
-                            "term_type": term_type,
-                            "score": match.score,
-                            "reasons": list(match.reasons),
-                            "source_image_index": page.image_index,
-                            "evidence_token_id": token.id,
-                        }
-                    )
+                )
+                if not matches or matches[0].score < 0.88:
+                    continue
+                match = matches[0]
+                if (
+                    term_type in {"product", "material", "process"}
+                    and customer
+                    and not match.context_aligned
+                ):
+                    continue
+                key = (raw_text, term_type, match.value)
+                if key in seen:
+                    continue
+                seen.add(key)
+                references.append(
+                    {
+                        "raw_text": raw_text,
+                        "candidate": match.value,
+                        "term_type": term_type,
+                        "score": match.score,
+                        "reasons": list(match.reasons),
+                        "source_image_index": page.image_index,
+                        "evidence_token_id": token.id,
+                    }
+                )
     except Exception as exc:
         logger.warning("知识提示候选不可用（非关键）: %s", exc)
-        return {"policy": policy, "references": []}
+        return {
+            "policy": policy,
+            "context": {"customer": "", "product": ""},
+            "references": [],
+        }
     references.sort(
         key=lambda item: (item["score"], item["term_type"]),
         reverse=True,
     )
-    return {"policy": policy, "references": references[:20]}
+    return {
+        "policy": policy,
+        "context": {"customer": customer, "product": product},
+        "references": references[:20],
+    }
+
+
+def _infer_prompt_context(
+    tokens: list[tuple[OCRPage, OCRToken, str]],
+    retrieval: KnowledgeRetrieval,
+    term_type: str,
+    *,
+    customer: str = "",
+) -> str:
+    ranked = []
+    for _page, _token, raw_text in tokens:
+        matches = retrieval.retrieve(
+            RetrievalRequest(
+                raw_text=raw_text,
+                term_type=term_type,
+                customer=customer,
+                limit=1,
+            )
+        )
+        if not matches:
+            continue
+        match = matches[0]
+        if match.score < 0.92 or (customer and not match.context_aligned):
+            continue
+        ranked.append(match)
+    if not ranked:
+        return ""
+    ranked.sort(key=lambda item: item.score, reverse=True)
+    if len(ranked) > 1 and ranked[0].value != ranked[1].value:
+        if ranked[0].score - ranked[1].score < 0.08:
+            return ""
+    return ranked[0].value
 
 
 def _knowledge_text_candidate(value: str) -> bool:

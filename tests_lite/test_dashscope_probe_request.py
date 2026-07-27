@@ -151,3 +151,42 @@ async def test_qwen37_plus_downscales_large_images_before_upload(tmp_path):
     with Image.open(io.BytesIO(base64.b64decode(encoded))) as uploaded:
         assert max(uploaded.size) == 1024
         assert uploaded.format == "JPEG"
+
+
+@pytest.mark.asyncio
+async def test_qwen37_plus_streams_and_assembles_json_content(tmp_path):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            text=(
+                'data: {"choices":[{"delta":{"content":"{\\"marker\\":"}}]}\n\n'
+                'data: {"choices":[{"delta":{"content":"\\"VISION-7319\\"}"}}]}\n\n'
+                "data: [DONE]\n\n"
+            ),
+        )
+
+    image_path = tmp_path / "probe.png"
+    Image.new("RGB", (10, 10), "white").save(image_path)
+    provider = OpenAICompatibleVisionProvider(
+        {
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "endpoint": "/chat/completions",
+            "api_key": "test-key",
+            "model": "qwen3.7-plus",
+        },
+        _transport=httpx.MockTransport(handler),
+    )
+
+    content = await provider.analyze(
+        [image_path],
+        "Return only JSON.",
+        "Read the image and return JSON.",
+        {"type": "object"},
+    )
+
+    assert captured["body"]["stream"] is True
+    assert json.loads(content) == {"marker": "VISION-7319"}
