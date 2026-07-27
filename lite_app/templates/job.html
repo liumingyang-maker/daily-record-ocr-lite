@@ -9,7 +9,7 @@
     </div>
     <div class="job-state-card">
         <span class="status status-{{ job.status | lower }}" id="job-status">{{ job.user_status or job.status }}</span>
-        {% if job.progress_step %}<small>{{ job.progress_step }}</small>{% endif %}
+        {% if job.progress_label %}<small>{{ job.progress_label }}</small>{% endif %}
     </div>
 </section>
 

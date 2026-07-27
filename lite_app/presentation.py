@@ -38,6 +38,13 @@ _PROGRESS_STEP = {
     "EXPORTED": 4,
 }
 
+_PROGRESS_LABEL = {
+    1: "第 1 步：上传图片",
+    2: "第 2 步：识别图片",
+    3: "第 3 步：整理配方",
+    4: "第 4 步：确认与导出",
+}
+
 
 def user_status(status: str) -> dict[str, str]:
     """Translate an internal status into a stable user-facing action."""
@@ -60,6 +67,7 @@ def present_job(job: dict[str, Any]) -> dict[str, Any]:
     date_min = str(business.get("date_min", "")).strip()
     date_max = str(business.get("date_max", "")).strip()
 
+    progress_step = _PROGRESS_STEP.get(status, 1)
     return {
         "id": str(job.get("id", "")),
         "customer": "、".join(customers) if customers else "正在整理",
@@ -69,7 +77,8 @@ def present_job(job: dict[str, Any]) -> dict[str, Any]:
         "created_at": str(job.get("created_at", ""))[:19],
         "status": status_view,
         "next_action": status_view["next_action"],
-        "progress_step": _PROGRESS_STEP.get(status, 1),
+        "progress_step": progress_step,
+        "progress_label": _PROGRESS_LABEL[progress_step],
         "advanced": {
             "job_id": str(job.get("id", "")),
             "provider": str(job.get("provider", "")),

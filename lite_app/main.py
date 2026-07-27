@@ -602,6 +602,7 @@ async def job_detail(job_id: str, request: Request):
         "title": f"{presented['customer']} · {presented['product']}",
         "user_status": presented["status"]["label"],
         "progress_step": presented["progress_step"],
+        "progress_label": presented["progress_label"],
     }
     return templates.TemplateResponse(
         request,

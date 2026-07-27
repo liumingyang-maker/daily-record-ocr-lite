@@ -40,6 +40,7 @@ def test_job_summary_prefers_business_identity():
     assert summary["product"] == "G30A"
     assert summary["date_range"] == "2026-07-01 至 2026-07-26"
     assert summary["next_action"] == "继续确认"
+    assert summary["progress_label"] == "第 4 步：确认与导出"
     assert summary["advanced"]["job_id"] == "20260727-000000-abcdef"
 
 
