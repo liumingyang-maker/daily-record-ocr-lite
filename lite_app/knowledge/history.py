@@ -240,6 +240,53 @@ class KnowledgeHistory:
             "evidence": [dict(item) for item in evidence],
         }
 
+    def pending_review(self, limit: int = 100) -> dict[str, Any]:
+        connection = self.database._get_conn()
+        rows = connection.execute(
+            """
+            SELECT id, source_path, sheet_name, start_row, end_row,
+                   reason, payload_json
+            FROM import_candidates
+            WHERE status = 'PENDING_REVIEW'
+            ORDER BY id
+            LIMIT ?
+            """,
+            (max(1, min(limit, 500)),),
+        ).fetchall()
+        total = connection.execute(
+            """
+            SELECT COUNT(*) FROM import_candidates
+            WHERE status = 'PENDING_REVIEW'
+            """
+        ).fetchone()[0]
+        items = []
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+            except json.JSONDecodeError:
+                payload = {}
+            formula = payload.get("formula") or {}
+            items.append(
+                {
+                    "id": int(row["id"]),
+                    "reason": str(row["reason"]),
+                    "source_path": str(row["source_path"]),
+                    "sheet_name": str(row["sheet_name"]),
+                    "rows": [int(row["start_row"]), int(row["end_row"])],
+                    "customer": str(formula.get("customer", "")),
+                    "product": str(formula.get("product", "")),
+                    "formula_label": str(
+                        formula.get("formula_label", "")
+                    ),
+                    "materials": [
+                        str(material.get("name_raw", ""))
+                        for material in formula.get("materials", [])
+                        if str(material.get("name_raw", "")).strip()
+                    ],
+                }
+            )
+        return {"total": int(total), "items": items}
+
     def compare(self, left_id: int, right_id: int) -> dict[str, Any]:
         left = self.formula_detail(left_id)
         right = self.formula_detail(right_id)

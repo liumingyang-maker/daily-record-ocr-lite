@@ -37,6 +37,30 @@ def knowledge_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     evidence_bytes = b"\x89PNG\r\n\x1a\nEVIDENCE"
     evidence_path.write_bytes(evidence_bytes)
     connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        INSERT INTO legacy_import_runs (
+            run_id, batch_sha256, summary_json, created_at
+        ) VALUES ('test-import', 'hash', '{}', ?)
+        """,
+        (datetime.now(UTC).isoformat(),),
+    )
+    connection.execute(
+        """
+        INSERT INTO import_candidates (
+            run_id, source_path, sheet_name, start_row, end_row,
+            reason, payload_json, status, created_at
+        ) VALUES (
+            'test-import', '客户/待确认.xlsx', 'G30A', 2, 5,
+            'MULTIPLE_DATES', ?,
+            'PENDING_REVIEW', ?
+        )
+        """,
+        (
+            '{"formula":{"customer":"客户","product":"G30A","formula_label":"配方1","materials":[{"name_raw":"PA66"}]}}',
+            datetime.now(UTC).isoformat(),
+        ),
+    )
     source_id = connection.execute(
         """
         INSERT INTO formula_sources (
@@ -105,3 +129,13 @@ def test_knowledge_page_is_customer_product_date_timeline(knowledge_client):
     assert "物料字典" in page.text
     assert '<details class="material-dictionary">' in page.text
     assert "/static/knowledge.js" in page.text
+
+
+def test_pending_review_identifies_formula_and_material(knowledge_client):
+    client, _formula_ids, _source_jobs = knowledge_client
+
+    pending = client.get("/api/knowledge/pending").json()
+
+    assert pending["total"] == 1
+    assert pending["items"][0]["product"] == "G30A"
+    assert pending["items"][0]["materials"] == ["PA66"]

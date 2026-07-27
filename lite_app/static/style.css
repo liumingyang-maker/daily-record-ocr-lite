@@ -215,6 +215,22 @@ footer { color: #888; font-size: 0.78rem; margin: 28px 0 12px; }
 .knowledge-heading, .knowledge-tools { display: flex; align-items: end; justify-content: space-between; gap: 16px; }
 .knowledge-tools { margin: 20px 0 14px; }
 .knowledge-tools .review-field { max-width: 480px; }
+.pending-review-panel {
+    margin: 16px 0;
+    padding: 14px 16px;
+    border: 1px solid #f0c36d;
+    border-radius: 10px;
+    background: #fffaf0;
+}
+.pending-review-panel summary { cursor: pointer; font-weight: 700; }
+.pending-review-card {
+    margin-top: 10px;
+    padding: 12px;
+    border: 1px solid #ead9b5;
+    border-radius: 8px;
+    background: #fff;
+}
+.pending-review-card p { margin: 6px 0; }
 .knowledge-layout { display: grid; grid-template-columns: minmax(260px, 0.8fr) minmax(420px, 1.7fr); gap: 18px; min-height: 460px; }
 .knowledge-tree, .knowledge-detail { border: 1px solid #dfe3e8; border-radius: 10px; background: #fff; padding: 16px; }
 .knowledge-tree { max-height: 680px; overflow-y: auto; }

@@ -1789,6 +1789,17 @@ async def knowledge_formula(formula_id: int):
     return detail
 
 
+@app.get("/api/knowledge/pending")
+async def knowledge_pending(limit: int = 100):
+    from .knowledge.history import KnowledgeHistory
+
+    history = KnowledgeHistory(_knowledge_db_path())
+    try:
+        return history.pending_review(limit)
+    finally:
+        history.close()
+
+
 @app.get("/api/knowledge/evidence/{evidence_id}")
 async def knowledge_evidence(evidence_id: int):
     import hashlib
