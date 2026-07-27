@@ -132,6 +132,46 @@
         showResult(data, response.ok);
         if (response.ok) window.location.reload();
     });
+    byId("check-update")?.addEventListener("click", async () => {
+        const status = byId("update-status");
+        const release = byId("open-release");
+        status.textContent = "正在检查最新稳定版…";
+        release.hidden = true;
+        try {
+            const response = await fetch(page.dataset.checkUpdate);
+            const data = await response.json();
+            if (!response.ok || data.status !== "OK") throw new Error("update check failed");
+            status.textContent = data.update_available
+                ? `发现稳定版 v${data.latest_version}。${data.instructions}`
+                : `当前已是最新稳定版。${data.instructions}`;
+            if (data.release_url) {
+                release.href = data.release_url;
+                release.hidden = false;
+            }
+        } catch (_error) {
+            status.textContent = "暂时无法检查更新，请稍后重试。";
+        }
+    });
+    byId("import-existing-data")?.addEventListener("click", async () => {
+        const status = byId("data-import-status");
+        const sourcePath = value("legacy-data-path").trim();
+        if (!sourcePath) {
+            status.textContent = "请先填写现有项目或 data 目录。";
+            return;
+        }
+        status.textContent = "正在复制本机数据…";
+        const {response, data} = await call(page.dataset.importData, "POST", {
+            source_path: sourcePath,
+            confirm_non_empty: Boolean(byId("confirm-data-import")?.checked),
+        });
+        if (!response.ok) {
+            status.textContent = data.detail || "导入失败，请检查所选目录。";
+            return;
+        }
+        const total = Object.values(data.copied_file_counts || {})
+            .reduce((sum, count) => sum + Number(count || 0), 0);
+        status.textContent = `已安全导入 ${total} 个文件。原目录未修改。`;
+    });
     byId("enable-demo")?.addEventListener("click", async () => {
         if (!window.confirm("演示结果与上传图片无关，确认只体验演示模式？")) return;
         const {response, data} = await call("/api/settings/demo/enable", "POST", {});

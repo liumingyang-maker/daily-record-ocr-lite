@@ -152,6 +152,40 @@ def test_settings_use_progressive_disclosure_and_user_language(user_client: Test
     assert "/static/settings.js" in response.text
 
 
+def test_settings_show_version_and_safe_update_entry(user_client: TestClient):
+    response = user_client.get("/settings")
+
+    assert response.status_code == 200
+    assert "版本与更新" in response.text
+    assert "检查最新稳定版" in response.text
+    assert 'data-check-update="/api/updates/stable"' in response.text
+
+
+def test_stable_update_api_uses_published_release_metadata(
+    user_client: TestClient, monkeypatch
+):
+    import lite_app.updates as updates
+
+    monkeypatch.setattr(
+        updates,
+        "_fetch_releases",
+        lambda: [
+            {
+                "tag_name": "v1.0.2",
+                "draft": False,
+                "prerelease": False,
+                "html_url": "https://github.com/liumingyang-maker/daily-record-ocr-lite/releases/tag/v1.0.2",
+            }
+        ],
+    )
+
+    response = user_client.get("/api/updates/stable")
+
+    assert response.status_code == 200
+    assert response.json()["latest_version"] == "1.0.2"
+    assert response.json()["update_available"] is True
+
+
 def test_setup_is_five_chinese_stages_without_developer_labels(user_client: TestClient):
     response = user_client.get("/setup")
 
@@ -168,6 +202,35 @@ def test_setup_is_five_chinese_stages_without_developer_labels(user_client: Test
     assert "Preset" not in response.text
     assert ">tier<" not in response.text
     assert ">Device<" not in response.text
+
+
+def test_setup_offers_non_destructive_existing_data_import(user_client: TestClient):
+    response = user_client.get("/setup")
+
+    assert response.status_code == 200
+    assert "导入现有数据" in response.text
+    assert 'data-import-data="/api/desktop/import-data"' in response.text
+
+
+def test_existing_data_import_returns_only_safe_counts(
+    user_client: TestClient, monkeypatch, tmp_path: Path
+):
+    import lite_app.main as main
+
+    source = tmp_path / "old" / "data"
+    (source / "jobs" / "job-1").mkdir(parents=True)
+    (source / "jobs" / "job-1" / "job.json").write_text("{}", encoding="utf-8")
+    (source / "secrets.env").write_text("VISION_API_KEY=private-test", encoding="utf-8")
+    monkeypatch.setattr(main, "DATA_ROOT", tmp_path / "desktop")
+
+    response = user_client.post(
+        "/api/desktop/import-data",
+        json={"source_path": str(source), "confirm_non_empty": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["copied_file_counts"] == {"jobs": 1, "secrets": 1}
+    assert "private-test" not in response.text
 
 
 def test_error_categories_have_actionable_user_messages():

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}设置 - 手写配方识别{% endblock %}
 {% block content %}
-<div id="settings-page" data-page="settings" data-save-vision="/api/settings/vision" data-test-vision="/api/settings/test-vision">
+<div id="settings-page" data-page="settings" data-save-vision="/api/settings/vision" data-test-vision="/api/settings/test-vision" data-check-update="/api/updates/stable">
 <section class="settings-heading">
     <p class="eyebrow">识别服务设置</p>
     <h2>设置</h2>
@@ -36,6 +36,18 @@
     <div class="settings-actions">
         <button class="btn" id="test-ocr">测试 OCR</button>
         <a class="btn" href="/setup">运行系统检查</a>
+    </div>
+</section>
+
+<section class="settings-card">
+    <div class="settings-card-heading">
+        <div><h3>版本与更新</h3><p>当前版本 {{ version }}。普通用户只检查最新稳定版。</p></div>
+        <span class="settings-state">v{{ version }}</span>
+    </div>
+    <p id="update-status">桌面安装版使用新安装包覆盖更新，任务、知识库和设置会保留。</p>
+    <div class="settings-actions">
+        <button class="btn" id="check-update">检查最新稳定版</button>
+        <a class="btn btn-primary" id="open-release" href="#" target="_blank" rel="noopener noreferrer" hidden>打开下载页面</a>
     </div>
 </section>
 

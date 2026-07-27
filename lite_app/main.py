@@ -299,6 +299,39 @@ async def settings_public():
     return _get_settings().public_settings()
 
 
+@app.get("/api/updates/stable")
+def stable_update_status():
+    from .updates import check_for_stable_update
+
+    return check_for_stable_update(__version__)
+
+
+@app.post("/api/desktop/import-data")
+async def import_existing_desktop_data(request: Request):
+    from .desktop_migration import (
+        InvalidMigrationSource,
+        MigrationConfirmationRequired,
+        import_legacy_data,
+    )
+
+    _guard_local_json_write(request)
+    body = await request.json()
+    source_path = str(body.get("source_path", "")).strip()
+    if not source_path:
+        raise HTTPException(status_code=400, detail="请选择现有项目或 data 目录")
+    try:
+        report = import_legacy_data(
+            Path(source_path),
+            DATA_ROOT,
+            confirm_non_empty=bool(body.get("confirm_non_empty", False)),
+        )
+    except MigrationConfirmationRequired as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InvalidMigrationSource as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return report.to_safe_dict()
+
+
 @app.put("/api/settings/vision")
 async def configure_vision(request: Request):
     _guard_local_json_write(request)
