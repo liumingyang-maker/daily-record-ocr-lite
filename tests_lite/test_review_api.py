@@ -42,7 +42,8 @@ def test_review_api_edits_and_confirms_a_whole_formula(review_client):
     assert response.status_code == 200
     view = response.json()
     formula = view["groups"][0]["formulas"][0]
-    assert formula["blocking_message"].endswith("缺少日期")
+    assert formula["date_pending"] is True
+    assert formula["blocking_message"].endswith("材料数量需要确认")
 
     response = client.patch(
         f"/api/jobs/{job_id}/review/formulas/{formula['id']}",

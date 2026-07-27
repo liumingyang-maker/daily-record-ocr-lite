@@ -130,7 +130,8 @@ class KnowledgeHistory:
         pattern = f"%{query.strip()}%"
         rows = connection.execute(
             """
-            SELECT f.id, f.formula_no, f.record_date, f.confirmed_at,
+            SELECT f.id, f.formula_no, f.record_date, f.date_status,
+                   f.confirmed_at,
                    c.id AS customer_id, c.name AS customer,
                    p.id AS product_id, p.name AS product
             FROM formulas f
@@ -175,6 +176,7 @@ class KnowledgeHistory:
                     "id": int(row["id"]),
                     "formula_no": str(row["formula_no"] or "配方"),
                     "record_date": str(row["record_date"] or ""),
+                    "date_status": str(row["date_status"] or "UNKNOWN"),
                     "confirmed_at": str(row["confirmed_at"] or ""),
                 }
             )
@@ -215,6 +217,8 @@ class KnowledgeHistory:
             "product": str(row["product"] or "未记录产品"),
             "formula_no": str(row["formula_no"] or row["title"] or "配方"),
             "record_date": str(row["record_date"] or ""),
+            "date_status": str(row["date_status"] or "UNKNOWN"),
+            "notes_raw": str(row["notes_raw"] or ""),
             "confirmed_at": str(row["confirmed_at"] or ""),
             "source_job_id": str(row["source_job_id"] or ""),
             "source_formula_id": str(row["source_formula_id"] or ""),
@@ -371,8 +375,8 @@ class KnowledgeHistory:
             INSERT INTO formulas (
                 customer_id, product_id, title, fingerprint, formula_no,
                 record_date, confirmed_at, source_job_id, source_formula_id,
-                source_image_index, revision_of_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                source_image_index, revision_of_id, date_status, notes_raw
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 customer_id,
@@ -386,6 +390,14 @@ class KnowledgeHistory:
                 str(formula["formula_id"]),
                 int(page.get("source_image_index", 1)),
                 int(revision["id"]) if revision else None,
+                (
+                    "KNOWN"
+                    if str(
+                        formula.get("record_date", {}).get("value", "")
+                    ).strip()
+                    else "UNKNOWN"
+                ),
+                str(formula.get("notes", {}).get("value", "")),
             ),
         )
         formula_db_id = int(cursor.lastrowid)

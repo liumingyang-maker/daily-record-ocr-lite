@@ -92,7 +92,10 @@ def _present_formula(
 ) -> dict[str, Any]:
     formula_id = str(formula.get("formula_id", ""))
     formula_no = str(formula.get("formula_no", "")) or "未编号配方"
-    date = present_field(formula.get("record_date", {}), required=True)
+    date = present_field(formula.get("record_date", {}), required=False)
+    date_pending = not date["value"].strip()
+    if date_pending:
+        date["needs_confirmation"] = False
     notes = present_field(formula.get("notes", {}), required=False)
     materials = [_present_material(item) for item in formula.get("materials", [])]
     process = [_present_process(item) for item in formula.get("process_parameters", [])]
@@ -113,6 +116,7 @@ def _present_formula(
         "formula_no": formula_no,
         "sequence": int(formula.get("formula_sequence", 0)),
         "date": date,
+        "date_pending": date_pending,
         "materials": materials,
         "process": process,
         "notes": notes,
@@ -197,8 +201,6 @@ def _blocking_message(
     process: list[dict[str, Any]],
 ) -> str:
     prefix = f"待确认：{customer} / {product} / {formula_no}"
-    if not str(date["value"]).strip():
-        return f"{prefix} 缺少日期"
     if date["needs_confirmation"]:
         return f"{prefix} 日期需要确认"
     if any(item["name"]["needs_confirmation"] for item in materials):

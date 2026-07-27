@@ -27,7 +27,8 @@ def test_review_view_groups_by_customer_product_and_prioritizes_issues():
     assert formula["evidence"]["rect"] == [0.05, 0.18, 0.95, 0.55]
     assert "field_id" not in formula["materials"][0]
     assert formula["materials"][0]["amount"]["needs_confirmation"] is True
-    assert formula["blocking_message"] == "待确认：联创 / G30A / 配方1 缺少日期"
+    assert formula["date_pending"] is True
+    assert formula["blocking_message"] == "待确认：联创 / G30A / 配方1 材料数量需要确认"
 
 
 def test_review_view_uses_business_labels_and_separates_technical_metadata():

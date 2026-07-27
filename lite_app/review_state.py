@@ -115,8 +115,6 @@ def _validate_business_requirements(
         raise ReviewInputError("请先填写客户名称")
     if not str(section.get("product_or_series", {}).get("value", "")).strip():
         raise ReviewInputError("请先填写产品名称")
-    if not str(formula.get("record_date", {}).get("value", "")).strip():
-        raise ReviewInputError("请先填写日期")
     materials = formula.get("materials", [])
     if not materials:
         raise ReviewInputError("请至少添加一项材料")

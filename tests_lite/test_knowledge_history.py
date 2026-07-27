@@ -77,3 +77,18 @@ def test_history_rejects_missing_or_stale_confirmation_hash(tmp_path):
     hashes[formula_id] = "stale"
     with pytest.raises(ValueError, match="确认"):
         history.append_confirmed_job(job, final, hashes)
+
+
+def test_history_keeps_unknown_date_as_formal_pending_metadata(tmp_path):
+    history = KnowledgeHistory(tmp_path / "knowledge.sqlite3")
+    job, final, hashes = _confirmed_job(
+        tmp_path,
+        "job-unknown-date",
+        "",
+    )
+
+    receipt = history.append_confirmed_job(job, final, hashes)
+    detail = history.formula_detail(receipt["formula_ids"][0])
+
+    assert detail["record_date"] == ""
+    assert detail["date_status"] == "UNKNOWN"
