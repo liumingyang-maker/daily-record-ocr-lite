@@ -40,7 +40,7 @@ jobs:
           python -m PyInstaller --noconfirm --clean packaging/desktop/daily_record_ocr.spec
           $data = Join-Path $env:RUNNER_TEMP "daily-record-ocr-data"
           $exe = Join-Path $PWD "dist\DailyRecordOCR\DailyRecordOCR.exe"
-          foreach ($mode in @("--smoke-test", "--ocr-test")) {
+          foreach ($mode in @("--smoke-test", "--install-models", "--ocr-test")) {
             $process = Start-Process -FilePath $exe -ArgumentList @($mode, "--data-dir", $data) -Wait -PassThru -WindowStyle Hidden
             if ($process.ExitCode -ne 0) { throw "$mode failed with exit code $($process.ExitCode)" }
           }
@@ -115,15 +115,21 @@ jobs:
           python -m PyInstaller --noconfirm --clean packaging/desktop/daily_record_ocr.spec
           APP="dist/DailyRecordOCR.app/Contents/MacOS/DailyRecordOCR"
           "$APP" --smoke-test --data-dir "$RUNNER_TEMP/daily-record-ocr-data"
+          "$APP" --install-models --data-dir "$RUNNER_TEMP/daily-record-ocr-data"
           "$APP" --ocr-test --data-dir "$RUNNER_TEMP/daily-record-ocr-data"
       - name: Sign, notarize and staple DMG
         run: |
           version="$(python -c 'from lite_app import __version__; print(__version__)')"
           bash packaging/macos/build_dmg.sh "$version" formal
           artifact="artifacts/$(python scripts/build_desktop.py name macos "$version" --formal)"
-          codesign --verify --deep --strict --verbose=2 dist/DailyRecordOCR.app
           xcrun stapler validate "$artifact"
           hdiutil verify "$artifact"
+          mount_point="$(mktemp -d)"
+          hdiutil attach "$artifact" -nobrowse -mountpoint "$mount_point"
+          codesign --verify --deep --strict --verbose=2 "$mount_point/DailyRecordOCR.app"
+          spctl --assess --type execute --verbose=2 "$mount_point/DailyRecordOCR.app"
+          hdiutil detach "$mount_point"
+          rmdir "$mount_point"
           python scripts/build_desktop.py metadata macos arm64 "$GITHUB_SHA" artifacts "$artifact"
       - uses: actions/upload-artifact@v4
         with:

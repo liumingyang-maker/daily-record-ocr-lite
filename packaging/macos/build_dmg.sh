@@ -21,6 +21,7 @@ if [[ "$MODE" == "formal" ]]; then
   : "${APPLE_NOTARY_PASSWORD:?APPLE_NOTARY_PASSWORD is required}"
   codesign --force --deep --options runtime --timestamp \
     --sign "$APPLE_DEVELOPER_ID" "$STAGING/DailyRecordOCR.app"
+  codesign --verify --deep --strict --verbose=2 "$STAGING/DailyRecordOCR.app"
   NAME="daily-record-ocr-lite-v${VERSION#v}-macos-arm64.dmg"
 else
   NAME="daily-record-ocr-lite-v${VERSION#v}-macos-arm64-UNSIGNED.dmg"

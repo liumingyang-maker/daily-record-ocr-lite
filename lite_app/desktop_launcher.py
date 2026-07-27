@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import socket
 import sys
 import tempfile
@@ -36,7 +37,6 @@ def select_available_port(
     validate_loopback_host(host)
     for port in range(preferred, min(preferred + attempts, 65536)):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as candidate:
-            candidate.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 candidate.bind((host, port))
             except OSError:
@@ -206,8 +206,12 @@ def smoke_test(data_root: Path = DATA_ROOT) -> dict[str, object]:
         url = f"http://{LOOPBACK_HOST}:{port}/"
         _wait_for_health(url)
         return {"status": "OK", "url": url, "loopback_only": True}
-    except Exception:
-        return {"status": "FAILED", "error_category": "DESKTOP_SMOKE_FAILED"}
+    except Exception as exc:
+        return {
+            "status": "FAILED",
+            "error_category": "DESKTOP_SMOKE_FAILED",
+            "error_type": type(exc).__name__,
+        }
     finally:
         if server is not None:
             server.should_exit = True
@@ -223,6 +227,7 @@ def real_ocr_test(data_root: Path = DATA_ROOT) -> dict[str, object]:
     probe_dir.mkdir(parents=True, exist_ok=True)
     image_path = probe_dir / "desktop-real-ocr.png"
     try:
+        _configure_model_cache(root)
         from PIL import Image, ImageDraw, ImageFont
 
         from .ocr.paddleocr_v6 import PaddleOCRv6Provider
@@ -239,9 +244,15 @@ def real_ocr_test(data_root: Path = DATA_ROOT) -> dict[str, object]:
         image.save(image_path)
 
         provider = PaddleOCRv6Provider(device="cpu", tier="medium")
-        provider.load()
+        try:
+            provider.load()
+        except Exception as exc:
+            return _ocr_failure("LOAD", exc)
         started = time.monotonic()
-        page = provider.recognize(image_path)
+        try:
+            page = provider.recognize(image_path)
+        except Exception as exc:
+            return _ocr_failure("INFERENCE", exc)
         latency_ms = int((time.monotonic() - started) * 1000)
         if not page.tokens:
             return {"status": "FAILED", "error_category": "NO_REAL_OCR_TOKENS"}
@@ -252,13 +263,46 @@ def real_ocr_test(data_root: Path = DATA_ROOT) -> dict[str, object]:
             "token_count": len(page.tokens),
             "latency_ms": latency_ms,
         }
-    except Exception:
-        return {"status": "FAILED", "error_category": "REAL_OCR_FAILED"}
+    except Exception as exc:
+        return {
+            "status": "FAILED",
+            "error_category": "REAL_OCR_FAILED",
+            "error_type": type(exc).__name__,
+        }
     finally:
         try:
             image_path.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+def _ocr_failure(stage: str, exc: Exception) -> dict[str, object]:
+    error_types: list[str] = []
+    current: BaseException | None = exc
+    while current is not None and len(error_types) < 4:
+        error_types.append(type(current).__name__)
+        current = current.__cause__ or current.__context__
+    result: dict[str, object] = {
+        "status": "FAILED",
+        "error_category": "REAL_OCR_FAILED",
+        "error_stage": stage,
+        "error_types": error_types,
+    }
+    if os.environ.get("DESKTOP_DIAGNOSTICS", "").strip() == "1":
+        result["diagnostic_preview"] = _safe_exception_preview(exc)
+    return result
+
+
+def _safe_exception_preview(exc: BaseException) -> str:
+    parts: list[str] = []
+    current: BaseException | None = exc
+    while current is not None and len(parts) < 4:
+        parts.append(str(current))
+        current = current.__cause__ or current.__context__
+    preview = " | ".join(parts)
+    preview = preview.replace(str(Path.home()), "<HOME>")
+    preview = re.sub(r"sk-(?:ws|sp)-[A-Za-z0-9._-]+", "<API_KEY>", preview)
+    return preview[:500]
 
 
 def run_desktop(data_root: Path = DATA_ROOT) -> int:
@@ -311,6 +355,11 @@ def _configure_runtime(data_root: Path, port: int) -> None:
     os.environ["APP_HOST"] = LOOPBACK_HOST
     os.environ["APP_PORT"] = str(port)
     os.environ["JOBS_DIR"] = str(data_root / "jobs")
+    _configure_model_cache(data_root)
+
+
+def _configure_model_cache(data_root: Path) -> None:
+    os.environ["PADDLE_PDX_CACHE_HOME"] = str(data_root / "models" / "paddlex")
 
 
 def _wait_for_health(base_url: str, timeout_seconds: float = 30.0) -> None:
@@ -369,6 +418,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--smoke-test", action="store_true")
     parser.add_argument("--ocr-test", action="store_true")
+    parser.add_argument("--install-models", action="store_true")
     parser.add_argument("--data-dir", type=Path, default=DATA_ROOT)
     args = parser.parse_args(argv)
     if args.self_test:
@@ -382,6 +432,16 @@ def main(argv: list[str] | None = None) -> int:
         result = real_ocr_test(args.data_dir)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0 if result.get("status") == "OK" else 4
+    if args.install_models:
+        _configure_model_cache(args.data_dir)
+        try:
+            from .model_packages import install_model_packages
+
+            result = install_model_packages(args.data_dir)
+        except Exception:
+            result = {"status": "FAILED", "error_category": "MODEL_INSTALL_FAILED"}
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0 if result.get("status") == "READY" else 5
     return run_desktop(args.data_dir)
 
 

@@ -6,8 +6,10 @@ import json
 import logging
 import os
 import platform
+import threading
 import time
 from contextlib import asynccontextmanager
+from functools import lru_cache
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -43,6 +45,8 @@ from .storage import JobStorage, write_json_atomic
 from .upload_options import VALID_ROTATIONS, normalize_rotations
 
 logger = logging.getLogger(__name__)
+_model_install_guard = threading.Lock()
+_model_install_thread: threading.Thread | None = None
 
 
 @asynccontextmanager
@@ -141,7 +145,24 @@ def _demo_enabled() -> bool:
 
 
 def _recognition_gate() -> str:
+    if not _desktop_models_ready():
+        return "SETUP_REQUIRED"
     return str(_get_settings().status()["state"])
+
+
+def _desktop_models_ready() -> bool:
+    from .platform_paths import runtime_kind
+
+    return _model_ready_for_root(str(DATA_ROOT), runtime_kind())
+
+
+@lru_cache(maxsize=4)
+def _model_ready_for_root(data_root: str, install_kind: str) -> bool:
+    if install_kind != "desktop":
+        return True
+    from .model_packages import model_package_status
+
+    return model_package_status(Path(data_root))["status"] == "READY"
 
 
 def _setup_system_info() -> dict:
@@ -332,6 +353,75 @@ async def import_existing_desktop_data(request: Request):
     return report.to_safe_dict()
 
 
+@app.get("/api/setup/models/status")
+def desktop_model_status():
+    from .model_packages import model_package_status
+
+    state_path = DATA_ROOT / "model_install_state.json"
+    if _model_install_thread is not None and _model_install_thread.is_alive():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            if isinstance(state, dict):
+                return state
+        except (OSError, json.JSONDecodeError):
+            pass
+    return model_package_status(DATA_ROOT)
+
+
+@app.post("/api/setup/models/install", status_code=202)
+async def install_desktop_models(request: Request):
+    global _model_install_thread
+
+    _guard_local_json_write(request)
+    state_path = DATA_ROOT / "model_install_state.json"
+
+    def save_state(payload: dict[str, object]) -> None:
+        allowed = {
+            key: payload[key]
+            for key in (
+                "status",
+                "state",
+                "model",
+                "index",
+                "package_count",
+                "downloaded_bytes",
+                "total_bytes",
+                "ready_count",
+                "error_category",
+            )
+            if key in payload
+        }
+        write_json_atomic(state_path, allowed)
+
+    def worker() -> None:
+        from .model_packages import install_model_packages
+
+        try:
+            result = install_model_packages(
+                DATA_ROOT,
+                progress=lambda event: save_state({"status": "INSTALLING", **event}),
+            )
+            _model_ready_for_root.cache_clear()
+            save_state(result)
+        except Exception as exc:
+            logger.error(
+                "Desktop OCR model installation failed: %s",
+                type(exc).__name__,
+            )
+            save_state({"status": "FAILED", "error_category": "MODEL_INSTALL_FAILED"})
+
+    with _model_install_guard:
+        if _model_install_thread is None or not _model_install_thread.is_alive():
+            save_state({"status": "INSTALLING", "state": "STARTING"})
+            _model_install_thread = threading.Thread(
+                target=worker,
+                name="desktop-model-installer",
+                daemon=True,
+            )
+            _model_install_thread.start()
+    return {"status": "INSTALLING"}
+
+
 @app.put("/api/settings/vision")
 async def configure_vision(request: Request):
     _guard_local_json_write(request)
@@ -458,6 +548,15 @@ async def test_vision_settings(request: Request):
 @app.post("/api/settings/test-ocr")
 async def test_ocr_settings(request: Request):
     _guard_local_json_write(request)
+    if not _desktop_models_ready():
+        return JSONResponse(
+            status_code=409,
+            content={
+                "status": "SETUP_REQUIRED",
+                "error_category": "MODEL_DOWNLOAD_REQUIRED",
+                "message": "请先下载并校验 OCR 模型",
+            },
+        )
     from PIL import Image, ImageDraw, ImageFont
 
     from .ocr.manager import OCRModelManager

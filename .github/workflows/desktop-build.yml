@@ -54,7 +54,7 @@ jobs:
         run: |
           $exe = Join-Path $PWD "dist\DailyRecordOCR\DailyRecordOCR.exe"
           $data = Join-Path $env:RUNNER_TEMP "daily-record-ocr-data"
-          foreach ($mode in @("--self-test", "--smoke-test", "--ocr-test")) {
+          foreach ($mode in @("--self-test", "--smoke-test", "--install-models", "--ocr-test")) {
             $process = Start-Process -FilePath $exe -ArgumentList @($mode, "--data-dir", $data) -Wait -PassThru -WindowStyle Hidden
             if ($process.ExitCode -ne 0) { throw "$mode failed with exit code $($process.ExitCode)" }
           }
@@ -116,6 +116,7 @@ jobs:
           DATA="$RUNNER_TEMP/daily-record-ocr-data"
           "$APP" --self-test --data-dir "$DATA"
           "$APP" --smoke-test --data-dir "$DATA"
+          "$APP" --install-models --data-dir "$DATA"
           "$APP" --ocr-test --data-dir "$DATA"
       - name: Build and verify unsigned DMG
         run: |

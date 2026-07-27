@@ -60,6 +60,10 @@ def test_packaging_definitions_use_onedir_and_preserve_user_data():
 
     assert "COLLECT(" in spec
     assert "config" in spec and "lite_app/templates" in spec and "lite_app/static" in spec
+    assert "collect_data_files" in spec
+    assert "copy_metadata" in spec
+    assert '"opencv-contrib-python"' in spec
+    assert '"python-bidi"' in spec
     assert "PrivilegesRequired=lowest" in windows
     assert "uninsdelete" not in windows.lower()
     assert "hdiutil create" in macos
@@ -76,7 +80,7 @@ def test_native_workflows_require_frozen_health_real_ocr_and_formal_secrets():
     assert yaml.safe_load(test_build)
     assert yaml.safe_load(release)
     assert "windows-latest" in test_build and "macos-14" in test_build
-    assert '"--smoke-test", "--ocr-test"' in test_build
+    assert '"--smoke-test", "--install-models", "--ocr-test"' in test_build
     assert "--ocr-test" in test_build
     assert "APPLE_NOTARY_PASSWORD" in release
     assert "WINDOWS_SIGN_CERT_BASE64" in release

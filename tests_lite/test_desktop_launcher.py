@@ -43,6 +43,19 @@ def test_single_instance_lock_rejects_second_owner(tmp_path: Path):
         first.release()
 
 
+def test_single_instance_lock_can_be_reacquired_after_clean_exit(tmp_path: Path):
+    from lite_app.desktop_launcher import SingleInstanceLock
+
+    path = tmp_path / "desktop.lock"
+    first = SingleInstanceLock(path)
+    assert first.acquire() is True
+    first.release()
+
+    restarted = SingleInstanceLock(path)
+    assert restarted.acquire() is True
+    restarted.release()
+
+
 def test_instance_state_contains_only_connection_metadata(tmp_path: Path):
     from lite_app.desktop_launcher import InstanceState, read_instance_state, write_instance_state
 
@@ -91,3 +104,26 @@ def test_real_ocr_cli_requires_real_tokens(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(launcher, "real_ocr_test", lambda _path: {"status": "FAILED"})
 
     assert launcher.main(["--ocr-test", "--data-dir", str(tmp_path)]) == 4
+
+
+def test_model_install_cli_requires_verified_ready_state(monkeypatch, tmp_path: Path):
+    import lite_app.desktop_launcher as launcher
+    import lite_app.model_packages as model_packages
+
+    monkeypatch.setattr(
+        model_packages,
+        "install_model_packages",
+        lambda _path: {"status": "DOWNLOAD_REQUIRED"},
+    )
+
+    assert launcher.main(["--install-models", "--data-dir", str(tmp_path)]) == 5
+
+
+def test_local_diagnostics_redact_api_keys(monkeypatch):
+    import lite_app.desktop_launcher as launcher
+
+    monkeypatch.setenv("DESKTOP_DIAGNOSTICS", "1")
+    fake_key = "sk-" + "ws-private-value"
+    failure = launcher._ocr_failure("LOAD", RuntimeError(f"failed with {fake_key}"))
+
+    assert failure["diagnostic_preview"] == "failed with <API_KEY>"

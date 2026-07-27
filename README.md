@@ -208,8 +208,10 @@ Windows Git 安装目录中运行：
 完整步骤见 [`docs/AI_AGENT_UPGRADE.md`](docs/AI_AGENT_UPGRADE.md)。`master` 仅供用户
 明确要求抢先体验时使用，不是普通更新的默认目标。
 
-当前仓库提供的是 Git 源码安装/更新脚本。Windows 与 macOS 的独立一键安装包属于
-单独交付阶段；在正式发布并通过对应平台验收前，README 不把源码脚本描述成独立安装包。
+Windows x64 EXE 和 Apple Silicon macOS DMG 的打包层正在独立 Draft PR 中验收。普通用户仍应只从
+**最新稳定 Release** 下载正式资产；文件名带 `UNSIGNED` 的 CI Artifact 仅供测试，可能触发
+SmartScreen 或 Gatekeeper，不能描述为正式无警告安装包。安装、升级、数据保留和签名/公证说明见
+[`docs/DESKTOP_INSTALLERS.md`](docs/DESKTOP_INSTALLERS.md)。
 
 ## 常见问题
 

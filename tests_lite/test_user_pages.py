@@ -210,6 +210,9 @@ def test_setup_offers_non_destructive_existing_data_import(user_client: TestClie
     assert response.status_code == 200
     assert "导入现有数据" in response.text
     assert 'data-import-data="/api/desktop/import-data"' in response.text
+    assert 'data-model-status="/api/setup/models/status"' in response.text
+    assert 'data-install-models="/api/setup/models/install"' in response.text
+    assert "下载并校验 OCR 模型" in response.text
 
 
 def test_existing_data_import_returns_only_safe_counts(
@@ -231,6 +234,21 @@ def test_existing_data_import_returns_only_safe_counts(
     assert response.status_code == 200
     assert response.json()["copied_file_counts"] == {"jobs": 1, "secrets": 1}
     assert "private-test" not in response.text
+
+
+def test_model_status_reports_download_required_without_auto_downloading(
+    user_client: TestClient, monkeypatch, tmp_path: Path
+):
+    import lite_app.main as main
+
+    monkeypatch.setattr(main, "DATA_ROOT", tmp_path / "desktop")
+
+    response = user_client.get("/api/setup/models/status")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "DOWNLOAD_REQUIRED"
+    assert response.json()["ready_count"] == 0
+    assert not (tmp_path / "desktop" / "models" / "downloads").exists()
 
 
 def test_error_categories_have_actionable_user_messages():

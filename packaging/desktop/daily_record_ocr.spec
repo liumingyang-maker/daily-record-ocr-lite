@@ -3,7 +3,12 @@
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_dynamic_libs, collect_submodules
+from PyInstaller.utils.hooks import (
+    collect_data_files,
+    collect_dynamic_libs,
+    collect_submodules,
+    copy_metadata,
+)
 
 root = Path(SPECPATH).parents[1]
 datas = [
@@ -16,6 +21,20 @@ binaries = []
 for package in ("paddle", "paddleocr", "paddlex", "cv2", "pystray"):
     hiddenimports += collect_submodules(package)
     binaries += collect_dynamic_libs(package)
+for package in ("paddleocr", "paddlex"):
+    datas += collect_data_files(package, include_py_files=True)
+    datas += copy_metadata(package, recursive=True)
+ocr_core = {
+    "imagesize": "imagesize",
+    "opencv-contrib-python": "cv2",
+    "pyclipper": "pyclipper",
+    "pypdfium2": "pypdfium2",
+    "python-bidi": "bidi",
+    "shapely": "shapely",
+}
+for distribution, package in ocr_core.items():
+    datas += copy_metadata(distribution)
+    hiddenimports += collect_submodules(package)
 
 a = Analysis(
     [str(root / "packaging" / "desktop" / "launcher_entry.py")],

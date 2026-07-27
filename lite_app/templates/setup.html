@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}首次配置 - 手写配方识别{% endblock %}
 {% block content %}
-<div id="settings-page" data-page="setup" data-save-vision="/api/settings/vision" data-test-vision="/api/settings/test-vision" data-import-data="/api/desktop/import-data">
+<div id="settings-page" data-page="setup" data-save-vision="/api/settings/vision" data-test-vision="/api/settings/test-vision" data-import-data="/api/desktop/import-data" data-model-status="/api/setup/models/status" data-install-models="/api/setup/models/install">
 <section class="settings-heading">
     <p class="eyebrow">首次配置</p>
     <h2>让真实识别准备就绪</h2>
@@ -44,6 +44,11 @@
     <li class="settings-card">
         <h3>测试本地 OCR</h3>
         <p>使用本机 PP-OCRv6 识别内置清晰样例。</p>
+        <div class="model-download-controls">
+            <button class="btn" id="install-models">下载并校验 OCR 模型</button>
+            <progress id="model-progress" max="100" value="0" hidden></progress>
+            <p id="model-status" aria-live="polite">正在检查本机模型…</p>
+        </div>
         <button class="btn" id="test-ocr">测试 OCR</button>
         <img id="ocr-overlay" alt="OCR 检测结果" hidden>
     </li>
