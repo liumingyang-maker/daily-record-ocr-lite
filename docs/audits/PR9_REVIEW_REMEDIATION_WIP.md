@@ -106,6 +106,35 @@ Job `20260727-200756-d3d1ec` 使用同图、同代码、Knowledge OFF。单次�
   私人安装器升级闭环。
 - Ready / Merge / Tag / Release：均不允许。
 
+## 最新独立审查回填（2026-07-27，第二轮）
+
+收到的独立审查文本仍标注旧 HEAD `32daacf0e33dbc3a0f0a7d960f5e8b10e1551bed`；
+接收审查时核验的实际 PR HEAD 为
+`931f82508315b095068ef1e100701f88039688b9`。以下结论按实际代码和真实产物
+重新核对，而不是直接接受旧 HEAD 的描述。
+
+| 审查项 | 处置 | 核验证据 |
+|---|---|---|
+| P0-1 用户确认 → READY → Excel → 知识写回未完成 | **接受 / 阻塞** | ON Job 已有 FinalResult，但问题字段尚未由用户逐条确认；禁止伪造确认 |
+| P0-2 Knowledge OFF/ON 双成功未完成 | **接受 / 阻塞** | ON 成功；同图 OFF 在响应头前断开且未按规则重试 |
+| P1-1 增加人工 AUTO_CORRECT 与数字禁改测试 | **代码已存在，无需重复实现** | `test_unique_contextual_history_correction_writes_reversible_trace` 以及 amount/date/formula_no 两层保护测试；知识测试集 19 passed |
+| P1-1 真实 AUTO_CORRECT 覆盖不足 | **接受 / 残余风险** | 真实 ON 为 57 KEEP_RAW、114 FORBIDDEN、0 AUTO_CORRECT |
+| P1-2 跨客户隔离 | **通过** | 先确定唯一 customer/product；无客户上下文不注入 material/process；跨客户回归通过 |
+| P1-3 自动纠偏策略 | **通过设计与单测，真实纠偏仍待证明** | 唯一高分、margin、上下文、OCR/VLM 证据同时满足才 AUTO_CORRECT |
+| P1-4 “完整业务 Prompt 在 1024 仍失败” | **旧证据已被部分推翻** | 紧凑合同后的两个两图 Knowledge ON Job 均生成 structured_result/Fusion/FinalResult；但日期、配方号准确率仍未通过 |
+| P2-1 Excel Gate | **接受 / 阻塞** | 100 NEED_REVIEW、21 CONFLICT，正式导出器按产品规则拒绝非 READY Job |
+| P2-2 10–20 张样本 | **接受 / 阻塞** | 当前独立个人样图只有 5 张，不以重复图片凑数 |
+| Secret / 私人数据 | **通过** | tracked 与 working diff Secret 均为 0；私人 Job、原图、数据库、响应均未入 Git |
+
+### 第二轮审查后的执行边界
+
+1. 不再大改 Knowledge 架构。
+2. 不自动确认真实业务字段；用户必须在证据优先页面核对每条配方。
+3. 不重复同一失败的 OFF 请求、不继续增加超时；后续 OFF 对照必须有明确的受控变量。
+4. 不用现有 5 张图片的重复副本冒充 10–20 张独立样本。
+5. 在用户确认、正式 Excel、同图 OFF/ON 双成功和更多独立样本完成前，PR #9
+   继续 Draft，禁止 Merge、Tag、Release。
+
 ## 审查发现处置
 
 | 原审查项 | 当前处置 | 证据 |
