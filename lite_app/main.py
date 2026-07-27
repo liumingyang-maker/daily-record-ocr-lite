@@ -23,6 +23,7 @@ from fastapi.templating import Jinja2Templates
 from . import __version__
 from .config import DATA_ROOT, get_config, load_recognition_config
 from .contracts import normalize_legacy_result, validate_record_result
+from .evidence_regions import verified_evidence_path
 from .exporter import ExportError, export_job
 from .final_result import (
     FinalResultError,
@@ -1012,14 +1013,53 @@ def _saved(editor: ReviewEditor, message: str, **extra) -> dict:
 
 @app.get("/api/jobs/{job_id}/review")
 async def get_review(job_id: str):
-    _storage, job, editor, state = _review_resources(job_id)
+    storage, job, editor, state = _review_resources(job_id)
     try:
         final = editor.load()
     except FinalResultError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    view = build_review_view(job, final, state.confirmation_map(final))
+    job_dir = storage.get_job_dir(job_id)
+    evidence_urls = {
+        formula_id: (
+            f"/api/jobs/{quote(job_id, safe='')}/review/evidence/"
+            f"{quote(formula_id, safe='')}"
+        )
+        for formula_id in _formula_ids(final)
+        if verified_evidence_path(job_dir, formula_id) is not None
+    }
+    view = build_review_view(
+        job,
+        final,
+        state.confirmation_map(final),
+        evidence_urls=evidence_urls,
+    )
     view["version"] = str(final["updated_at"])
     return view
+
+
+@app.get("/api/jobs/{job_id}/review/evidence/{formula_id}")
+async def get_review_evidence(job_id: str, formula_id: str):
+    storage, _job, editor, _state = _review_resources(job_id)
+    try:
+        final = editor.load()
+    except FinalResultError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if formula_id not in _formula_ids(final):
+        raise HTTPException(status_code=404, detail="配方证据不存在。")
+    path = verified_evidence_path(storage.get_job_dir(job_id), formula_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="配方证据不存在或校验失败。")
+    return FileResponse(path, media_type="image/jpeg")
+
+
+def _formula_ids(final: dict) -> set[str]:
+    return {
+        str(formula.get("formula_id", ""))
+        for page in final.get("pages", [])
+        for section in page.get("product_sections", [])
+        for formula in section.get("formulas", [])
+        if formula.get("formula_id")
+    }
 
 
 @app.patch("/api/jobs/{job_id}/review/groups/{group_id}")

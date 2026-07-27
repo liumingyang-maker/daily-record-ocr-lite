@@ -81,3 +81,23 @@ def test_review_view_preserves_date_text_and_exposes_internal_sort_state():
     assert date["value"] == "24.7.19"
     assert date["sort_value"] == "2024-07-19"
     assert date["parse_status"] == "KNOWN"
+
+
+def test_review_view_prefers_verified_crop_but_always_keeps_full_image_url():
+    final = make_review_final("job-review")
+    formula_id = final["pages"][0]["product_sections"][0]["formulas"][0][
+        "formula_id"
+    ]
+    crop_url = f"/api/jobs/job-review/review/evidence/{formula_id}"
+
+    view = build_review_view(
+        _job(),
+        final,
+        confirmed={},
+        evidence_urls={formula_id: crop_url},
+    )
+    evidence = view["groups"][0]["formulas"][0]["evidence"]
+
+    assert evidence["image_url"] == crop_url
+    assert evidence["full_image_url"].endswith("source/a.jpg")
+    assert evidence["rect"] is None

@@ -26,9 +26,12 @@ def build_review_view(
     job: dict[str, Any],
     final: dict[str, Any],
     confirmed: dict[str, Any] | None = None,
+    *,
+    evidence_urls: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Group formulas into customer/product cards with evidence and issue state."""
     confirmed = confirmed or {}
+    evidence_urls = evidence_urls or {}
     groups: list[dict[str, Any]] = []
     issue_count = 0
     confirmed_count = 0
@@ -47,6 +50,7 @@ def build_review_view(
                     customer=customer,
                     product=product,
                     image_url=image_url,
+                    crop_url=evidence_urls.get(str(formula.get("formula_id", "")), ""),
                     confirmed=bool(confirmed.get(str(formula.get("formula_id", "")), False)),
                 )
                 for formula in section.get("formulas", [])
@@ -90,6 +94,7 @@ def _present_formula(
     customer: str,
     product: str,
     image_url: str,
+    crop_url: str,
     confirmed: bool,
 ) -> dict[str, Any]:
     formula_id = str(formula.get("formula_id", ""))
@@ -137,8 +142,9 @@ def _present_formula(
             process=process,
         ),
         "evidence": {
-            "image_url": image_url,
-            "rect": _normalized_rect(formula.get("record_bbox")),
+            "image_url": crop_url or image_url,
+            "full_image_url": image_url,
+            "rect": None if crop_url else _normalized_rect(formula.get("record_bbox")),
         },
         "labels": {
             "date": "日期",

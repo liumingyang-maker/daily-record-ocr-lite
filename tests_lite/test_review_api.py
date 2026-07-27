@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from lite_app.final_result import FinalResultService
 from lite_app.settings import SettingsService
@@ -210,3 +213,46 @@ def test_job_page_is_business_review_workspace_and_old_result_redirects(review_c
     old = client.get(f"/jobs/{job_id}/result", follow_redirects=False)
     assert old.status_code == 303
     assert old.headers["location"] == f"/jobs/{job_id}#review"
+
+
+def test_review_evidence_route_verifies_manifest_hash_and_falls_back(review_client):
+    client, storage, job_id = review_client
+    job_dir = storage.get_job_dir(job_id)
+    source = job_dir / "source" / "a.jpg"
+    crop = job_dir / "review" / "evidence" / "formula.jpg"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    crop.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (800, 600), "white").save(source)
+    Image.new("RGB", (400, 300), "white").save(crop)
+    formula_id = make_review_final(job_id)["pages"][0]["product_sections"][0][
+        "formulas"
+    ][0]["formula_id"]
+    manifest = {
+        "schema_version": 1,
+        "formulas": {
+            formula_id: {
+                "source_path": "source/a.jpg",
+                "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                "crop_path": "review/evidence/formula.jpg",
+                "crop_sha256": hashlib.sha256(crop.read_bytes()).hexdigest(),
+            }
+        },
+    }
+    (job_dir / "review" / "evidence_regions.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+
+    view = client.get(f"/api/jobs/{job_id}/review").json()
+    evidence = view["groups"][0]["formulas"][0]["evidence"]
+    assert evidence["image_url"].endswith(f"/review/evidence/{formula_id}")
+    assert evidence["full_image_url"].endswith("source/a.jpg")
+    response = client.get(evidence["image_url"])
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+
+    crop.write_bytes(b"tampered")
+    assert client.get(evidence["image_url"]).status_code == 404
+    fallback = client.get(f"/api/jobs/{job_id}/review").json()["groups"][0][
+        "formulas"
+    ][0]["evidence"]
+    assert fallback["image_url"] == fallback["full_image_url"]
