@@ -41,6 +41,7 @@ from .readiness import evaluate_ready_gate
 from .settings import SettingsService
 from .status import JobStatus
 from .storage import JobStorage, write_json_atomic, write_text_atomic
+from .upload_options import rotation_for_image
 from .vision.base import VisionConfigurationError, VisionProviderError
 from .vision.mock import MockVisionProvider
 from .vision.openai_compatible import OpenAICompatibleVisionProvider
@@ -143,11 +144,12 @@ async def analyze_job_v2(
             source = job_dir / image["source"]
             vlm_path = job_dir / "preprocess" / f"page_{index:02d}_vision.jpg"
             ocr_path = job_dir / "preprocess" / f"page_{index:02d}_ocr.jpg"
+            image_rotation = rotation_for_image(job, index)
             info = prepare_dual_images(
                 source,
                 vlm_path,
                 ocr_path,
-                rotation=job.get("rotation", "auto"),
+                rotation=image_rotation,
                 config=cfg.preprocess,
             )
             image.update(
@@ -157,6 +159,7 @@ async def analyze_job_v2(
                     "prepared_ocr": str(ocr_path.relative_to(job_dir)),
                     "width": info["vlm_width"],
                     "height": info["vlm_height"],
+                    "rotation": image_rotation,
                 }
             )
             vlm_paths.append(vlm_path)
@@ -189,7 +192,7 @@ async def analyze_job_v2(
         for index, ocr_path in enumerate(ocr_paths, 1):
             ocr_key = _build_ocr_cache_key(
                 ocr_path,
-                job.get("rotation", "auto"),
+                rotation_for_image(job, index),
                 cfg.preprocess,
                 ocr_config,
                 manager.get_status(),

@@ -5,22 +5,15 @@
     <h2>开始识别手写配方</h2>
     <p class="subtitle">上传照片 → 自动整理配方 → 对照原图确认 → 保存并导出 Excel</p>
     <div id="engine-status" class="hint"></div>
-    <p class="hint">支持一次上传多张图片（JPG/PNG/WebP），上传后自动进入后台识别。</p>
-    <form action="/jobs" method="post" enctype="multipart/form-data">
+    <p class="hint">支持一次上传多张图片（JPG/PNG/WebP），这些图片将作为同一批记录识别。</p>
+    <form id="upload-form" action="/jobs" method="post" enctype="multipart/form-data">
         <div class="form-group">
             <label for="files">选择图片：</label>
             <input type="file" id="files" name="files" multiple accept=".jpg,.jpeg,.png,.webp" required>
         </div>
-        <div class="form-group">
-            <label for="rotation">旋转设置：</label>
-            <select id="rotation" name="rotation">
-                <option value="auto">自动（竖图转横向）</option>
-                <option value="0">不旋转</option>
-                <option value="90cw">顺时针 90°</option>
-                <option value="90ccw">逆时针 90°</option>
-                <option value="180">180°</option>
-            </select>
-        </div>
+        <input type="hidden" name="rotation" value="auto">
+        <input type="hidden" id="rotation-manifest" name="rotation_manifest" value="">
+        <div id="upload-preview" class="upload-preview" aria-live="polite"></div>
         <button type="submit" class="btn btn-primary"
                 {% if setup_state == "SETUP_REQUIRED" %}disabled{% endif %}>
             上传并识别
@@ -78,4 +71,5 @@ fetch('/api/engine-status').then(r=>r.json()).then(d=>{
     else{el.textContent='OCR: '+d.ocr.configured_provider+' ('+d.ocr.tier+') | Vision: '+d.vision.provider;el.style.color='#137333';}
 }).catch(()=>{});
 </script>
+<script src="/static/upload.js"></script>
 {% endblock %}

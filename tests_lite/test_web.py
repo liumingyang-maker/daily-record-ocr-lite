@@ -143,6 +143,43 @@ class TestFullFlow:
         resp = client.post("/jobs", files=[], data={"rotation": "auto"})
         assert resp.status_code == 400 or resp.status_code == 422
 
+    def test_upload_persists_ordered_per_image_rotations(self, client):
+        img_data = _make_test_image()
+        response = client.post(
+            "/jobs",
+            files=[
+                ("files", ("first.jpg", img_data, "image/jpeg")),
+                ("files", ("second.jpg", img_data, "image/jpeg")),
+            ],
+            data={
+                "rotation": "auto",
+                "rotation_manifest": '["90cw", "0"]',
+            },
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 303
+        assert response.headers["location"].count("/") == 2
+        job_id = self._extract_job_id(response.headers["location"])
+        from lite_app.storage import JobStorage
+
+        job = JobStorage().get_job(job_id)
+        assert job["rotations"] == ["90cw", "0"]
+
+    def test_upload_rejects_rotation_manifest_with_wrong_length(self, client):
+        img_data = _make_test_image()
+        response = client.post(
+            "/jobs",
+            files=[
+                ("files", ("first.jpg", img_data, "image/jpeg")),
+                ("files", ("second.jpg", img_data, "image/jpeg")),
+            ],
+            data={"rotation_manifest": '["auto"]'},
+        )
+
+        assert response.status_code == 400
+        assert "图片数量" in response.json()["detail"]
+
     def test_upload_bad_extension(self, client):
         """不支持的文件类型。"""
         resp = client.post(

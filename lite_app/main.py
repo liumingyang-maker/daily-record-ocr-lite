@@ -36,6 +36,7 @@ from .readiness import (
 from .settings import SettingsService
 from .status import JobStatus, SetupState
 from .storage import JobStorage, read_json_optional
+from .upload_options import VALID_ROTATIONS, normalize_rotations
 
 logger = logging.getLogger(__name__)
 
@@ -484,6 +485,7 @@ async def get_ocr_test_overlay():
 async def create_job(
     files: list[UploadFile] = File(...),
     rotation: str = Form("auto"),
+    rotation_manifest: str = Form(""),
 ):
     import io as _io
     import shutil
@@ -499,11 +501,10 @@ async def create_job(
         )
 
     # 校验旋转值
-    valid_rotations = {"auto", "0", "90cw", "90ccw", "180"}
-    if rotation not in valid_rotations:
+    if rotation not in VALID_ROTATIONS:
         raise HTTPException(
             status_code=400,
-            detail=f"无效的旋转设置: {rotation}。允许: {', '.join(sorted(valid_rotations))}",
+            detail=f"无效的旋转设置: {rotation}。允许: {', '.join(sorted(VALID_ROTATIONS))}",
         )
 
     # 校验文件
@@ -544,8 +545,17 @@ async def create_job(
             )
         validated_files.append((f.filename, content))
 
+    try:
+        rotations = normalize_rotations(
+            rotation_manifest,
+            count=len(validated_files),
+            fallback=rotation,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     # 创建任务
-    job = storage.create_job(rotation=rotation)
+    job = storage.create_job(rotation=rotation, rotations=rotations)
     job_id = job["id"]
     job["demo_mode"] = _demo_enabled()
 
@@ -568,7 +578,7 @@ async def create_job(
     queue = get_task_queue()
     await queue.submit(job_id)
 
-    return RedirectResponse(url=f"/jobs/{job_id}/result", status_code=303)
+    return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
 
 
 # ─── 任务详情 ───────────────────────────────────────────────

@@ -118,6 +118,15 @@ def test_navigation_uses_user_tasks(user_client: TestClient):
     assert "设置" in response.text
 
 
+def test_upload_page_has_per_image_controls(user_client: TestClient):
+    response = user_client.get("/")
+
+    assert response.status_code == 200
+    assert 'id="upload-preview"' in response.text
+    assert 'name="rotation_manifest"' in response.text
+    assert '/static/upload.js' in response.text
+
+
 def test_recognition_records_hide_provider_from_primary_table(user_client: TestClient):
     response = user_client.get("/jobs")
 
