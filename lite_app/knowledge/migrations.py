@@ -6,8 +6,11 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..date_values import parse_record_date
+
 V2_VERSION = 2
 V3_VERSION = 3
+V4_VERSION = 4
 V2_COLUMNS = {
     "formula_no": "TEXT",
     "record_date": "TEXT",
@@ -22,6 +25,9 @@ V3_COLUMNS = {
     "date_status": "TEXT",
     "notes_raw": "TEXT",
     "deleted_at": "TEXT",
+}
+V4_COLUMNS = {
+    "record_date_raw": "TEXT",
 }
 
 
@@ -51,6 +57,14 @@ def apply_migrations(connection: sqlite3.Connection, db_path: Path) -> Path | No
                 version=V3_VERSION,
             )
         _apply_v3(connection)
+    if not _migration_applied(connection, V4_VERSION):
+        if backup_path is None:
+            backup_path = _backup_if_legacy_data(
+                connection,
+                db_path,
+                version=V4_VERSION,
+            )
+        _apply_v4(connection)
     connection.commit()
     return backup_path
 
@@ -266,6 +280,34 @@ def _apply_v3(connection: sqlite3.Connection) -> None:
     connection.execute(
         "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
         (V3_VERSION, datetime.now(UTC).isoformat()),
+    )
+
+
+def _apply_v4(connection: sqlite3.Connection) -> None:
+    columns = _columns(connection, "formulas")
+    for name, declaration in V4_COLUMNS.items():
+        if name not in columns:
+            connection.execute(
+                f"ALTER TABLE formulas ADD COLUMN {name} {declaration}"
+            )
+
+    rows = connection.execute(
+        "SELECT id, record_date, record_date_raw FROM formulas"
+    ).fetchall()
+    for formula_id, record_date, record_date_raw in rows:
+        raw = str(record_date_raw if record_date_raw is not None else record_date or "")
+        parsed = parse_record_date(raw)
+        connection.execute(
+            """
+            UPDATE formulas
+            SET record_date_raw = ?, record_date = ?, date_status = ?
+            WHERE id = ?
+            """,
+            (parsed.raw, parsed.sort_value, parsed.status, formula_id),
+        )
+    connection.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+        (V4_VERSION, datetime.now(UTC).isoformat()),
     )
 
 

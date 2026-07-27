@@ -37,7 +37,7 @@ class FormulaCandidate:
     customer: str
     product: str
     record_date: str | None
-    date_status: Literal["KNOWN", "UNKNOWN"]
+    date_status: Literal["KNOWN", "UNKNOWN", "UNPARSED"]
     source_order: int
     formula_label: str
     materials: tuple[MaterialCandidate, ...]

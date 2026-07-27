@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 import sqlite3
 import unicodedata
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+from ..date_values import parse_record_date
 from ..grouping.service import final_result_fingerprint
 from ..readiness import validate_final_result_contract
 from ..review_state import formula_content_hash
@@ -119,26 +120,27 @@ class KnowledgeHistory:
             JOIN customers c ON c.id = f.customer_id
             JOIN products p ON p.id = f.product_id
             WHERE c.name = ? AND p.name = ?
-            ORDER BY COALESCE(f.record_date, ''), COALESCE(f.confirmed_at, ''), f.id
+            ORDER BY COALESCE(f.confirmed_at, ''), f.source_order, f.id
             """,
             (customer, product),
         ).fetchall()
-        return [dict(row) for row in rows]
+        normalized = [_present_history_row(dict(row)) for row in rows]
+        return sorted(normalized, key=lambda row: _timeline_sort_key(row, normalized))
 
     def tree(self, query: str = "") -> dict[str, Any]:
         connection = self.database._get_conn()
         pattern = f"%{query.strip()}%"
         rows = connection.execute(
             """
-            SELECT f.id, f.formula_no, f.record_date, f.date_status,
-                   f.confirmed_at,
+            SELECT f.id, f.formula_no, f.record_date, f.record_date_raw, f.date_status,
+                   f.confirmed_at, f.source_job_id, f.source_order,
                    c.id AS customer_id, c.name AS customer,
                    p.id AS product_id, p.name AS product
             FROM formulas f
             LEFT JOIN customers c ON c.id = f.customer_id
             LEFT JOIN products p ON p.id = f.product_id
             WHERE ? = '%%' OR COALESCE(c.name, '') LIKE ?
-                OR COALESCE(p.name, '') LIKE ? OR COALESCE(f.record_date, '') LIKE ?
+                OR COALESCE(p.name, '') LIKE ? OR COALESCE(f.record_date_raw, '') LIKE ?
             ORDER BY COALESCE(c.name, ''), COALESCE(p.name, ''),
                      COALESCE(f.record_date, ''), COALESCE(f.confirmed_at, ''), f.id
             """,
@@ -175,12 +177,24 @@ class KnowledgeHistory:
                 {
                     "id": int(row["id"]),
                     "formula_no": str(row["formula_no"] or "配方"),
-                    "record_date": str(row["record_date"] or ""),
+                    "record_date": str(
+                        row["record_date_raw"] or row["record_date"] or ""
+                    ),
+                    "record_date_sort": str(row["record_date"] or ""),
                     "date_status": str(row["date_status"] or "UNKNOWN"),
                     "confirmed_at": str(row["confirmed_at"] or ""),
+                    "source_job_id": str(row["source_job_id"] or ""),
+                    "source_order": int(row["source_order"] or 0),
                 }
             )
             product["formula_count"] += 1
+        for product in products.values():
+            product["formulas"].sort(
+                key=lambda row: _timeline_sort_key(row, product["formulas"])
+            )
+            for formula in product["formulas"]:
+                formula.pop("source_job_id", None)
+                formula.pop("source_order", None)
         return {"customers": list(customers.values()), "query": query}
 
     def formula_detail(self, formula_id: int) -> dict[str, Any]:
@@ -227,7 +241,8 @@ class KnowledgeHistory:
             "customer": str(row["customer"] or "未记录客户"),
             "product": str(row["product"] or "未记录产品"),
             "formula_no": str(row["formula_no"] or row["title"] or "配方"),
-            "record_date": str(row["record_date"] or ""),
+            "record_date": str(row["record_date_raw"] or row["record_date"] or ""),
+            "record_date_sort": str(row["record_date"] or ""),
             "date_status": str(row["date_status"] or "UNKNOWN"),
             "notes_raw": str(row["notes_raw"] or ""),
             "confirmed_at": str(row["confirmed_at"] or ""),
@@ -429,13 +444,16 @@ class KnowledgeHistory:
             """,
             (customer_id, product_id, formula_no),
         ).fetchone()
+        raw_date = str(formula.get("record_date", {}).get("value", ""))
+        parsed_date = parse_record_date(raw_date)
         cursor = connection.execute(
             """
             INSERT INTO formulas (
                 customer_id, product_id, title, fingerprint, formula_no,
-                record_date, confirmed_at, source_job_id, source_formula_id,
-                source_image_index, revision_of_id, date_status, notes_raw
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                record_date, record_date_raw, confirmed_at, source_job_id,
+                source_formula_id, source_image_index, revision_of_id,
+                date_status, source_order, notes_raw
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 customer_id,
@@ -443,19 +461,15 @@ class KnowledgeHistory:
                 formula_no or "配方",
                 formula_hash,
                 formula_no,
-                str(formula.get("record_date", {}).get("value", "")),
+                parsed_date.sort_value,
+                parsed_date.raw,
                 confirmed_at,
                 job_id,
                 str(formula["formula_id"]),
                 int(page.get("source_image_index", 1)),
                 int(revision["id"]) if revision else None,
-                (
-                    "KNOWN"
-                    if str(
-                        formula.get("record_date", {}).get("value", "")
-                    ).strip()
-                    else "UNKNOWN"
-                ),
+                parsed_date.status,
+                int(formula.get("formula_sequence", 0)),
                 str(formula.get("notes", {}).get("value", "")),
             ),
         )
@@ -543,6 +557,77 @@ def _number_or_none(value: str) -> float | None:
 def _normalize_lexicon(value: str) -> str:
     return " ".join(
         unicodedata.normalize("NFKC", value).casefold().split()
+    )
+
+
+def _present_history_row(row: dict[str, Any]) -> dict[str, Any]:
+    row["record_date_sort"] = str(row.get("record_date") or "")
+    row["record_date"] = str(
+        row.get("record_date_raw") or row.get("record_date") or ""
+    )
+    return row
+
+
+def _timeline_sort_key(
+    row: dict[str, Any],
+    rows: list[dict[str, Any]],
+) -> tuple[float, str, int, int]:
+    """Place undated source records between their dated source neighbors."""
+    sort_value = str(row.get("record_date_sort") or "")
+    if sort_value:
+        rank = float(date.fromisoformat(sort_value).toordinal())
+    else:
+        source_id = str(row.get("source_job_id") or "")
+        source_order = int(row.get("source_order") or 0)
+        source_rows = sorted(
+            (
+                candidate
+                for candidate in rows
+                if str(candidate.get("source_job_id") or "") == source_id
+            ),
+            key=lambda candidate: (
+                int(candidate.get("source_order") or 0),
+                int(candidate.get("id") or 0),
+            ),
+        )
+        before = [
+            candidate
+            for candidate in source_rows
+            if int(candidate.get("source_order") or 0) < source_order
+            and candidate.get("record_date_sort")
+        ]
+        after = [
+            candidate
+            for candidate in source_rows
+            if int(candidate.get("source_order") or 0) > source_order
+            and candidate.get("record_date_sort")
+        ]
+        previous = before[-1] if before else None
+        following = after[0] if after else None
+        if previous and following:
+            low = date.fromisoformat(str(previous["record_date_sort"])).toordinal()
+            high = date.fromisoformat(str(following["record_date_sort"])).toordinal()
+            low_order = int(previous.get("source_order") or 0)
+            high_order = int(following.get("source_order") or 0)
+            fraction = (source_order - low_order) / max(1, high_order - low_order)
+            rank = low + ((high - low) * fraction)
+        elif previous:
+            low = date.fromisoformat(str(previous["record_date_sort"])).toordinal()
+            rank = low + min(0.99, max(0.01, (source_order - int(previous.get("source_order") or 0)) / 1000))
+        elif following:
+            high = date.fromisoformat(str(following["record_date_sort"])).toordinal()
+            rank = high - min(0.99, max(0.01, (int(following.get("source_order") or 0) - source_order) / 1000))
+        else:
+            confirmed = str(row.get("confirmed_at") or "")[:10]
+            try:
+                rank = float(date.fromisoformat(confirmed).toordinal())
+            except ValueError:
+                rank = float("inf")
+    return (
+        rank,
+        str(row.get("confirmed_at") or ""),
+        int(row.get("source_order") or 0),
+        int(row.get("id") or 0),
     )
 
 

@@ -45,7 +45,7 @@
 
   Run: `.venv\Scripts\python.exe -m pytest tests_lite/test_date_values.py tests_lite/test_review_editor.py tests_lite/test_review_view.py -q`
 
-- [ ] **Step 7: 提交 Task 1**
+- [x] **Step 7: 提交 Task 1**
 
   `git add lite_app/date_values.py lite_app/review_editor.py lite_app/review_view.py lite_app/static/review.js tests_lite/test_date_values.py tests_lite/test_review_editor.py tests_lite/test_review_view.py && git commit -m "feat: preserve handwritten formula dates"`
 
@@ -60,27 +60,27 @@
 - Test: `tests_lite/test_knowledge_history.py`
 - Test: `tests_lite/test_knowledge_package.py`
 
-- [ ] **Step 1: 写 v4 迁移失败测试**
+- [x] **Step 1: 写 v4 迁移失败测试**
 
   断言迁移前自动备份；新增 `record_date_raw`；旧合法日期同时保留原文并规范化 `record_date` 排序列；旧非法值原文保留、排序列置空、状态为 `UNPARSED`；事务失败可回滚。
 
-- [ ] **Step 2: 写历史排序失败测试**
+- [x] **Step 2: 写历史排序失败测试**
 
   覆盖已知日期按 ISO 排序；同一来源内夹在两个日期之间的未知日期按 `source_order` 保持中间位置；无日期锚点时以录入时间和来源顺序稳定排序；详情与知识页面显示原文。
 
-- [ ] **Step 3: 运行知识测试并确认 RED**
+- [x] **Step 3: 运行知识测试并确认 RED**
 
   Run: `.venv\Scripts\python.exe -m pytest tests_lite/test_knowledge_migrations.py tests_lite/test_knowledge_history.py tests_lite/test_knowledge_package.py -q`
 
-- [ ] **Step 4: 实现 v4 非破坏迁移**
+- [x] **Step 4: 实现 v4 非破坏迁移**
 
   保留现有 `formulas.record_date` 为 ISO 排序列，新增 `record_date_raw`；迁移逐行调用统一日期解析器；迁移前沿用 SQLite 在线备份；扩展 `date_status` 允许应用层 `UNPARSED`。
 
-- [ ] **Step 5: 实现写入、查询与导出**
+- [x] **Step 5: 实现写入、查询与导出**
 
   用户确认写回时保存原文、排序值、状态和 `source_order`；API 使用 `record_date_raw` 展示；SQL/应用层使用排序值与稳定 rank 排序，但不为未知日期制造日期。
 
-- [ ] **Step 6: 验证 Task 2**
+- [x] **Step 6: 验证 Task 2**
 
   Run: `.venv\Scripts\python.exe -m pytest tests_lite/test_knowledge_migrations.py tests_lite/test_knowledge_history.py tests_lite/test_knowledge_package.py tests_lite/test_knowledge_pages.py -q`
 

@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..date_values import parse_record_date
 from .database import KnowledgeDB
 from .import_models import ExtractionIssue, LexiconTermCandidate
 from .import_records import DeduplicatedFormula, FormulaSourceRecord
@@ -185,6 +186,7 @@ class PersonalImportService:
             return int(existing["id"]), False
 
         formula = group.formula
+        parsed_date = parse_record_date(formula.record_date or "")
         customer_id = _select_or_insert_customer(
             connection,
             formula.customer,
@@ -198,10 +200,10 @@ class PersonalImportService:
             """
             INSERT INTO formulas (
                 customer_id, product_id, title, fingerprint, formula_no,
-                record_date, confirmed_at, source_job_id, source_formula_id,
+                record_date, record_date_raw, confirmed_at, source_job_id, source_formula_id,
                 source_image_index, revision_of_id, source_order, date_status,
                 notes_raw, deleted_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, NULL)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, NULL)
             """,
             (
                 customer_id,
@@ -209,12 +211,13 @@ class PersonalImportService:
                 formula.formula_label or "配方",
                 group.fingerprint,
                 formula.formula_label or "配方",
-                formula.record_date,
+                parsed_date.sort_value,
+                parsed_date.raw,
                 now,
                 f"legacy:{run_id}",
                 group.fingerprint,
                 formula.source_order,
-                formula.date_status,
+                parsed_date.status,
                 formula.notes_raw,
             ),
         )

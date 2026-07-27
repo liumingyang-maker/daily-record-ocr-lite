@@ -425,10 +425,12 @@ def _validate_formula(record: dict[str, Any]) -> None:
     _non_empty_string(record["formula_id"], "formula_id")
     _non_empty_string(record["customer"], "customer")
     _non_empty_string(record["product"], "product")
-    if record["date_status"] not in {"KNOWN", "UNKNOWN"}:
-        raise KnowledgePackageError("date_status must be KNOWN or UNKNOWN")
+    if record["date_status"] not in {"KNOWN", "UNKNOWN", "UNPARSED"}:
+        raise KnowledgePackageError(
+            "date_status must be KNOWN, UNKNOWN, or UNPARSED"
+        )
     record_date = record["record_date"]
-    if record["date_status"] == "KNOWN":
+    if record["date_status"] in {"KNOWN", "UNPARSED"}:
         _non_empty_string(record_date, "record_date")
     elif record_date is not None:
         raise KnowledgePackageError(
