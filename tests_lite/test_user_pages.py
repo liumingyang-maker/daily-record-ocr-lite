@@ -137,3 +137,42 @@ def test_recognition_records_hide_provider_from_primary_table(user_client: TestC
     assert "继续确认" in response.text
     assert "Provider / Model" not in response.text
     assert "qwen3.7-plus" not in response.text
+
+
+def test_settings_use_progressive_disclosure_and_user_language(user_client: TestClient):
+    response = user_client.get("/settings")
+
+    assert response.status_code == 200
+    for label in ("AI识别服务", "当前模型", "测试连接", "OCR引擎", "运行系统检查"):
+        assert label in response.text
+    assert response.text.count('<details class="advanced-settings">') == 1
+    assert '<details class="advanced-settings" open>' not in response.text
+    assert "<pre" not in response.text
+    assert "/static/settings.js" in response.text
+
+
+def test_setup_is_five_chinese_stages_without_developer_labels(user_client: TestClient):
+    response = user_client.get("/setup")
+
+    assert response.status_code == 200
+    for heading in (
+        "检查运行环境",
+        "配置 AI 识别",
+        "测试 AI 连接",
+        "测试本地 OCR",
+        "开始使用",
+    ):
+        assert heading in response.text
+    assert "Step" not in response.text
+    assert "Preset" not in response.text
+    assert ">tier<" not in response.text
+    assert ">Device<" not in response.text
+
+
+def test_error_categories_have_actionable_user_messages():
+    presentation = importlib.import_module("lite_app.presentation")
+
+    timeout = presentation.present_error("TIMEOUT", http_status=None, request_id="req-1")
+    assert timeout["message"] == "AI 识别服务响应超时"
+    assert "连接" in timeout["next_action"]
+    assert timeout["advanced"]["request_id"] == "req-1"

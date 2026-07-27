@@ -1,95 +1,86 @@
 {% extends "base.html" %}
-{% block title %}设置 - 手写记录 OCR{% endblock %}
+{% block title %}设置 - 手写配方识别{% endblock %}
 {% block content %}
-<section class="settings-card">
-    <h2>视觉模型</h2>
-    <div class="settings-grid">
-        <div class="form-group"><label for="vision-provider">Provider</label>
-            <select id="vision-provider"><option value="openai_compatible">openai_compatible</option></select>
-        </div>
-        <div class="form-group"><label for="vision-base-url">Base URL</label>
-            <input id="vision-base-url" value="{{ settings.vision.base_url }}" placeholder="https://…/v1">
-        </div>
-        <div class="form-group"><label for="vision-endpoint">Endpoint</label>
-            <input id="vision-endpoint" value="{{ settings.vision.endpoint }}">
-        </div>
-        <div class="form-group"><label for="vision-model">Model</label>
-            <input id="vision-model" value="{{ settings.vision.model }}">
+<div id="settings-page" data-page="settings" data-save-vision="/api/settings/vision" data-test-vision="/api/settings/test-vision">
+<section class="settings-heading">
+    <p class="eyebrow">识别服务设置</p>
+    <h2>设置</h2>
+    <p>通常只需要填写模型和 API Key，然后测试连接。</p>
+</section>
+
+<section class="settings-card primary-settings-card">
+    <div class="settings-card-heading">
+        <div><h3>AI识别服务</h3><p>用于理解手写配方的版面和内容。</p></div>
+        <span class="settings-state">{{ "已配置" if settings.vision.api_key_configured else "待配置" }}</span>
+    </div>
+    <div class="settings-grid compact-settings">
+        <div class="form-group"><label for="vision-model">当前模型</label>
+            <input id="vision-model" value="{{ settings.vision.model }}" placeholder="例如 qwen3.7-plus">
         </div>
         <div class="form-group"><label for="vision-key">API Key</label>
             <input id="vision-key" type="password" autocomplete="new-password"
-                   placeholder="{% if settings.vision.api_key_configured %}已配置（留空不修改）{% else %}尚未配置{% endif %}">
+                   placeholder="{% if settings.vision.api_key_configured %}已配置，留空不会修改{% else %}请粘贴 API Key{% endif %}">
         </div>
     </div>
     <div class="settings-actions">
-        <button class="btn btn-primary" id="save-vision">保存视觉配置</button>
-        <button class="btn" id="test-vision">测试视觉连接</button>
+        <button class="btn" id="save-vision">保存</button>
+        <button class="btn btn-primary" id="test-vision">测试连接</button>
     </div>
 </section>
 
 <section class="settings-card">
-    <h2>OCR</h2>
+    <div class="settings-card-heading">
+        <div><h3>OCR引擎</h3><p>在本机读取文字和数字，不会上传 API Key。</p></div>
+        <span class="settings-state">PP-OCRv6</span>
+    </div>
+    <div class="settings-actions">
+        <button class="btn" id="test-ocr">测试 OCR</button>
+        <a class="btn" href="/setup">运行系统检查</a>
+    </div>
+</section>
+
+<section id="connection-result" class="connection-result" aria-live="polite" hidden>
+    <span id="connection-icon" class="result-icon" aria-hidden="true">●</span>
+    <div><strong id="connection-title"></strong><p id="connection-action"></p></div>
+</section>
+<details id="diagnostics" class="diagnostics" hidden>
+    <summary>复制诊断信息</summary>
+    <code id="diagnostics-text"></code>
+    <button type="button" class="btn btn-small" id="copy-diagnostics">复制</button>
+</details>
+
+<details class="advanced-settings">
+    <summary>高级设置</summary>
+    <p>只有在更换服务地址或调整本地 OCR 时才需要修改。</p>
     <div class="settings-grid">
-        <div class="form-group"><label for="ocr-provider">Provider</label>
-            <select id="ocr-provider"><option value="paddleocr_v6">paddleocr_v6</option></select>
+        <div class="form-group"><label for="vision-provider">服务协议</label>
+            <select id="vision-provider"><option value="openai_compatible">OpenAI 兼容</option></select>
         </div>
-        <div class="form-group"><label for="ocr-tier">模型档位</label>
+        <div class="form-group"><label for="vision-base-url">服务地址</label>
+            <input id="vision-base-url" value="{{ settings.vision.base_url }}">
+        </div>
+        <div class="form-group"><label for="vision-endpoint">请求路径</label>
+            <input id="vision-endpoint" value="{{ settings.vision.endpoint }}">
+        </div>
+        <div class="form-group"><label for="ocr-tier">OCR 模型大小</label>
             <select id="ocr-tier">
                 {% for tier in ["tiny", "small", "medium"] %}
                 <option value="{{ tier }}" {% if settings.ocr.tier == tier %}selected{% endif %}>{{ tier }}</option>
                 {% endfor %}
             </select>
         </div>
-        <div class="form-group"><label for="ocr-device">Device</label>
-            <input id="ocr-device" value="{{ settings.ocr.device }}" placeholder="cpu / gpu:0">
+        <div class="form-group"><label for="ocr-device">OCR 运行设备</label>
+            <input id="ocr-device" value="{{ settings.ocr.device }}">
         </div>
-        <div class="form-group"><label for="ocr-score">最小置信度</label>
+        <div class="form-group"><label for="ocr-score">最低可信度</label>
             <input id="ocr-score" type="number" min="0" max="1" step="0.01" value="{{ settings.ocr.minimum_score }}">
         </div>
     </div>
     <div class="settings-actions">
-        <button class="btn btn-primary" id="save-ocr">保存 OCR 配置</button>
-        <button class="btn" id="test-ocr">测试 OCR</button>
+        <button class="btn" id="save-ocr">保存 OCR 设置</button>
         <button class="btn" id="disable-demo">退出演示模式</button>
     </div>
-    <pre class="settings-output" id="settings-output">状态：{{ status.state }}</pre>
-</section>
+</details>
+</div>
 {% endblock %}
-{% block scripts %}
-<script>
-const output = document.getElementById('settings-output');
-async function call(url, method, payload) {
-  output.textContent = '执行中…';
-  const response = await fetch(url, {
-    method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload || {})
-  });
-  const data = await response.json();
-  output.textContent = JSON.stringify(data, null, 2);
-  if (!response.ok) throw new Error(data.detail || '请求失败');
-  return data;
-}
-document.getElementById('save-vision').onclick = () => {
-  const payload = {
-    provider: document.getElementById('vision-provider').value,
-    base_url: document.getElementById('vision-base-url').value,
-    endpoint: document.getElementById('vision-endpoint').value,
-    model: document.getElementById('vision-model').value
-  };
-  const key = document.getElementById('vision-key').value;
-  if (key) payload.api_key = key;
-  return call('/api/settings/vision', 'PUT', payload);
-};
-document.getElementById('test-vision').onclick =
-  () => call('/api/settings/test-vision', 'POST', {});
-document.getElementById('save-ocr').onclick = () => call('/api/settings/ocr', 'PUT', {
-  provider: document.getElementById('ocr-provider').value,
-  tier: document.getElementById('ocr-tier').value,
-  device: document.getElementById('ocr-device').value,
-  minimum_score: Number(document.getElementById('ocr-score').value)
-});
-document.getElementById('test-ocr').onclick =
-  () => call('/api/settings/test-ocr', 'POST', {});
-document.getElementById('disable-demo').onclick =
-  () => call('/api/settings/demo/disable', 'POST', {}).then(() => window.location.reload());
-</script>
-{% endblock %}
+{% block scripts %}<script src="/static/settings.js" defer></script>{% endblock %}

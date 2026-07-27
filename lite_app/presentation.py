@@ -108,6 +108,42 @@ def present_stored_job(job: dict[str, Any], job_dir: Path) -> dict[str, Any]:
     return present_job(derived)
 
 
+def present_error(
+    category: str | None,
+    *,
+    http_status: int | None,
+    request_id: str | None,
+) -> dict[str, Any]:
+    """Translate connection failures into one message and one next action."""
+    normalized = str(category or "").upper()
+    if http_status in {401, 403} or any(
+        marker in normalized for marker in ("AUTH", "UNAUTHORIZED", "FORBIDDEN")
+    ):
+        message = "AI 识别服务未通过身份验证"
+        next_action = "检查 API Key 和服务权限后重新测试"
+    elif "TIMEOUT" in normalized:
+        message = "AI 识别服务响应超时"
+        next_action = "检查网络连接和服务状态后重新测试"
+    elif any(marker in normalized for marker in ("JSON", "SCHEMA", "FORMAT")):
+        message = "AI 返回的结果格式无法识别"
+        next_action = "确认模型支持 JSON 输出后重新测试"
+    elif any(marker in normalized for marker in ("TRANSPORT", "CONNECTION", "PROVIDER")):
+        message = "无法连接 AI 识别服务"
+        next_action = "检查服务地址和网络连接后重新测试"
+    else:
+        message = "测试未通过"
+        next_action = "打开诊断信息检查状态后重新测试"
+    return {
+        "message": message,
+        "next_action": next_action,
+        "advanced": {
+            "error_category": normalized or None,
+            "http_status": http_status,
+            "request_id": request_id,
+        },
+    }
+
+
 def _clean_values(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
