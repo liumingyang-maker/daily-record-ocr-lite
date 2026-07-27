@@ -30,6 +30,7 @@ data/secrets.env
 data/setup_health.json
 data/last-doctor.json
 data/connection-test.png
+data/setup/
 data/*.log
 data/*response*.json
 backups/
