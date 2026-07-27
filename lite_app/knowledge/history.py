@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -63,17 +64,23 @@ class KnowledgeHistory:
                 product_id = self._select_or_insert_product(
                     connection, customer_id, product
                 )
-                formula_ids.append(
-                    self._insert_formula(
-                        connection,
-                        job_id=job_id,
-                        page=page,
-                        formula=formula,
-                        customer_id=customer_id,
-                        product_id=product_id,
-                        confirmed_at=confirmed_at,
-                        formula_hash=confirmed_hashes[str(formula["formula_id"])],
-                    )
+                formula_db_id = self._insert_formula(
+                    connection,
+                    job_id=job_id,
+                    page=page,
+                    formula=formula,
+                    customer_id=customer_id,
+                    product_id=product_id,
+                    confirmed_at=confirmed_at,
+                    formula_hash=confirmed_hashes[str(formula["formula_id"])],
+                )
+                formula_ids.append(formula_db_id)
+                self._learn_formula_terms(
+                    connection,
+                    customer=customer,
+                    product=product,
+                    formula=formula,
+                    confirmed_at=confirmed_at,
                 )
 
             receipt = {
@@ -259,6 +266,85 @@ class KnowledgeHistory:
         )
         return int(cursor.lastrowid)
 
+    def _learn_formula_terms(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        customer: str,
+        product: str,
+        formula: dict[str, Any],
+        confirmed_at: str,
+    ) -> None:
+        terms: list[tuple[str, str]] = [
+            ("customer", customer),
+            ("product", product),
+        ]
+        terms.extend(
+            (
+                "material",
+                str(material.get("name", {}).get("value", "")),
+            )
+            for material in formula.get("materials", [])
+        )
+        terms.extend(
+            (
+                "process",
+                str(parameter.get("name", {}).get("value", "")),
+            )
+            for parameter in formula.get("process_parameters", [])
+        )
+        notes = str(formula.get("notes", {}).get("value", "")).strip()
+        if notes:
+            terms.append(("note_phrase", notes))
+        for term_type, value in terms:
+            value = value.strip()
+            normalized = _normalize_lexicon(value)
+            if not normalized:
+                continue
+            connection.execute(
+                """
+                INSERT INTO lexicon_terms (
+                    term_type, standard_value, normalized_value,
+                    source_quality, occurrence_count, accepted_count,
+                    rejected_count, created_at, updated_at
+                ) VALUES (?, ?, ?, 'confirmed', 1, 1, 0, ?, ?)
+                ON CONFLICT(term_type, normalized_value) DO UPDATE SET
+                    standard_value = excluded.standard_value,
+                    source_quality = 'confirmed',
+                    occurrence_count = occurrence_count + 1,
+                    accepted_count = accepted_count + 1,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    term_type,
+                    value,
+                    normalized,
+                    confirmed_at,
+                    confirmed_at,
+                ),
+            )
+            term_id = connection.execute(
+                """
+                SELECT id FROM lexicon_terms
+                WHERE term_type = ? AND normalized_value = ?
+                """,
+                (term_type, normalized),
+            ).fetchone()["id"]
+            connection.execute(
+                """
+                INSERT INTO lexicon_context_stats (
+                    term_id, customer_context, product_context,
+                    occurrence_count, accepted_count, rejected_count
+                ) VALUES (?, ?, ?, 1, 1, 0)
+                ON CONFLICT(
+                    term_id, customer_context, product_context
+                ) DO UPDATE SET
+                    occurrence_count = occurrence_count + 1,
+                    accepted_count = accepted_count + 1
+                """,
+                (term_id, customer, product),
+            )
+
     def _insert_formula(
         self,
         connection: sqlite3.Connection,
@@ -381,6 +467,12 @@ def _number_or_none(value: str) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _normalize_lexicon(value: str) -> str:
+    return " ".join(
+        unicodedata.normalize("NFKC", value).casefold().split()
+    )
 
 
 def _compare_named_rows(
