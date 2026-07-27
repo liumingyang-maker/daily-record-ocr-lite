@@ -223,6 +223,17 @@ def _local_formula_bbox(
     total: int,
     content_bbox: list[float] | None,
 ) -> list[float] | None:
+    slot_bbox: list[float] | None = None
+    slot_height = 0.0
+    if content_bbox and total > 0:
+        x1, y1, x2, y2 = content_bbox
+        slot_height = (y2 - y1) / total
+        slot_bbox = [
+            x1,
+            y1 + slot_height * (position - 1),
+            x2,
+            y1 + slot_height * position,
+        ]
     primary_values = [
         str(formula.get("formula_no", "")),
         str(formula.get("record_date", {}).get("value", "")),
@@ -240,18 +251,19 @@ def _local_formula_bbox(
     primary = _matching_tokens(page.tokens, primary_values)
     if primary:
         anchor = _tokens_bbox(primary, page)
+        if slot_bbox and _bbox_center_distance_y(anchor, slot_bbox) > slot_height * 1.2:
+            return slot_bbox
         selected = list(primary)
         for value in secondary_values:
             matches = _matching_tokens(page.tokens, [value])
             if matches:
                 selected.append(min(matches, key=lambda token: _distance(token, anchor, page)))
-        return _tokens_bbox(selected, page)
+        candidate = _tokens_bbox(selected, page)
+        if slot_bbox and candidate[3] - candidate[1] > slot_height * 1.75:
+            return slot_bbox
+        return _union(candidate, slot_bbox) if slot_bbox else candidate
 
-    if content_bbox and total > 0:
-        x1, y1, x2, y2 = content_bbox
-        slot = (y2 - y1) / total
-        return [x1, y1 + slot * (position - 1), x2, y1 + slot * position]
-    return None
+    return slot_bbox
 
 
 def _matching_tokens(tokens: list[OCRToken], values: list[str]) -> list[OCRToken]:
@@ -288,6 +300,10 @@ def _union(left: list[float], right: list[float]) -> list[float]:
         max(left[2], right[2]),
         max(left[3], right[3]),
     ]
+
+
+def _bbox_center_distance_y(left: list[float], right: list[float]) -> float:
+    return abs((left[1] + left[3]) / 2 - (right[1] + right[3]) / 2)
 
 
 def _pad_and_clamp(bbox: list[float], padding: float) -> list[float]:
