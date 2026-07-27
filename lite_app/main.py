@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import __version__
-from .config import PROJECT_ROOT, get_config, load_recognition_config
+from .config import DATA_ROOT, get_config, load_recognition_config
 from .contracts import normalize_legacy_result, validate_record_result
 from .exporter import ExportError, export_job
 from .final_result import (
@@ -126,7 +126,7 @@ def _get_storage() -> JobStorage:
 
 
 def _get_settings() -> SettingsService:
-    return SettingsService(PROJECT_ROOT / "data")
+    return SettingsService(DATA_ROOT)
 
 
 def _demo_enabled() -> bool:
@@ -1179,9 +1179,8 @@ async def update_field(job_id: str, field_id: str, request: Request):
 
     # 记录修正日志
     try:
-        from .config import PROJECT_ROOT
         from .knowledge.database import KnowledgeDB
-        db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+        db = KnowledgeDB(DATA_ROOT / "knowledge.sqlite3")
         db.initialize()
         from .review.corrections import CorrectionService
         svc = CorrectionService(db)
@@ -1244,7 +1243,7 @@ def _finalize_job(job_id: str) -> dict:
 
     state = ReviewStateStore(job_dir)
     history = KnowledgeHistory(
-        Path(os.environ.get("KNOWLEDGE_DB_PATH", PROJECT_ROOT / "data" / "knowledge.sqlite3"))
+        Path(os.environ.get("KNOWLEDGE_DB_PATH", DATA_ROOT / "knowledge.sqlite3"))
     )
     try:
         receipt = history.append_confirmed_job(
@@ -1506,7 +1505,6 @@ async def merge_company_groups(job_id: str, request: Request):
 @app.post("/api/jobs/{job_id}/companies/{company_id}/alias")
 async def save_company_alias(job_id: str, company_id: str, request: Request):
     """将原文保存为公司别名到知识库。"""
-    from .config import PROJECT_ROOT
     from .knowledge.database import KnowledgeDB
     storage = _get_storage()
     try:
@@ -1520,7 +1518,7 @@ async def save_company_alias(job_id: str, company_id: str, request: Request):
         raise HTTPException(status_code=400, detail="别名不能为空。")
 
     standard_name = body.get("standard_name", alias).strip()
-    db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+    db = KnowledgeDB(DATA_ROOT / "knowledge.sqlite3")
     db.initialize()
 
     # 查找或创建公司（使用 customers 表）
@@ -1573,7 +1571,6 @@ async def merge_product_groups(job_id: str, request: Request):
 @app.post("/api/jobs/{job_id}/products/{product_id}/alias")
 async def save_product_alias(job_id: str, product_id: str, request: Request):
     """将原文保存为产品别名到知识库。"""
-    from .config import PROJECT_ROOT
     from .knowledge.database import KnowledgeDB
     storage = _get_storage()
     try:
@@ -1587,7 +1584,7 @@ async def save_product_alias(job_id: str, product_id: str, request: Request):
         raise HTTPException(status_code=400, detail="别名不能为空。")
 
     standard_name = body.get("standard_name", alias).strip()
-    db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+    db = KnowledgeDB(DATA_ROOT / "knowledge.sqlite3")
     db.initialize()
 
     # 查找或创建产品（使用 products 表）
@@ -1613,7 +1610,7 @@ def _knowledge_db_path() -> Path:
     return Path(
         os.environ.get(
             "KNOWLEDGE_DB_PATH",
-            PROJECT_ROOT / "data" / "knowledge.sqlite3",
+            DATA_ROOT / "knowledge.sqlite3",
         )
     )
 

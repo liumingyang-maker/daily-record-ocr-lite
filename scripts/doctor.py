@@ -34,6 +34,7 @@ def run_doctor(
     from lite_app.final_result import project_final_result
     from lite_app.grouping.exporter import export_grouped_excel
     from lite_app.grouping.service import build_business_entities
+    from lite_app.platform_paths import DATA_ROOT
     from lite_app.settings import SettingsService
 
     checks: list[dict[str, Any]] = []
@@ -116,7 +117,8 @@ def run_doctor(
         details={"missing": missing_ocr},
     )
 
-    service = SettingsService(data_dir or root / "data")
+    default_data_dir = DATA_ROOT if root.resolve() == ROOT.resolve() else root / "data"
+    service = SettingsService(data_dir or default_data_dir)
     try:
         effective = service.effective_settings()
         service.status()

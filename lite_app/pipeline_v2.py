@@ -13,6 +13,7 @@ from typing import Any
 
 from .cache import FileRecognitionCache, compute_image_hash
 from .config import (
+    DATA_ROOT,
     PROJECT_ROOT,
     get_config,
     load_fusion_rules,
@@ -242,7 +243,7 @@ async def analyze_job_v2(
 
         vision_config = dict(cfg.vision)
         vision_config.update(
-            SettingsService(PROJECT_ROOT / "data").effective_settings()["vision"]
+            SettingsService(DATA_ROOT).effective_settings()["vision"]
         )
         if vision_config.get("provider") == "mock" and not demo_mode:
             raise PipelineError("Mock Vision 只能在用户显式启用演示模式后使用")
@@ -598,7 +599,7 @@ def _fuse_one(
 def _history_candidates(structured: dict[str, Any]) -> dict[str, list]:
     candidates: dict[str, list] = {}
     try:
-        database = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+        database = KnowledgeDB(DATA_ROOT / "knowledge.sqlite3")
         database.initialize()
         matcher = HistoryMatcher(database)
         for record in _extract_records_from_vlm(structured):
@@ -837,7 +838,7 @@ def _demo_mode() -> bool:
         from .settings import SettingsService
 
         return bool(
-            SettingsService(PROJECT_ROOT / "data").load().get("demo_mode")
+            SettingsService(DATA_ROOT).load().get("demo_mode")
         )
     except Exception:
         return False

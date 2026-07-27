@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lite_app.config import PROJECT_ROOT
+from lite_app.config import DATA_ROOT
 from lite_app.settings import SettingsError, SettingsService
 
 
@@ -62,7 +62,7 @@ def run(
     environ: Mapping[str, str] | None = None,
 ) -> int:
     args = build_parser().parse_args(argv)
-    service = SettingsService(data_dir or PROJECT_ROOT / "data")
+    service = SettingsService(data_dir or DATA_ROOT)
     environment = environ if environ is not None else os.environ
     try:
         if args.command == "status":
