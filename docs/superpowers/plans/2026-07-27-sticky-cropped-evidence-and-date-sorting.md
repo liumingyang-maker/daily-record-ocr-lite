@@ -224,3 +224,18 @@
 - [x] **Step 6: 完成计划自审**
 
   将已完成 checkbox 更新为 `[x]`；执行占位文本扫描；核对设计文档每项要求均有代码、测试或明确用户 Gate 证据。
+
+## Task 7: 独立代码审查整改
+
+- [x] 证据裁剪复用 OCR/VLM 的 EXIF、手动和自动旋转实现。
+- [x] 保留跨产品穿插配方的页面级 `source_order`，并用于知识历史与证据分区。
+- [x] 增加页面 bbox 顺序/重叠校验，接入 Layout record/line，并拒绝粗粒度错误映射。
+- [x] manifest v2 绑定当前 run、formula、source order、页面、确定性路径和 source/crop/full SHA。
+- [x] 新识别批次开始时原子失效旧证据；通用文件路由禁止绕过专用证据 API。
+- [x] SQLite v4 使用 savepoint 覆盖 ALTER、回填和 migration version；故障注入完整回滚。
+- [x] 非法非空日期进入待确认；窄屏按钮与输入达到约 44px；review 请求复用哈希缓存。
+- [x] 全量 Gate：491 passed、5 deselected；Ruff、diff check、Secret 扫描通过。
+- [x] 真实 2 图 / 7 配方页面复核：桌面 sticky、手机单列、7/7 证据加载、0 console error。
+- [ ] 独立 GPT 对 `132e0b6..887b603` 的最终复审回填。
+
+本任务仍不解除产品 Gate：PR #9 保持 Draft，禁止 Merge、Tag、Release。

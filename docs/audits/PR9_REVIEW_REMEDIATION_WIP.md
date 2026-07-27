@@ -297,3 +297,90 @@ Job `20260727-200756-d3d1ec` 使用同图、同代码、Knowledge OFF。单次�
 - Merge：不允许。
 - Tag：不允许。
 - Release：不允许。
+
+## 2026-07-27 第三轮独立审查整改（以本节为准）
+
+### 可直接复制给独立 GPT 的代码复核提示词
+
+```text
+请独立审查 daily-record-ocr-lite PR #9 的最新实际 Diff，重点审查提交
+887b60374d6d28bd87f83de44d00996cbdfb6027，并与其父提交
+132e0b63bd9675f47d58d116e357d6cd079af1ff 比较。不要只复述本报告。
+
+请重点验证：
+1. 配方证据是否使用与 OCR/VLM 预处理完全相同的 EXIF 和手动/自动旋转；
+2. 页面内跨产品穿插的配方是否保留独立 source_order，且不会被分组顺序覆盖；
+3. 模型 bbox 的页面顺序颠倒或高度重叠是否整组失效并安全回退；
+4. 本地 Layout 是否真实参与定位，粗粒度单一 record 是否不会覆盖多配方安全分区；
+5. evidence manifest 是否绑定 recognition_run_id、formula_id、source_order、source image、
+   确定性 crop/full 文件名及 source/crop/full SHA-256；交换条目或旧批次是否 fail-closed；
+6. 新识别批次开始时是否先使旧 manifest 失效；证据生成失败后是否仍不会暴露旧证据；
+7. 通用 /jobs/{job}/files 路由是否禁止绕过专用 API 读取 manifest、crop 和旋转整图；
+8. SQLite v4 的 ALTER、日期回填和 migration version 是否位于同一 savepoint，故障能否完整回滚；
+9. 非空但不可解析日期是否明确进入待确认；窄屏按钮/输入是否至少约 44px；
+10. 是否仍保持整图 OCR/VLM，裁剪只服务人工核对，不改变 FinalResult。
+
+请输出 P0/P1/P2、Secret/私人数据边界、测试缺口、是否允许 PR #9 转 Ready、
+是否允许 Merge。当前真实产品 Gate 仍未完成 OFF/ON 双成功、用户确认后的 READY/Excel、
+10～20 张独立样本，因此禁止给出 Merge/Tag/Release 许可。
+```
+
+### 本轮代码范围
+
+- 审查反馈基线：`132e0b63bd9675f47d58d116e357d6cd079af1ff`
+- 整改实现提交：`887b60374d6d28bd87f83de44d00996cbdfb6027`
+- PR：<https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/9>
+- PR 状态：Draft；本轮未合并、未打 Tag、未发布。
+
+### 独立审查发现处置
+
+| 发现 | 处置 | 代码/测试证据 |
+|---|---|---|
+| P0：裁剪坐标未复用识别旋转 | **已修复** | `orient_image()` 成为预处理与证据共用实现；不对称图片 90cw 回归验证方向和像素区域 |
+| P1：跨产品分组覆盖页面来源顺序 | **已修复** | record-v1 新增可选 `source_order`；归一化前保存页面顺序；知识历史与裁剪使用该顺序；A1/B1/A2 回归为 1/2/3 |
+| P1：页面 bbox 乱序/高重叠未校验 | **已修复** | 页面级顺序与 70% 高重叠检测；异常候选失效后走本地/安全区域 |
+| P1：`layout_by_page` 被忽略 | **已修复** | Layout record/line 进入本地定位；record 数与配方数不一致时拒绝粗记录；短数字和带圈序号不再误命中数量行 |
+| P1：manifest 可交换、未绑定当前批次 | **已修复** | schema v2 绑定 run/formula/source order/page/source path、确定性 crop/full 路径及三类 SHA；交换条目返回 None/404 |
+| P1：重识别失败后可能继续展示旧证据 | **已修复** | 每次生成新 `recognition_run_id` 后、预处理前原子写入空 manifest；失败时旧批次不可达 |
+| P1：通用文件路由绕过专用证据校验 | **已修复** | 通用路由拒绝 `review/evidence_regions.json` 和 `review/evidence/`；专用 API 才能返回校验后的 crop/full |
+| P1：SQLite v4 缺少显式回滚边界 | **已修复** | `SAVEPOINT knowledge_v4`；第二行日期回填注入失败后列、数据和 version 均恢复 |
+| P2：窄屏按钮不足 44px | **已修复** | 900px 以下 review 按钮 `min-height: 44px`；375px 实测约 43.998px（像素取整） |
+| P2：逐配方重复哈希读取 | **已修复** | review view 单次请求共享路径哈希缓存；专用单图请求仍逐项 fail-closed |
+| 审计旧段落覆盖度表述过强 | **已纠正** | 本节只声明已有代码/自动化/页面证据；产品发布 Gate 继续明确阻塞 |
+
+### 自动化 Gate
+
+| Gate | 结果 |
+|---|---|
+| 非真实全量测试 | **491 passed, 5 deselected** |
+| Ruff | `python -m ruff check lite_app tests_lite scripts` 通过 |
+| Diff check | `git diff --check` 通过 |
+| tracked Secret scan | 0 match |
+| working diff Secret scan | 0 match |
+
+新增回归覆盖旋转方向、页面 bbox 乱序/重叠、Layout 定位与粗记录回退、重复数字锚点、
+manifest 条目交换、当前批次绑定、旧证据失效、通用路由绕过、跨产品来源顺序、迁移故障回滚、
+不可解析日期待确认和移动端触控尺寸。
+
+### 真实 2 图 / 7 配方页面复核（不重新调用模型）
+
+使用已有成功 Job `20260727-200552-b00c4a` 的持久化 OCR、Layout、FinalResult 和原图，
+只重建 ignored `data/` 下的审查证据；未改写 FinalResult、未确认字段、未写知识库、未导出 Excel：
+
+- manifest schema v2；run ID 与 Job/FinalResult 一致；7/7 配方有证据项；2 张旋转后整图均有 SHA 绑定；
+- 第 1 页 5 条配方使用独立安全区域；短数字和带圈序号不会因数量行重复而扩张成整页；
+- 第 2 页局部定位不够可靠时保留较大安全区域，符合“静默回退较大区域/整图”的产品决定；
+- 1440×900：7 crop、7 个“查看整图”，当前卡片证据 `position: sticky`，滚动后 top 约 12px；
+- 375×812：单列、`position: static`、无横向溢出，输入和按钮约 44px；
+- 7 张证据图全部加载；浏览器控制台 0 error；通用文件路由绕过由 API 测试验证为 404。
+
+### 仍然阻塞的产品 Gate
+
+- Knowledge OFF/ON 尚未得到同图两份成功 FinalResult，不能计算净提升或新增错误；
+- 真实样本中尚无 `AUTO_CORRECT`，不能声称知识纠偏已经提高真实准确率；
+- 用户尚未逐条核对并确认真实配方，未进入 READY、未完成知识写回和正式 Excel；
+- 当前只有 5 张独立个人样图，未达到 10～20 张真实样本 Gate；
+- 私人 Windows 安装器升级闭环仍待后续验收。
+
+结论：本轮修复了独立审查提出的证据正确性、安全绑定、顺序和迁移回滚问题，
+但没有解除产品发布 Gate。PR #9 必须继续保持 Draft；禁止 Merge、Tag、Release。
