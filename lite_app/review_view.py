@@ -62,6 +62,11 @@ def build_review_view(
                 }
             )
 
+    groups.sort(
+        key=lambda group: not any(
+            formula["needs_confirmation"] for formula in group["formulas"]
+        )
+    )
     return {
         "summary": {
             "total_formulas": formula_count,
