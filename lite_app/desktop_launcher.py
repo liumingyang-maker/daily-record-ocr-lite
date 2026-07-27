@@ -182,6 +182,85 @@ def self_test(data_root: Path = DATA_ROOT) -> dict[str, object]:
     }
 
 
+def smoke_test(data_root: Path = DATA_ROOT) -> dict[str, object]:
+    """Start the frozen web application, verify health, then exit cleanly."""
+    root = Path(data_root)
+    root.mkdir(parents=True, exist_ok=True)
+    lock = SingleInstanceLock(root / "desktop.lock")
+    if not lock.acquire():
+        return {"status": "FAILED", "error_category": "INSTANCE_ALREADY_RUNNING"}
+    server = None
+    thread = None
+    try:
+        port = select_available_port()
+        _configure_runtime(root, port)
+        import uvicorn
+
+        from .main import app
+
+        server = uvicorn.Server(
+            uvicorn.Config(app, host=LOOPBACK_HOST, port=port, log_level="warning")
+        )
+        thread = threading.Thread(target=server.run, name="desktop-smoke-server", daemon=True)
+        thread.start()
+        url = f"http://{LOOPBACK_HOST}:{port}/"
+        _wait_for_health(url)
+        return {"status": "OK", "url": url, "loopback_only": True}
+    except Exception:
+        return {"status": "FAILED", "error_category": "DESKTOP_SMOKE_FAILED"}
+    finally:
+        if server is not None:
+            server.should_exit = True
+        if thread is not None:
+            thread.join(timeout=15)
+        lock.release()
+
+
+def real_ocr_test(data_root: Path = DATA_ROOT) -> dict[str, object]:
+    """Run one real PP-OCRv6 inference from the packaged runtime."""
+    root = Path(data_root)
+    probe_dir = root / "setup"
+    probe_dir.mkdir(parents=True, exist_ok=True)
+    image_path = probe_dir / "desktop-real-ocr.png"
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+
+        from .ocr.paddleocr_v6 import PaddleOCRv6Provider
+
+        image = Image.new("RGB", (720, 260), "white")
+        draw = ImageDraw.Draw(image)
+        try:
+            font = ImageFont.truetype("DejaVuSans.ttf", 42)
+        except OSError:
+            font = ImageFont.load_default()
+        draw.text((40, 35), "PA66  60kg", fill="black", font=font)
+        draw.text((40, 105), "GF30  30kg", fill="black", font=font)
+        draw.text((40, 175), "Process 50Hz", fill="black", font=font)
+        image.save(image_path)
+
+        provider = PaddleOCRv6Provider(device="cpu", tier="medium")
+        provider.load()
+        started = time.monotonic()
+        page = provider.recognize(image_path)
+        latency_ms = int((time.monotonic() - started) * 1000)
+        if not page.tokens:
+            return {"status": "FAILED", "error_category": "NO_REAL_OCR_TOKENS"}
+        return {
+            "status": "OK",
+            "provider": page.provider,
+            "model": page.model,
+            "token_count": len(page.tokens),
+            "latency_ms": latency_ms,
+        }
+    except Exception:
+        return {"status": "FAILED", "error_category": "REAL_OCR_FAILED"}
+    finally:
+        try:
+            image_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def run_desktop(data_root: Path = DATA_ROOT) -> int:
     """Start the local web application and own its tray lifecycle."""
     root = Path(data_root)
@@ -199,10 +278,7 @@ def run_desktop(data_root: Path = DATA_ROOT) -> int:
     state: InstanceState | None = None
     try:
         port = select_available_port()
-        os.environ["DAILY_RECORD_OCR_DATA_DIR"] = str(root)
-        os.environ["APP_HOST"] = LOOPBACK_HOST
-        os.environ["APP_PORT"] = str(port)
-        os.environ["JOBS_DIR"] = str(root / "jobs")
+        _configure_runtime(root, port)
 
         import uvicorn
 
@@ -228,6 +304,13 @@ def run_desktop(data_root: Path = DATA_ROOT) -> int:
             except OSError:
                 pass
         lock.release()
+
+
+def _configure_runtime(data_root: Path, port: int) -> None:
+    os.environ["DAILY_RECORD_OCR_DATA_DIR"] = str(data_root)
+    os.environ["APP_HOST"] = LOOPBACK_HOST
+    os.environ["APP_PORT"] = str(port)
+    os.environ["JOBS_DIR"] = str(data_root / "jobs")
 
 
 def _wait_for_health(base_url: str, timeout_seconds: float = 30.0) -> None:
@@ -284,11 +367,21 @@ def _run_tray(url: str, server: object, thread: threading.Thread) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="daily-record-ocr-lite desktop launcher")
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--smoke-test", action="store_true")
+    parser.add_argument("--ocr-test", action="store_true")
     parser.add_argument("--data-dir", type=Path, default=DATA_ROOT)
     args = parser.parse_args(argv)
     if args.self_test:
         print(json.dumps(self_test(args.data_dir), ensure_ascii=False, sort_keys=True))
         return 0
+    if args.smoke_test:
+        result = smoke_test(args.data_dir)
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0 if result.get("status") == "OK" else 3
+    if args.ocr_test:
+        result = real_ocr_test(args.data_dir)
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0 if result.get("status") == "OK" else 4
     return run_desktop(args.data_dir)
 
 

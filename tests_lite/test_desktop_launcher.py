@@ -75,3 +75,19 @@ def test_self_test_checks_lock_port_and_data_directory(tmp_path: Path):
     assert result["loopback_only"] is True
     assert result["single_instance"] is True
     assert result["data_directory_writable"] is True
+
+
+def test_smoke_test_cli_returns_failure_status(monkeypatch, tmp_path: Path):
+    import lite_app.desktop_launcher as launcher
+
+    monkeypatch.setattr(launcher, "smoke_test", lambda _path: {"status": "FAILED"})
+
+    assert launcher.main(["--smoke-test", "--data-dir", str(tmp_path)]) == 3
+
+
+def test_real_ocr_cli_requires_real_tokens(monkeypatch, tmp_path: Path):
+    import lite_app.desktop_launcher as launcher
+
+    monkeypatch.setattr(launcher, "real_ocr_test", lambda _path: {"status": "FAILED"})
+
+    assert launcher.main(["--ocr-test", "--data-dir", str(tmp_path)]) == 4
