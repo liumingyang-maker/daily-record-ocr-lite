@@ -64,6 +64,7 @@ class ExtractionIssue:
     start_row: int
     end_row: int
     details: str = ""
+    formula: FormulaCandidate | None = None
 
 
 @dataclass(frozen=True)

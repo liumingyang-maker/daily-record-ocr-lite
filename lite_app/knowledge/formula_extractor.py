@@ -178,6 +178,7 @@ def extract_sheet(sheet: SheetData, customer_hint: str) -> SheetExtraction:
                     start_row=anchor.row,
                     end_row=end_row,
                     details=f"sheet={sheet_product}; title={title}",
+                    formula=formula,
                 )
             )
             terms.extend(_formula_terms(formula, "candidate"))
@@ -192,6 +193,7 @@ def extract_sheet(sheet: SheetData, customer_hint: str) -> SheetExtraction:
                     ),
                     start_row=anchor.row,
                     end_row=end_row,
+                    formula=formula,
                 )
             )
             terms.extend(_formula_terms(formula, "candidate"))

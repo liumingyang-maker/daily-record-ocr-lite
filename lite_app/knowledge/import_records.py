@@ -17,6 +17,10 @@ class FormulaSourceRecord:
     formula: FormulaCandidate
     source_path: str
     cell_range: str
+    tight_evidence: str = ""
+    context_evidence: str = ""
+    tight_sha256: str = ""
+    context_sha256: str = ""
 
 
 @dataclass(frozen=True)
