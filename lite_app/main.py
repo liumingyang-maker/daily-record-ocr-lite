@@ -23,7 +23,11 @@ from fastapi.templating import Jinja2Templates
 from . import __version__
 from .config import DATA_ROOT, get_config, load_recognition_config
 from .contracts import normalize_legacy_result, validate_record_result
-from .evidence_regions import verified_evidence_path
+from .evidence_regions import (
+    formula_evidence_contexts,
+    load_formula_evidence_manifest,
+    verified_evidence_path,
+)
 from .exporter import ExportError, export_job
 from .final_result import (
     FinalResultError,
@@ -1029,21 +1033,29 @@ async def get_review(job_id: str):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     job_dir = storage.get_job_dir(job_id)
     evidence_hash_cache: dict[Path, str] = {}
-    evidence_urls = {
-        formula_id: (
-            f"/api/jobs/{quote(job_id, safe='')}/review/evidence/"
-            f"{quote(formula_id, safe='')}"
-        )
-        for formula_id in _formula_ids(final)
-        if verified_evidence_path(
-            job_dir,
-            formula_id,
-            job=job,
-            final=final,
-            hash_cache=evidence_hash_cache,
-        )
-        is not None
-    }
+    evidence_manifest = load_formula_evidence_manifest(job_dir)
+    evidence_contexts = formula_evidence_contexts(final)
+    evidence_urls = (
+        {}
+        if evidence_manifest is None
+        else {
+            formula_id: (
+                f"/api/jobs/{quote(job_id, safe='')}/review/evidence/"
+                f"{quote(formula_id, safe='')}"
+            )
+            for formula_id in _formula_ids(final)
+            if verified_evidence_path(
+                job_dir,
+                formula_id,
+                job=job,
+                final=final,
+                hash_cache=evidence_hash_cache,
+                manifest=evidence_manifest,
+                formula_contexts=evidence_contexts,
+            )
+            is not None
+        }
+    )
     full_evidence_urls = {
         formula_id: (
             f"/api/jobs/{quote(job_id, safe='')}/review/evidence/"

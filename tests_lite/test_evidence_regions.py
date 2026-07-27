@@ -331,6 +331,102 @@ def test_circled_formula_number_does_not_match_repeated_single_digit_amounts(tmp
     assert second_box[1] > 0.35
 
 
+def test_layout_headings_use_midpoints_and_ignore_extra_header_record(tmp_path):
+    job_dir = tmp_path / "job-layout-midpoints"
+    source = job_dir / "source" / "page.jpg"
+    source.parent.mkdir(parents=True)
+    Image.new("RGB", (1000, 1000), "white").save(source)
+    final = make_review_final("job-layout-midpoints")
+    final["recognition_run_id"] = "run-midpoints"
+    first = final["pages"][0]["product_sections"][0]["formulas"][0]
+    first["formula_no"] = "formula 1"
+    first["record_bbox"] = None
+    second = dict(first)
+    second["formula_id"] = "job-layout-midpoints__page_001__formula_002"
+    second["formula_no"] = "formula 2"
+    second["formula_sequence"] = 2
+    final["pages"][0]["product_sections"][0]["formulas"].append(second)
+    page = OCRPage(
+        image_index=1,
+        width=1000,
+        height=1000,
+        tokens=[_token("content", "content", [100, 50, 900, 950])],
+        average_confidence=0.9,
+        provider="test",
+        model="test",
+        elapsed_ms=1,
+    )
+    job = {
+        "id": "job-layout-midpoints",
+        "recognition_run_id": "run-midpoints",
+        "images": [{"source": "source/page.jpg", "rotation": "0"}],
+    }
+    layout = {
+        "1": {
+            "lines": [
+                {"text": "document header", "bbox": [100, 40, 400, 80]},
+                {"text": "formula 1", "bbox": [100, 100, 400, 150]},
+                {"text": "formula 2", "bbox": [100, 700, 400, 750]},
+            ],
+            "records": [
+                {"bbox": [100, 40, 900, 80]},
+                {"bbox": [100, 100, 900, 650]},
+                {"bbox": [100, 700, 900, 950]},
+            ],
+        }
+    }
+
+    manifest = generate_formula_evidence(job_dir, job, final, [page], layout)
+    first_box = manifest["formulas"][first["formula_id"]]["normalized_bbox"]
+
+    assert first_box[3] < 0.50
+
+
+def test_date_shaped_layout_lines_define_boundaries_when_dates_are_missing(tmp_path):
+    job_dir = tmp_path / "job-date-shapes"
+    source = job_dir / "source" / "page.jpg"
+    source.parent.mkdir(parents=True)
+    Image.new("RGB", (1000, 1000), "white").save(source)
+    final = make_review_final("job-date-shapes")
+    final["recognition_run_id"] = "run-date-shapes"
+    first = final["pages"][0]["product_sections"][0]["formulas"][0]
+    first["formula_no"] = ""
+    first["record_bbox"] = None
+    second = dict(first)
+    second["formula_id"] = "job-date-shapes__page_001__formula_002"
+    second["formula_sequence"] = 2
+    final["pages"][0]["product_sections"][0]["formulas"].append(second)
+    page = OCRPage(
+        image_index=1,
+        width=1000,
+        height=1000,
+        tokens=[_token("content", "content", [100, 50, 900, 950])],
+        average_confidence=0.9,
+        provider="test",
+        model="test",
+        elapsed_ms=1,
+    )
+    job = {
+        "id": "job-date-shapes",
+        "recognition_run_id": "run-date-shapes",
+        "images": [{"source": "source/page.jpg", "rotation": "0"}],
+    }
+    layout = {
+        "1": {
+            "lines": [
+                {"text": "24.7.19 kg", "bbox": [100, 150, 400, 190]},
+                {"text": "22/9/27 kg", "bbox": [100, 750, 400, 790]},
+            ],
+            "records": [],
+        }
+    }
+
+    manifest = generate_formula_evidence(job_dir, job, final, [page], layout)
+    first_box = manifest["formulas"][first["formula_id"]]["normalized_bbox"]
+
+    assert first_box[3] < 0.52
+
+
 def test_new_recognition_run_invalidates_previous_evidence(tmp_path):
     from lite_app.evidence_regions import invalidate_formula_evidence
 

@@ -26,6 +26,7 @@ from .upload_options import rotation_for_image
 
 MIN_AREA = 0.005
 MAX_AREA = 0.95
+DATE_SHAPE_RE = re.compile(r"(?<!\d)\d{2,4}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{1,2}(?!\d)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +119,12 @@ def generate_formula_evidence(
         content_bbox = _content_bbox(page)
         model_bboxes = validate_page_model_bboxes(formulas)
         page_layout = layout_by_page.get(str(image_index), {})
+        local_bboxes = _resolve_page_local_bboxes(
+            formulas,
+            page,
+            content_bbox=content_bbox,
+            layout=page_layout,
+        )
         with Image.open(source_path) as opened:
             source_image = ImageOps.exif_transpose(opened).convert("RGB")
             source_image = orient_image(
@@ -137,18 +144,11 @@ def generate_formula_evidence(
             )
             write_bytes_atomic(oriented_path, oriented_buffer.getvalue())
             oriented_hash = _sha256(oriented_path)
-            for position, formula in enumerate(formulas, 1):
+            for formula in formulas:
                 formula_id = str(formula.get("formula_id", ""))
                 if not formula_id:
                     continue
-                local_bbox = _local_formula_bbox(
-                    formula,
-                    page,
-                    position=position,
-                    total=len(formulas),
-                    content_bbox=content_bbox,
-                    layout=page_layout,
-                )
+                local_bbox = local_bboxes.get(formula_id)
                 resolved = resolve_formula_region(
                     model_bboxes.get(formula_id),
                     local_bbox,
@@ -204,13 +204,13 @@ def verified_evidence_path(
     final: dict[str, Any],
     kind: str = "crop",
     hash_cache: dict[Path, str] | None = None,
+    manifest: dict[str, Any] | None = None,
+    formula_contexts: dict[str, tuple[int, dict[str, Any]]] | None = None,
 ) -> Path | None:
     """Resolve one manifest-bound crop after source and crop integrity checks."""
     root = job_dir.resolve()
-    try:
-        manifest = read_json_optional(root / "review" / "evidence_regions.json")
-    except RequiredDataError:
-        return None
+    if manifest is None:
+        manifest = load_formula_evidence_manifest(root)
     if not isinstance(manifest, dict):
         return None
     if manifest.get("schema_version") != 2:
@@ -222,7 +222,12 @@ def verified_evidence_path(
         or recognition_run_id != str(manifest.get("recognition_run_id", ""))
     ):
         return None
-    context = _formula_context(final, formula_id)
+    contexts = (
+        formula_contexts
+        if formula_contexts is not None
+        else formula_evidence_contexts(final)
+    )
+    context = contexts.get(str(formula_id))
     if context is None:
         return None
     source_image_index, formula = context
@@ -273,6 +278,32 @@ def verified_evidence_path(
     ):
         return None
     return oriented if kind == "full" else crop
+
+
+def load_formula_evidence_manifest(job_dir: Path) -> dict[str, Any] | None:
+    """Load a review manifest once for callers resolving multiple formula URLs."""
+    try:
+        manifest = read_json_optional(
+            job_dir.resolve() / "review" / "evidence_regions.json"
+        )
+    except RequiredDataError:
+        return None
+    return manifest if isinstance(manifest, dict) else None
+
+
+def formula_evidence_contexts(
+    final: dict[str, Any],
+) -> dict[str, tuple[int, dict[str, Any]]]:
+    """Index formula ownership once instead of traversing FinalResult per URL."""
+    contexts: dict[str, tuple[int, dict[str, Any]]] = {}
+    for page in final.get("pages", []):
+        image_index = int(page.get("source_image_index", 1))
+        for section in page.get("product_sections", []):
+            for formula in section.get("formulas", []):
+                formula_id = str(formula.get("formula_id", ""))
+                if formula_id:
+                    contexts[formula_id] = (image_index, formula)
+    return contexts
 
 
 def validate_page_model_bboxes(
@@ -366,6 +397,144 @@ def _content_bbox(page: OCRPage) -> list[float] | None:
         return None
     bbox = _tokens_bbox(page.tokens, page)
     return _pad_and_clamp(bbox, 0.04)
+
+
+def _resolve_page_local_bboxes(
+    formulas: list[dict[str, Any]],
+    page: OCRPage,
+    *,
+    content_bbox: list[float] | None,
+    layout: dict[str, Any],
+) -> dict[str, list[float] | None]:
+    """Resolve ordered formula regions from structural anchors and midpoints."""
+    ordered = sorted(formulas, key=_source_order)
+    total = len(ordered)
+    if not ordered:
+        return {}
+    if total == 1:
+        return {
+            str(ordered[0].get("formula_id", "")): _local_formula_bbox(
+                ordered[0],
+                page,
+                position=1,
+                total=1,
+                content_bbox=content_bbox,
+                layout=layout,
+            )
+        }
+
+    anchors = _formula_primary_anchors(ordered, page, layout)
+    if anchors is None:
+        anchors = _structural_layout_anchors(layout, page, total)
+    if anchors is None:
+        return {
+            str(formula.get("formula_id", "")): _local_formula_bbox(
+                formula,
+                page,
+                position=position,
+                total=total,
+                content_bbox=content_bbox,
+                layout=layout,
+            )
+            for position, formula in enumerate(ordered, 1)
+        }
+
+    frame = content_bbox or [0.0, 0.0, 1.0, 1.0]
+    centers = [_center_y(anchor) for anchor in anchors]
+    boundaries = [frame[1]]
+    boundaries.extend(
+        (left + right) / 2 for left, right in zip(centers, centers[1:])
+    )
+    boundaries.append(frame[3])
+    records = _usable_layout_records(layout, page)
+    result: dict[str, list[float] | None] = {}
+    for index, formula in enumerate(ordered):
+        top = max(frame[1], min(boundaries[index], frame[3]))
+        bottom = max(top, min(boundaries[index + 1], frame[3]))
+        region = [frame[0], top, frame[2], bottom]
+        # Records refine horizontal coverage only after an anchor has assigned them
+        # to a formula interval. They can never move a midpoint boundary.
+        assigned = [record for record in records if top <= _center_y(record) < bottom]
+        if assigned:
+            region[0] = min(region[0], *(record[0] for record in assigned))
+            region[2] = max(region[2], *(record[2] for record in assigned))
+        formula_id = str(formula.get("formula_id", ""))
+        result[formula_id] = validate_normalized_bbox(region) or frame
+    return result
+
+
+def _formula_primary_anchors(
+    formulas: list[dict[str, Any]], page: OCRPage, layout: dict[str, Any]
+) -> list[list[float]] | None:
+    anchors: list[list[float]] = []
+    for formula in formulas:
+        values = [
+            str(formula.get("formula_no", "")),
+            str(formula.get("record_date", {}).get("value", "")),
+        ]
+        token_matches = _matching_primary_tokens(page.tokens, values)
+        token_bbox = _tokens_bbox(token_matches, page) if token_matches else None
+        line_bbox = _matching_layout_lines(layout, values, page)
+        anchor = (
+            _union(token_bbox, line_bbox)
+            if token_bbox is not None and line_bbox is not None
+            else token_bbox or line_bbox
+        )
+        if anchor is None:
+            return None
+        anchors.append(anchor)
+    centers = [_center_y(anchor) for anchor in anchors]
+    if any(left >= right for left, right in zip(centers, centers[1:])):
+        return None
+    return anchors
+
+
+def _structural_layout_anchors(
+    layout: dict[str, Any], page: OCRPage, total: int
+) -> list[list[float]] | None:
+    if not isinstance(layout, dict):
+        return None
+    headings: list[list[float]] = []
+    dates: list[list[float]] = []
+    for line in layout.get("lines", []):
+        if not isinstance(line, dict):
+            continue
+        bbox = _pixel_layout_bbox(line.get("bbox"), page)
+        if bbox is None:
+            continue
+        text = str(line.get("text", ""))
+        normalized = _normalize(text)
+        if re.search(r"(?:配方|formula)(?:no)?[0-9一二三四五六七八九十]+", normalized):
+            headings.append(bbox)
+        elif re.search(r"^[0-9]+(?:配方|formula)", normalized):
+            headings.append(bbox)
+        if DATE_SHAPE_RE.search(unicodedata.normalize("NFKC", text)):
+            dates.append(bbox)
+    for candidates in (headings, dates):
+        candidates.sort(key=_center_y)
+        if len(candidates) >= total:
+            return candidates[:total]
+    return None
+
+
+def _usable_layout_records(
+    layout: dict[str, Any], page: OCRPage
+) -> list[list[float]]:
+    if not isinstance(layout, dict):
+        return []
+    records: list[list[float]] = []
+    for value in layout.get("records", []):
+        if not isinstance(value, dict):
+            continue
+        bbox = _pixel_layout_bbox(value.get("bbox"), page)
+        if bbox is None:
+            continue
+        height = bbox[3] - bbox[1]
+        area = (bbox[2] - bbox[0]) * height
+        if height >= 0.75 or area >= 0.70:
+            continue
+        records.append(bbox)
+    return records
 
 
 def _local_formula_bbox(
@@ -518,18 +687,6 @@ def _pixel_layout_bbox(value: Any, page: OCRPage) -> list[float] | None:
     except (TypeError, ValueError):
         return None
     return validate_normalized_bbox(normalized)
-
-
-def _formula_context(
-    final: dict[str, Any], formula_id: str
-) -> tuple[int, dict[str, Any]] | None:
-    for page in final.get("pages", []):
-        image_index = int(page.get("source_image_index", 1))
-        for section in page.get("product_sections", []):
-            for formula in section.get("formulas", []):
-                if str(formula.get("formula_id", "")) == str(formula_id):
-                    return image_index, formula
-    return None
 
 
 def _source_order(formula: dict[str, Any]) -> int:
