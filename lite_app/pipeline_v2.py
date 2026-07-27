@@ -45,6 +45,7 @@ from .knowledge.correction import (
     decide_correction,
 )
 from .knowledge.matcher import normalize_text
+from .knowledge.path import resolve_knowledge_db_path
 from .knowledge.retrieval import (
     KnowledgeRetrieval,
     RetrievalRequest,
@@ -766,12 +767,7 @@ def _fuse_one(
 
 
 def _knowledge_db_path() -> Path:
-    return Path(
-        os.environ.get(
-            "KNOWLEDGE_DB_PATH",
-            str(DATA_ROOT / "knowledge.sqlite3"),
-        )
-    )
+    return resolve_knowledge_db_path()
 
 
 def _knowledge_assist_enabled() -> bool:

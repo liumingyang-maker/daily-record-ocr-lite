@@ -11,9 +11,9 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import column_index_from_string
 
-from .config import DATA_ROOT
 from .excel_safety import safe_excel_value
 from .final_result import FinalResultError, FinalResultService
+from .knowledge.path import resolve_knowledge_db_path
 from .readiness import collect_unresolved_fields, evaluate_ready_gate
 from .status import JobStatus
 from .storage import JobStorage
@@ -333,7 +333,7 @@ def _write_correction_sheet(wb: Workbook, job_id: str, is_template: bool) -> Non
     # 读取修正日志
     try:
         from .knowledge.database import KnowledgeDB
-        db = KnowledgeDB(DATA_ROOT / "knowledge.sqlite3")
+        db = KnowledgeDB(resolve_knowledge_db_path())
         db.initialize()
         corrections = db.get_corrections_for_job(job_id)
         row = 2

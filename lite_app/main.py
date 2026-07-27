@@ -34,6 +34,7 @@ from .final_result import (
     FinalResultService,
     project_final_result,
 )
+from .knowledge.path import resolve_knowledge_db_path
 from .presentation import present_stored_job
 from .readiness import (
     collect_unresolved_fields,
@@ -1415,7 +1416,7 @@ async def update_field(job_id: str, field_id: str, request: Request):
     # 记录修正日志
     try:
         from .knowledge.database import KnowledgeDB
-        db = KnowledgeDB(DATA_ROOT / "knowledge.sqlite3")
+        db = KnowledgeDB(resolve_knowledge_db_path())
         db.initialize()
         from .review.corrections import CorrectionService
         svc = CorrectionService(db)
@@ -1477,9 +1478,7 @@ def _finalize_job(job_id: str) -> dict:
     from .knowledge.history import KnowledgeHistory
 
     state = ReviewStateStore(job_dir)
-    history = KnowledgeHistory(
-        Path(os.environ.get("KNOWLEDGE_DB_PATH", DATA_ROOT / "knowledge.sqlite3"))
-    )
+    history = KnowledgeHistory(resolve_knowledge_db_path())
     try:
         receipt = history.append_confirmed_job(
             job,
@@ -1753,7 +1752,7 @@ async def save_company_alias(job_id: str, company_id: str, request: Request):
         raise HTTPException(status_code=400, detail="别名不能为空。")
 
     standard_name = body.get("standard_name", alias).strip()
-    db = KnowledgeDB(DATA_ROOT / "knowledge.sqlite3")
+    db = KnowledgeDB(resolve_knowledge_db_path())
     db.initialize()
 
     # 查找或创建公司（使用 customers 表）
@@ -1819,7 +1818,7 @@ async def save_product_alias(job_id: str, product_id: str, request: Request):
         raise HTTPException(status_code=400, detail="别名不能为空。")
 
     standard_name = body.get("standard_name", alias).strip()
-    db = KnowledgeDB(DATA_ROOT / "knowledge.sqlite3")
+    db = KnowledgeDB(resolve_knowledge_db_path())
     db.initialize()
 
     # 查找或创建产品（使用 products 表）
@@ -1842,12 +1841,7 @@ async def save_product_alias(job_id: str, product_id: str, request: Request):
 
 
 def _knowledge_db_path() -> Path:
-    return Path(
-        os.environ.get(
-            "KNOWLEDGE_DB_PATH",
-            DATA_ROOT / "knowledge.sqlite3",
-        )
-    )
+    return resolve_knowledge_db_path()
 
 
 @app.get("/api/knowledge/tree")
