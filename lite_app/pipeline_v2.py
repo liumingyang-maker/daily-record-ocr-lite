@@ -732,6 +732,7 @@ def _ocr_page_to_dict(page: OCRPage) -> dict[str, Any]:
                 "polygon": token.polygon,
                 "center": [token.center_x, token.center_y],
                 "line_index": token.line_index,
+                "candidate_only": token.candidate_only,
             }
             for token in page.tokens
         ],
@@ -757,6 +758,7 @@ def _reconstruct_ocr_page(data: dict[str, Any]) -> OCRPage:
                 center_x=center[0],
                 center_y=center[1],
                 line_index=item.get("line_index"),
+                candidate_only=bool(item.get("candidate_only", False)),
             )
         )
     return OCRPage(

@@ -88,6 +88,15 @@ class OCRModelManager:
                         device=self._config.get("device", "cpu"),
                         tier=self._config.get("tier", "medium"),
                         minimum_score=float(self._config.get("minimum_score", 0.45)),
+                        retention_score=float(
+                            self._config.get("retention_score", 0.25)
+                        ),
+                        acceptance_score=float(
+                            self._config.get(
+                                "acceptance_score",
+                                self._config.get("minimum_score", 0.45),
+                            )
+                        ),
                         use_textline_orientation=self._config.get("use_textline_orientation", True),
                     )
                 except Exception as e:

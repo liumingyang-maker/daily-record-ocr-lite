@@ -33,13 +33,24 @@ class PaddleOCRv6Provider(OCRProvider):
         device: str = "cpu",
         tier: str = "medium",
         minimum_score: float = 0.45,
+        retention_score: float = 0.25,
+        acceptance_score: float | None = None,
         use_textline_orientation: bool = True,
     ) -> None:
         if tier not in TIER_MODELS:
             raise ValueError(f"不支持的 PP-OCRv6 tier: {tier}")
         self._device = device
         self._tier = tier
-        self._minimum_score = minimum_score
+        self._retention_score = retention_score
+        self._acceptance_score = (
+            minimum_score
+            if acceptance_score is None
+            else acceptance_score
+        )
+        if not 0 <= self._retention_score <= self._acceptance_score <= 1:
+            raise ValueError(
+                "OCR thresholds must satisfy 0 <= retention <= acceptance <= 1"
+            )
         self._use_textline_orientation = use_textline_orientation
         self._model: Any = None
         self._lock = threading.Lock()
@@ -106,7 +117,7 @@ class PaddleOCRv6Provider(OCRProvider):
         tokens = self._parse_result(result, width, height)
 
         # 过滤低置信度
-        tokens = [t for t in tokens if t.confidence >= self._minimum_score]
+        tokens = self.retain_tokens(tokens)
         avg_conf = sum(t.confidence for t in tokens) / len(tokens) if tokens else 0.0
 
         warnings: list[str] = []
@@ -124,6 +135,18 @@ class PaddleOCRv6Provider(OCRProvider):
             elapsed_ms=elapsed,
             warnings=warnings,
         )
+
+    def retain_tokens(self, tokens: list[OCRToken]) -> list[OCRToken]:
+        retained = [
+            token
+            for token in tokens
+            if token.confidence >= self._retention_score
+        ]
+        for token in retained:
+            token.candidate_only = (
+                token.confidence < self._acceptance_score
+            )
+        return retained
 
     def _parse_result(self, result: Any, img_width: int, img_height: int) -> list[OCRToken]:
         """解析 PaddleOCR 3.x predict() 返回结构。"""

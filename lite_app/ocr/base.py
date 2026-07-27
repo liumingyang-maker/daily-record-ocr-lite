@@ -19,6 +19,7 @@ class OCRToken:
     center_y: float
     line_index: int | None = None
     source_variant: str = "base"
+    candidate_only: bool = False
     raw: dict = field(default_factory=dict)
 
 
@@ -44,6 +45,7 @@ class OCRPage:
                 "id": t.id,
                 "text": t.text,
                 "confidence": round(t.confidence, 3),
+                "candidate_only": t.candidate_only,
                 "center": [
                     round(t.center_x / w, 4) if w else 0,
                     round(t.center_y / h, 4) if h else 0,

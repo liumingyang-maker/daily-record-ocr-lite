@@ -25,6 +25,8 @@ ocr:
   device: "${OCR_DEVICE:-cpu}"
   tier: "${OCR_TIER:-medium}"
   minimum_score: "${OCR_MIN_SCORE:-0.45}"
+  retention_score: 0.25
+  acceptance_score: 0.45
   use_doc_orientation_classify: false
   use_doc_unwarping: false
   use_textline_orientation: true
