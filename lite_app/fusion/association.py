@@ -187,17 +187,26 @@ def _from_layout(
         if not tokens:
             continue
         pair_center = _center(_normalize_bbox(tokens[0].bbox, page))
-        active_record = local_record or field.record_bbox
+        active_record = field.record_bbox or local_record
         if active_record and not _contains(active_record, pair_center):
             continue
 
         score = float(pair.get("score", 0.65))
         name_ids = set(pair.get("name_token_ids", []))
-        if field.anchor_token_ids and name_ids.intersection(field.anchor_token_ids):
+        token_anchor = bool(
+            field.anchor_token_ids and name_ids.intersection(field.anchor_token_ids)
+        )
+        if token_anchor:
             score += 1.0
         pair_name = _normalize_text(str(pair.get("name", "")))
-        if field.anchor_value and pair_name == _normalize_text(field.anchor_value):
+        text_anchor = bool(
+            field.anchor_value
+            and pair_name
+            and pair_name == _normalize_text(field.anchor_value)
+        )
+        if text_anchor:
             score += 0.8
+        name_bbox: list[float] | None = None
         if field.anchor_bbox and name_ids:
             name_tokens = [
                 tokens_by_id[token_id]
@@ -210,6 +219,13 @@ def _from_layout(
                 ).bbox
                 if name_bbox:
                     score += _iou(field.anchor_bbox, name_bbox)
+        bbox_anchor = bool(
+            field.anchor_bbox
+            and name_bbox
+            and _iou(field.anchor_bbox, name_bbox) >= 0.05
+        )
+        if not (token_anchor or text_anchor or bbox_anchor):
+            continue
         candidates.append((score, pair, tokens))
 
     if not candidates:

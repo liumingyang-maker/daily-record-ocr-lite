@@ -119,11 +119,10 @@ def generate_formula_evidence(
         content_bbox = _content_bbox(page)
         model_bboxes = validate_page_model_bboxes(formulas)
         page_layout = layout_by_page.get(str(image_index), {})
-        local_bboxes = _resolve_page_local_bboxes(
+        local_bboxes = resolve_page_formula_regions(
             formulas,
             page,
-            content_bbox=content_bbox,
-            layout=page_layout,
+            page_layout,
         )
         with Image.open(source_path) as opened:
             source_image = ImageOps.exif_transpose(opened).convert("RGB")
@@ -397,6 +396,20 @@ def _content_bbox(page: OCRPage) -> list[float] | None:
         return None
     bbox = _tokens_bbox(page.tokens, page)
     return _pad_and_clamp(bbox, 0.04)
+
+
+def resolve_page_formula_regions(
+    formulas: list[dict[str, Any]],
+    page: OCRPage,
+    layout: dict[str, Any],
+) -> dict[str, list[float] | None]:
+    """Resolve formula-local regions shared by Fusion and review evidence."""
+    return _resolve_page_local_bboxes(
+        formulas,
+        page,
+        content_bbox=_content_bbox(page),
+        layout=layout,
+    )
 
 
 def _resolve_page_local_bboxes(

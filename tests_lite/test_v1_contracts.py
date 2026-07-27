@@ -624,6 +624,54 @@ def test_layout_fallback_selects_material_pair_within_matching_record():
     assert candidates[0].token_ids == ["p1_t004"]
 
 
+def test_layout_fallback_rejects_unanchored_coarse_amount_pair():
+    from lite_app.fusion.association import FieldEvidence, associate_field
+
+    page = OCRPage(
+        image_index=1,
+        width=1000,
+        height=1000,
+        tokens=[
+            _token("p1_t001", "Material A Material B", [100, 100, 420, 140]),
+            _token("p1_t002", "123456", [100, 170, 260, 210]),
+        ],
+        average_confidence=0.95,
+        provider="paddleocr_v6",
+        model="PP-OCRv6_medium",
+        elapsed_ms=1,
+    )
+    layout = {
+        "pairs": {
+            "1": [
+                {
+                    "name_token_ids": ["p1_t001"],
+                    "amount_token_ids": ["p1_t002"],
+                    "name": "Material A Material B",
+                    "score": 0.99,
+                }
+            ]
+        },
+        "records": {"1": [{"bbox": [0, 0, 1000, 1000]}]},
+    }
+
+    candidates = associate_field(
+        FieldEvidence(
+            field_id="formula_001__material_001__amount",
+            field_type="amount",
+            source_image_index=1,
+            field_bbox=None,
+            record_bbox=None,
+            evidence_token_ids=[],
+            vlm_value="12",
+            anchor_value="Material A",
+        ),
+        [page],
+        layout,
+    )
+
+    assert candidates == []
+
+
 def test_record_boundary_mismatch_is_explicit_review_signal():
     from lite_app.fusion.association import record_boundary_mismatch
 

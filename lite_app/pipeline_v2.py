@@ -26,7 +26,11 @@ from .contracts import (
     validate_page_coverage,
     validate_record_result,
 )
-from .evidence_regions import generate_formula_evidence, invalidate_formula_evidence
+from .evidence_regions import (
+    generate_formula_evidence,
+    invalidate_formula_evidence,
+    resolve_page_formula_regions,
+)
 from .final_result import FinalResultService, project_final_result
 from .fusion.association import (
     FieldEvidence,
@@ -407,6 +411,11 @@ async def analyze_job_v2(
                 page_index: evidence["records"]
                 for page_index, evidence in layout_by_page.items()
             },
+            "formula_regions": _formula_regions_by_page(
+                structured,
+                ocr_pages,
+                layout_by_page,
+            ),
         }
         fusion = _build_fusion_result(
             structured,
@@ -488,7 +497,12 @@ def _build_fusion_result(
             record.get("formula_id") or record.get("record_id") or "formula"
         )
         image_index = int((record.get("source_image_indexes") or [1])[0])
-        record_bbox = record.get("record_bbox")
+        record_bbox = record.get("record_bbox") or (
+            (layout or {})
+            .get("formula_regions", {})
+            .get(str(image_index), {})
+            .get(formula_id)
+        )
         for material_index, material in enumerate(record.get("materials", []), 1):
             legacy_base = material.get("field_id")
             material_id = material.get(
@@ -568,6 +582,31 @@ def _build_fusion_result(
         "fields": fields,
         "summary": summary,
     }
+
+
+def _formula_regions_by_page(
+    vlm_result: dict[str, Any],
+    ocr_results: list[OCRPage],
+    layout_by_page: dict[str, Any],
+) -> dict[str, dict[str, list[float] | None]]:
+    pages_by_index = {page.image_index: page for page in ocr_results}
+    result: dict[str, dict[str, list[float] | None]] = {}
+    for structured_page in vlm_result.get("pages", []):
+        image_index = int(structured_page.get("source_image_index", 1))
+        page = pages_by_index.get(image_index)
+        if page is None:
+            continue
+        formulas = [
+            formula
+            for section in structured_page.get("product_sections", [])
+            for formula in section.get("formulas", [])
+        ]
+        result[str(image_index)] = resolve_page_formula_regions(
+            formulas,
+            page,
+            layout_by_page.get(str(image_index), {}),
+        )
+    return result
 
 
 def _fuse_one(

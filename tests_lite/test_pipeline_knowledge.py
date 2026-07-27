@@ -12,6 +12,7 @@ from lite_app.pipeline_v2 import (
     _build_compact_qwen_prompt,
     _build_fusion_result,
     _build_knowledge_prompt,
+    _formula_regions_by_page,
     _history_candidates,
     _knowledge_assist_enabled,
     _uses_compact_qwen_contract,
@@ -656,6 +657,202 @@ def test_pipeline_amount_field_type_is_forbidden() -> None:
 
     assert amount["final_value"] == "45"
     assert amount["knowledge_trace"]["decision"] == "FORBIDDEN"
+
+
+def test_pipeline_rejects_shared_unanchored_amount_candidate() -> None:
+    structured = _structured("Material A")
+    formula = structured["pages"][0]["product_sections"][0]["formulas"][0]
+    first = formula["materials"][0]
+    first["name"] = {"value": "Material A", "confidence": 0.9}
+    first["amount"] = {"value": "12", "confidence": 0.9}
+    second = copy.deepcopy(first)
+    second["material_id"] = "material_002"
+    second["name"]["value"] = "Material B"
+    second["amount"]["value"] = "7.5"
+    formula["materials"] = [first, second]
+    page = OCRPage(
+        image_index=1,
+        width=1000,
+        height=1000,
+        tokens=[
+            OCRToken(
+                id="p1_t001",
+                text="Material A Material B",
+                confidence=0.99,
+                polygon=[[100, 100], [420, 100], [420, 140], [100, 140]],
+                bbox=[100, 100, 420, 140],
+                center_x=260,
+                center_y=120,
+            ),
+            OCRToken(
+                id="p1_t002",
+                text="123456",
+                confidence=0.99,
+                polygon=[[100, 170], [260, 170], [260, 210], [100, 210]],
+                bbox=[100, 170, 260, 210],
+                center_x=180,
+                center_y=190,
+            ),
+        ],
+        average_confidence=0.99,
+        provider="paddleocr_v6",
+        model="PP-OCRv6_medium",
+        elapsed_ms=1,
+    )
+    layout = {
+        "pairs": {
+            "1": [
+                {
+                    "name_token_ids": ["p1_t001"],
+                    "amount_token_ids": ["p1_t002"],
+                    "name": "Material A Material B",
+                    "score": 0.99,
+                }
+            ]
+        },
+        "records": {"1": [{"bbox": [0, 0, 1000, 1000]}]},
+    }
+
+    fusion = _build_fusion_result(structured, [page], {}, layout)
+    amounts = {
+        field["field_id"]: field
+        for field in fusion["fields"]
+        if field["field_id"].endswith("__amount")
+    }
+
+    assert amounts["formula_001__material_001__amount"]["final_value"] == "12"
+    assert amounts["formula_001__material_002__amount"]["final_value"] == "7.5"
+    assert all(
+        candidate["value"] != "123456"
+        for field in amounts.values()
+        for candidate in field["candidates"]
+    )
+
+
+def test_pipeline_rejects_same_parameter_from_another_formula_region() -> None:
+    structured = _structured("Material A")
+    section = structured["pages"][0]["product_sections"][0]
+    first_formula = section["formulas"][0]
+    first_formula["process_parameters"] = [
+        {
+            "parameter_id": "parameter_001",
+            "name": {"value": "Side Feed", "confidence": 0.9},
+            "value": {"value": "8", "confidence": 0.9},
+            "unit": {"value": "", "confidence": 0.0},
+        }
+    ]
+    second_formula = copy.deepcopy(first_formula)
+    second_formula["formula_id"] = "formula_002"
+    second_formula["process_parameters"][0]["value"]["value"] = "7.6"
+    section["formulas"] = [first_formula, second_formula]
+    page = OCRPage(
+        image_index=1,
+        width=1000,
+        height=1000,
+        tokens=[
+            OCRToken(
+                id="p1_t001",
+                text="Side Feed",
+                confidence=0.99,
+                polygon=[[100, 100], [220, 100], [220, 140], [100, 140]],
+                bbox=[100, 100, 220, 140],
+                center_x=160,
+                center_y=120,
+            ),
+            OCRToken(
+                id="p1_t002",
+                text="8",
+                confidence=0.99,
+                polygon=[[100, 170], [140, 170], [140, 210], [100, 210]],
+                bbox=[100, 170, 140, 210],
+                center_x=120,
+                center_y=190,
+            ),
+        ],
+        average_confidence=0.99,
+        provider="paddleocr_v6",
+        model="PP-OCRv6_medium",
+        elapsed_ms=1,
+    )
+    layout = {
+        "pairs": {
+            "1": [
+                {
+                    "name_token_ids": ["p1_t001"],
+                    "amount_token_ids": ["p1_t002"],
+                    "name": "Side Feed",
+                    "score": 0.99,
+                }
+            ]
+        },
+        "records": {"1": []},
+        "formula_regions": {
+            "1": {
+                "formula_001": [0.0, 0.0, 1.0, 0.5],
+                "formula_002": [0.0, 0.5, 1.0, 1.0],
+            }
+        },
+    }
+
+    fusion = _build_fusion_result(structured, [page], {}, layout)
+    field = next(
+        item
+        for item in fusion["fields"]
+        if item["field_id"] == "formula_002__parameter_001__value"
+    )
+
+    assert field["final_value"] == "7.6"
+    assert field["final_source"] == "vlm_only"
+    assert all(candidate["value"] != "8" for candidate in field["candidates"])
+
+
+def test_formula_regions_are_resolved_for_every_structured_formula() -> None:
+    structured = _structured("Material A")
+    section = structured["pages"][0]["product_sections"][0]
+    first = section["formulas"][0]
+    first["formula_no"] = "Formula 1"
+    second = copy.deepcopy(first)
+    second["formula_id"] = "formula_002"
+    second["formula_no"] = "Formula 2"
+    section["formulas"] = [first, second]
+    page = OCRPage(
+        image_index=1,
+        width=1000,
+        height=1000,
+        tokens=[
+            OCRToken(
+                id="p1_t001",
+                text="Formula 1",
+                confidence=0.99,
+                polygon=[[50, 100], [180, 100], [180, 140], [50, 140]],
+                bbox=[50, 100, 180, 140],
+                center_x=115,
+                center_y=120,
+            ),
+            OCRToken(
+                id="p1_t002",
+                text="Formula 2",
+                confidence=0.99,
+                polygon=[[50, 600], [180, 600], [180, 640], [50, 640]],
+                bbox=[50, 600, 180, 640],
+                center_x=115,
+                center_y=620,
+            ),
+        ],
+        average_confidence=0.99,
+        provider="paddleocr_v6",
+        model="PP-OCRv6_medium",
+        elapsed_ms=1,
+    )
+
+    regions = _formula_regions_by_page(
+        structured,
+        [page],
+        {"1": {"lines": [], "pairs": [], "records": []}},
+    )
+
+    assert set(regions["1"]) == {"formula_001", "formula_002"}
+    assert regions["1"]["formula_001"][3] <= regions["1"]["formula_002"][1]
 
 
 def test_pipeline_date_field_type_is_forbidden() -> None:
