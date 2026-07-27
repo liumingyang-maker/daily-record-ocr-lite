@@ -12,7 +12,7 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-import httpx
+import requests
 
 from .platform_paths import RESOURCE_ROOT
 
@@ -142,13 +142,21 @@ def _download_with_resume(
     progress: ProgressCallback,
 ) -> None:
     headers = {"Range": f"bytes={offset}-"} if offset else {}
-    with httpx.stream("GET", url, headers=headers, timeout=60, follow_redirects=False) as response:
+    with requests.get(
+        url,
+        headers=headers,
+        stream=True,
+        timeout=60,
+        allow_redirects=True,
+    ) as response:
         response.raise_for_status()
         append = offset > 0 and response.status_code == 206
         mode = "ab" if append else "wb"
         downloaded = offset if append else 0
         with destination.open(mode) as handle:
-            for chunk in response.iter_bytes(1024 * 1024):
+            for chunk in response.iter_content(1024 * 1024):
+                if not chunk:
+                    continue
                 handle.write(chunk)
                 downloaded += len(chunk)
                 progress({"state": "DOWNLOADING", "downloaded_bytes": downloaded})

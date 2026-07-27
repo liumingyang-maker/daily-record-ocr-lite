@@ -5,6 +5,7 @@ import tarfile
 from pathlib import Path
 
 import pytest
+import requests
 
 
 def _archive_bytes(*, unsafe: bool = False) -> bytes:
@@ -51,6 +52,54 @@ def test_install_resumes_partial_archive_and_verifies_extracted_files(tmp_path: 
     assert result["status"] == "READY"
     assert (tmp_path / "models" / "paddlex" / "official_models" / "TestModel" / "inference.bin").exists()
     assert model_package_status(tmp_path, manifest=_manifest(archive))["status"] == "READY"
+
+
+def test_default_downloader_matches_official_requests_client_and_resumes(
+    monkeypatch, tmp_path: Path
+):
+    from lite_app.model_packages import _download_with_resume
+
+    captured = {}
+
+    class Response:
+        status_code = 206
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            assert chunk_size == 1024 * 1024
+            yield b"new"
+
+    def fake_get(url, **kwargs):
+        captured.update(url=url, **kwargs)
+        return Response()
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    destination = tmp_path / "model.tar.part"
+    destination.write_bytes(b"old")
+
+    _download_with_resume(
+        "https://paddle-model-ecology.bj.bcebos.com/model.tar",
+        destination,
+        3,
+        lambda _event: None,
+    )
+
+    assert captured == {
+        "url": "https://paddle-model-ecology.bj.bcebos.com/model.tar",
+        "headers": {"Range": "bytes=3-"},
+        "stream": True,
+        "timeout": 60,
+        "allow_redirects": True,
+    }
+    assert destination.read_bytes() == b"oldnew"
 
 
 def test_corrupt_archive_never_replaces_final_model(tmp_path: Path):
