@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -27,14 +27,20 @@ from .final_result import (
     FinalResultService,
     project_final_result,
 )
+from .presentation import present_stored_job
 from .readiness import (
     collect_unresolved_fields,
+    evaluate_content_gate,
     evaluate_ready_gate,
     validate_final_result_contract,
 )
+from .review_editor import ReviewEditor, ReviewInputError, ReviewVersionConflict
+from .review_state import ReviewStateStore, confirm_formula
+from .review_view import build_review_view
 from .settings import SettingsService
 from .status import JobStatus, SetupState
-from .storage import JobStorage, read_json_optional
+from .storage import JobStorage, write_json_atomic
+from .upload_options import VALID_ROTATIONS, normalize_rotations
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +236,10 @@ async def index(request: Request):
     if _recognition_gate() == SetupState.SETUP_REQUIRED:
         return RedirectResponse(url="/setup", status_code=302)
     storage = _get_storage()
-    jobs = storage.list_jobs()[:20]
+    jobs = [
+        present_stored_job(job, storage.get_job_dir(job["id"]))
+        for job in storage.list_jobs()[:5]
+    ]
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -240,6 +249,17 @@ async def index(request: Request):
             "demo_mode": _demo_enabled(),
         },
     )
+
+
+@app.get("/jobs", response_class=HTMLResponse)
+async def job_records(request: Request):
+    """List recognition records using business language."""
+    storage = _get_storage()
+    jobs = [
+        present_stored_job(job, storage.get_job_dir(job["id"]))
+        for job in storage.list_jobs()
+    ]
+    return templates.TemplateResponse(request, "jobs.html", {"jobs": jobs})
 
 
 @app.get("/setup", response_class=HTMLResponse)
@@ -469,6 +489,7 @@ async def get_ocr_test_overlay():
 async def create_job(
     files: list[UploadFile] = File(...),
     rotation: str = Form("auto"),
+    rotation_manifest: str = Form(""),
 ):
     import io as _io
     import shutil
@@ -484,11 +505,10 @@ async def create_job(
         )
 
     # 校验旋转值
-    valid_rotations = {"auto", "0", "90cw", "90ccw", "180"}
-    if rotation not in valid_rotations:
+    if rotation not in VALID_ROTATIONS:
         raise HTTPException(
             status_code=400,
-            detail=f"无效的旋转设置: {rotation}。允许: {', '.join(sorted(valid_rotations))}",
+            detail=f"无效的旋转设置: {rotation}。允许: {', '.join(sorted(VALID_ROTATIONS))}",
         )
 
     # 校验文件
@@ -529,8 +549,17 @@ async def create_job(
             )
         validated_files.append((f.filename, content))
 
+    try:
+        rotations = normalize_rotations(
+            rotation_manifest,
+            count=len(validated_files),
+            fallback=rotation,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     # 创建任务
-    job = storage.create_job(rotation=rotation)
+    job = storage.create_job(rotation=rotation, rotations=rotations)
     job_id = job["id"]
     job["demo_mode"] = _demo_enabled()
 
@@ -553,7 +582,7 @@ async def create_job(
     queue = get_task_queue()
     await queue.submit(job_id)
 
-    return RedirectResponse(url=f"/jobs/{job_id}/result", status_code=303)
+    return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
 
 
 # ─── 任务详情 ───────────────────────────────────────────────
@@ -567,42 +596,32 @@ async def job_detail(job_id: str, request: Request):
     except (FileNotFoundError, ValueError):
         raise HTTPException(status_code=404, detail="任务不存在。")
 
-    result = storage.load_result(job_id)
-    result_json = ""
-    if result:
-        result_json = json.dumps(result, ensure_ascii=False, indent=2)
-    fusion = read_json_optional(
-        storage.get_job_dir(job_id) / "fusion" / "result.json"
-    )
-    fusion_summary = (
-        fusion.get("summary", {}) if isinstance(fusion, dict) else {}
-    )
-
+    presented = present_stored_job(job, storage.get_job_dir(job_id))
+    job = {
+        **job,
+        "title": f"{presented['customer']} · {presented['product']}",
+        "user_status": presented["status"]["label"],
+        "progress_step": presented["progress_step"],
+        "progress_label": presented["progress_label"],
+    }
     return templates.TemplateResponse(
         request,
         "job.html",
         {
             "job": job,
-            "result_json": result_json,
-            "fusion_summary": fusion_summary,
         },
     )
 
 
-@app.get("/jobs/{job_id}/result", response_class=HTMLResponse)
-async def job_result_page(job_id: str, request: Request):
-    """识别结果页面（按公司树/按图片/仅待确认三视图）。"""
+@app.get("/jobs/{job_id}/result")
+async def job_result_page(job_id: str):
+    """Keep old bookmarks working while using one review workspace."""
     storage = _get_storage()
     try:
-        job = storage.get_job(job_id)
+        storage.get_job(job_id)
     except (FileNotFoundError, ValueError):
         raise HTTPException(status_code=404, detail="任务不存在。")
-
-    return templates.TemplateResponse(
-        request,
-        "result.html",
-        {"job": job},
-    )
+    return RedirectResponse(url=f"/jobs/{job_id}#review", status_code=303)
 
 
 # ─── 重新识别 ───────────────────────────────────────────────
@@ -823,7 +842,250 @@ async def download_file(job_id: str, filename: str):
         return FileResponse(file_path, filename=Path(filename).name)
 
 
-# ─── 字段级 API ─────────────────────────────────────────────
+# ─── 业务配方审查 API ────────────────────────────────────────
+
+
+def _review_resources(job_id: str) -> tuple[JobStorage, dict, ReviewEditor, ReviewStateStore]:
+    storage = _get_storage()
+    try:
+        job = storage.get_job(job_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在。")
+    job_dir = storage.get_job_dir(job_id)
+    return storage, job, ReviewEditor(job_dir), ReviewStateStore(job_dir)
+
+
+def _review_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, ReviewVersionConflict):
+        return HTTPException(status_code=409, detail=str(exc))
+    status_code = 404 if "不存在" in str(exc) else 422
+    return HTTPException(status_code=status_code, detail=str(exc))
+
+
+def _version_from(body: dict) -> str:
+    version = str(body.get("version", ""))
+    if not version:
+        raise HTTPException(status_code=422, detail="缺少页面版本，请刷新后重试。")
+    return version
+
+
+def _saved(editor: ReviewEditor, message: str, **extra) -> dict:
+    return {
+        "version": str(editor.load()["updated_at"]),
+        "saved": True,
+        "message": message,
+        **extra,
+    }
+
+
+@app.get("/api/jobs/{job_id}/review")
+async def get_review(job_id: str):
+    _storage, job, editor, state = _review_resources(job_id)
+    try:
+        final = editor.load()
+    except FinalResultError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    view = build_review_view(job, final, state.confirmation_map(final))
+    view["version"] = str(final["updated_at"])
+    return view
+
+
+@app.patch("/api/jobs/{job_id}/review/groups/{group_id}")
+async def update_review_identity(job_id: str, group_id: str, request: Request):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    try:
+        editor.update_identity(
+            group_id,
+            customer=str(body.get("customer", "")),
+            product=str(body.get("product", "")),
+            expected_version=_version_from(body),
+        )
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "客户和产品已保存")
+
+
+@app.post("/api/jobs/{job_id}/review/groups/{group_id}/formulas")
+async def add_review_formula(job_id: str, group_id: str, request: Request):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    try:
+        formula_id = editor.add_formula(group_id, expected_version=_version_from(body))
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "已增加配方", formula_id=formula_id)
+
+
+@app.patch("/api/jobs/{job_id}/review/formulas/{formula_id}")
+async def update_review_formula(job_id: str, formula_id: str, request: Request):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    changes = {key: value for key, value in body.items() if key != "version"}
+    try:
+        editor.update_formula(
+            formula_id,
+            changes,
+            expected_version=_version_from(body),
+        )
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "配方信息已保存")
+
+
+@app.delete("/api/jobs/{job_id}/review/formulas/{formula_id}")
+async def delete_review_formula(job_id: str, formula_id: str, request: Request):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    if body.get("confirmed") is not True:
+        raise HTTPException(status_code=422, detail="请先确认删除整条配方。")
+    try:
+        editor.delete_formula(formula_id, expected_version=_version_from(body))
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "配方已删除，可立即撤销", undo_available=True)
+
+
+@app.post("/api/jobs/{job_id}/review/formulas/{formula_id}/materials")
+async def add_review_material(job_id: str, formula_id: str, request: Request):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    values = {key: body.get(key, "") for key in ("name", "amount", "unit")}
+    try:
+        material_id = editor.add_material(
+            formula_id, values, expected_version=_version_from(body)
+        )
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "材料已增加", material_id=material_id)
+
+
+@app.patch("/api/jobs/{job_id}/review/formulas/{formula_id}/materials/{material_id}")
+async def update_review_material(
+    job_id: str, formula_id: str, material_id: str, request: Request
+):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    changes = {key: value for key, value in body.items() if key != "version"}
+    try:
+        editor.update_material(
+            formula_id,
+            material_id,
+            changes,
+            expected_version=_version_from(body),
+        )
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "材料已保存")
+
+
+@app.post("/api/jobs/{job_id}/review/formulas/{formula_id}/materials/reorder")
+async def reorder_review_materials(job_id: str, formula_id: str, request: Request):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    material_ids = body.get("material_ids", [])
+    if not isinstance(material_ids, list):
+        raise HTTPException(status_code=422, detail="材料顺序必须是数组。")
+    try:
+        editor.reorder_materials(
+            formula_id,
+            [str(item) for item in material_ids],
+            expected_version=_version_from(body),
+        )
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "材料顺序已保存")
+
+
+@app.delete("/api/jobs/{job_id}/review/formulas/{formula_id}/materials/{material_id}")
+async def delete_review_material(
+    job_id: str, formula_id: str, material_id: str, request: Request
+):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    try:
+        editor.delete_material(
+            formula_id, material_id, expected_version=_version_from(body)
+        )
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "材料已删除，可立即撤销", undo_available=True)
+
+
+@app.post("/api/jobs/{job_id}/review/formulas/{formula_id}/process")
+async def add_review_process(job_id: str, formula_id: str, request: Request):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    values = {key: body.get(key, "") for key in ("name", "value", "unit")}
+    try:
+        parameter_id = editor.add_process_parameter(
+            formula_id, values, expected_version=_version_from(body)
+        )
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "工艺已增加", parameter_id=parameter_id)
+
+
+@app.patch("/api/jobs/{job_id}/review/formulas/{formula_id}/process/{parameter_id}")
+async def update_review_process(
+    job_id: str, formula_id: str, parameter_id: str, request: Request
+):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    changes = {key: value for key, value in body.items() if key != "version"}
+    try:
+        editor.update_process_parameter(
+            formula_id,
+            parameter_id,
+            changes,
+            expected_version=_version_from(body),
+        )
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "工艺已保存")
+
+
+@app.delete("/api/jobs/{job_id}/review/formulas/{formula_id}/process/{parameter_id}")
+async def delete_review_process(
+    job_id: str, formula_id: str, parameter_id: str, request: Request
+):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    try:
+        editor.delete_process_parameter(
+            formula_id, parameter_id, expected_version=_version_from(body)
+        )
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "工艺已删除，可立即撤销", undo_available=True)
+
+
+@app.post("/api/jobs/{job_id}/review/undo")
+async def undo_review_delete(job_id: str, request: Request):
+    _storage, _job, editor, _state = _review_resources(job_id)
+    body = await request.json()
+    try:
+        editor.undo_last_delete(expected_version=_version_from(body))
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return _saved(editor, "已恢复刚才删除的内容")
+
+
+@app.post("/api/jobs/{job_id}/review/formulas/{formula_id}/confirm")
+async def confirm_review_formula(job_id: str, formula_id: str, request: Request):
+    _storage, _job, editor, state = _review_resources(job_id)
+    body = await request.json()
+    try:
+        result = confirm_formula(editor, state, formula_id, _version_from(body))
+    except (ReviewInputError, ReviewVersionConflict) as exc:
+        raise _review_error(exc) from exc
+    return {
+        **_saved(editor, "这条配方已确认"),
+        "confirmed": result["confirmed"],
+    }
+
+
+# ─── 字段级兼容 API ─────────────────────────────────────────
 
 
 @app.get("/api/jobs/{job_id}")
@@ -945,9 +1207,8 @@ async def update_field(job_id: str, field_id: str, request: Request):
     }
 
 
-@app.post("/api/jobs/{job_id}/confirm")
-async def confirm_job(job_id: str):
-    """仅在正式 FinalResult 完整、有效且无待复核字段时确认。"""
+def _finalize_job(job_id: str) -> dict:
+    """Append confirmed formulas, bind a receipt, then cross the READY gate."""
     storage = _get_storage()
     try:
         job = storage.get_job(job_id)
@@ -963,26 +1224,67 @@ async def confirm_job(job_id: str):
         storage.save_job(job)
         raise HTTPException(status_code=409, detail=job["status_message"]) from exc
 
-    gate = evaluate_ready_gate(job, final, job_dir)
-    if not gate.ready:
+    content = evaluate_content_gate(job, final, job_dir)
+    if not content.ready:
         job["status"] = JobStatus.REVIEW_REQUIRED
         job["validation_errors"] = [
-            issue.to_dict() for issue in gate.validation.issues
+            issue.to_dict() for issue in content.validation.issues
         ]
-        job["status_message"] = "；".join(gate.reasons)
+        job["status_message"] = "；".join(content.reasons)
         storage.save_job(job)
         raise HTTPException(
             status_code=409,
             detail={
                 "message": job["status_message"],
-                "unresolved_fields": gate.unresolved_fields[:20],
+                "unresolved_fields": content.unresolved_fields[:20],
             },
         )
 
+    from .knowledge.history import KnowledgeHistory
+
+    state = ReviewStateStore(job_dir)
+    history = KnowledgeHistory(
+        Path(os.environ.get("KNOWLEDGE_DB_PATH", PROJECT_ROOT / "data" / "knowledge.sqlite3"))
+    )
+    try:
+        receipt = history.append_confirmed_job(
+            job,
+            final,
+            state.confirmed_hashes(final),
+        )
+    except (ValueError, FinalResultError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    finally:
+        history.close()
+
+    write_json_atomic(job_dir / "review" / "finalization.json", receipt)
+    gate = evaluate_ready_gate(job, final, job_dir)
+    if not gate.ready:
+        job["status"] = JobStatus.REVIEW_REQUIRED
+        job["status_message"] = "；".join(gate.reasons)
+        storage.save_job(job)
+        raise HTTPException(status_code=409, detail=job["status_message"])
+
     job["status"] = JobStatus.READY
-    job["status_message"] = "所有 READY Gate 均已确认。"
+    job["status_message"] = "配方已确认并加入知识库，可以导出 Excel。"
     storage.save_job(job)
-    return {"status": JobStatus.READY}
+    return {
+        "status": JobStatus.READY,
+        "saved": True,
+        "message": job["status_message"],
+        "receipt": receipt,
+    }
+
+
+@app.post("/api/jobs/{job_id}/finalize")
+async def finalize_job(job_id: str):
+    return _finalize_job(job_id)
+
+
+@app.post("/api/jobs/{job_id}/confirm")
+async def confirm_job(job_id: str):
+    """Compatibility alias for whole-job finalization."""
+    return _finalize_job(job_id)
 
 
 @app.post("/api/jobs/{job_id}/fields/{field_id}/recheck")
@@ -1307,31 +1609,106 @@ async def save_product_alias(job_id: str, product_id: str, request: Request):
 # ─── 知识库管理 ─────────────────────────────────────────────
 
 
+def _knowledge_db_path() -> Path:
+    return Path(
+        os.environ.get(
+            "KNOWLEDGE_DB_PATH",
+            PROJECT_ROOT / "data" / "knowledge.sqlite3",
+        )
+    )
+
+
+@app.get("/api/knowledge/tree")
+async def knowledge_tree(q: str = ""):
+    from .knowledge.history import KnowledgeHistory
+
+    history = KnowledgeHistory(_knowledge_db_path())
+    try:
+        return history.tree(q)
+    finally:
+        history.close()
+
+
+@app.get("/api/knowledge/formulas/{formula_id}")
+async def knowledge_formula(formula_id: int):
+    from .knowledge.history import KnowledgeHistory
+
+    history = KnowledgeHistory(_knowledge_db_path())
+    try:
+        detail = history.formula_detail(formula_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        history.close()
+    detail["evidence_image_url"] = ""
+    source_job_id = detail.get("source_job_id")
+    image_index = int(detail.get("source_image_index", 0))
+    if source_job_id and image_index > 0:
+        try:
+            source_job = _get_storage().get_job(str(source_job_id))
+            source = str(source_job.get("images", [])[image_index - 1].get("source", ""))
+            if source:
+                detail["evidence_image_url"] = (
+                    f"/jobs/{quote(str(source_job_id), safe='')}/files/{quote(source, safe='/')}"
+                )
+        except (FileNotFoundError, ValueError, IndexError):
+            pass
+    return detail
+
+
+@app.get("/api/knowledge/compare")
+async def compare_knowledge(left: int, right: int):
+    from .knowledge.history import KnowledgeHistory
+
+    history = KnowledgeHistory(_knowledge_db_path())
+    try:
+        return history.compare(left, right)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        history.close()
+
+
+@app.get("/api/knowledge/export")
+async def export_knowledge():
+    from .knowledge.exporter import export_knowledge_history
+
+    output = (
+        _knowledge_db_path().parent
+        / "exports"
+        / f"formula-knowledge-{int(time.time())}.xlsx"
+    )
+    export_knowledge_history(_knowledge_db_path(), output)
+    return FileResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename="配方知识库.xlsx",
+    )
+
+
 @app.get("/knowledge", response_class=HTMLResponse)
 async def knowledge_page(request: Request):
     """知识库管理页面。"""
-    from .config import PROJECT_ROOT
     from .knowledge.database import KnowledgeDB
-    db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+    db = KnowledgeDB(_knowledge_db_path())
     db.initialize()
     materials = db.get_all_materials()
-    formulas = db.get_all_formulas()
+    db.close()
     return templates.TemplateResponse(
-        request, "knowledge.html", {"materials": materials, "formulas": formulas}
+        request, "knowledge.html", {"materials": materials}
     )
 
 
 @app.post("/knowledge/materials")
 async def add_material(request: Request):
     """添加物料。"""
-    from .config import PROJECT_ROOT
     from .knowledge.database import KnowledgeDB
     body = await request.json()
     name = body.get("name", "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="物料名称不能为空。")
 
-    db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+    db = KnowledgeDB(_knowledge_db_path())
     db.initialize()
     mid = db.add_material(name, body.get("category", ""), body.get("unit", ""))
 
@@ -1349,7 +1726,6 @@ async def import_knowledge(file: UploadFile = File(...)):
     import csv
     import io as _io
 
-    from .config import PROJECT_ROOT
     from .knowledge.database import KnowledgeDB
 
     if not file.filename:
@@ -1363,7 +1739,7 @@ async def import_knowledge(file: UploadFile = File(...)):
     if not content:
         raise HTTPException(status_code=400, detail="文件为空。")
 
-    db = KnowledgeDB(PROJECT_ROOT / "data" / "knowledge.sqlite3")
+    db = KnowledgeDB(_knowledge_db_path())
     db.initialize()
 
     imported_count = 0

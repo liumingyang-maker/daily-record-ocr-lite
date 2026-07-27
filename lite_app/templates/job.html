@@ -1,273 +1,63 @@
 {% extends "base.html" %}
-{% block title %}任务 {{ job.id }} - 手写记录识别{% endblock %}
+{% block title %}{{ job.title or "识别记录" }} - 手写配方识别{% endblock %}
 {% block content %}
-<section class="job-meta">
-    <h2>任务详情</h2>
-    <div class="meta-grid">
-        <div><strong>任务号：</strong><span class="mono">{{ job.id }}</span></div>
-        <div><strong>状态：</strong><span id="job-status" class="status status-{{ job.status | lower }}">{{ job.status }}</span></div>
-        <div><strong>Provider：</strong>{{ job.provider or '-' }}</div>
-        <div><strong>Model：</strong>{{ job.model or '-' }}</div>
-        <div><strong>运行模式：</strong>{{ "Demo / Mock" if job.demo_mode else "Real" }}</div>
-        <div><strong>OCR：</strong>{{ job.ocr_engine.effective_provider if job.ocr_engine else '-' }}
-            / {{ job.ocr_engine.tier if job.ocr_engine else '-' }}</div>
-        <div><strong>OCR Models：</strong>{{ job.ocr_engine.det_model if job.ocr_engine else '-' }}
-            / {{ job.ocr_engine.rec_model if job.ocr_engine else '-' }}</div>
-        <div><strong>Vision：</strong>{{ job.vision_engine.provider if job.vision_engine else '-' }}
-            / {{ job.vision_engine.model if job.vision_engine else '-' }}</div>
-        <div><strong>Cache：</strong>OCR {{ job.cache_hits.ocr if job.cache_hits else 0 }}
-            / Vision {{ job.cache_hits.vision if job.cache_hits else 0 }}</div>
-        <div><strong>Schema：</strong>{{ job.schema_status or '-' }}</div>
-        <div><strong>冲突：</strong>{{ fusion_summary.conflict or 0 }}</div>
-        <div><strong>耗时：</strong>
-            OCR {{ job.timings_ms.ocr_ms if job.timings_ms else '-' }} ms /
-            Vision {{ job.timings_ms.vision_ms if job.timings_ms else '-' }} ms
-        </div>
-        <div><strong>创建时间：</strong>{{ job.created_at[:19] }}</div>
-        <div><strong>旋转设置：</strong>{{ job.rotation }}</div>
-        <div><strong>识别模式：</strong>
-            <select id="mode-select" onchange="switchMode(this.value)">
-                <option value="auto" {{ 'selected' if job.get('recognition_mode', 'auto') == 'auto' }}>自动</option>
-                <option value="freeform" {{ 'selected' if job.get('recognition_mode') == 'freeform' }}>自由笔记</option>
-                <option value="template" {{ 'selected' if job.get('recognition_mode') == 'template' }}>固定模板</option>
-            </select>
-        </div>
+<section class="job-heading">
+    <div>
+        <p class="eyebrow">识别记录</p>
+        <h2>{{ job.title or "正在整理配方" }}</h2>
+        <p class="status-msg">{{ job.status_message or "请核对原图与识别结果。" }}</p>
     </div>
-    <p id="status-msg" class="status-msg">{{ job.status_message or '' }}</p>
-    {% if job.error %}
-    <div class="error-box">错误：{{ job.error }}</div>
-    {% endif %}
-</section>
-
-<section class="images-section">
-    <h3>图片</h3>
-    <div class="image-grid">
-        {% for img in job.images %}
-        <div class="image-card">
-            <p class="img-label">#{{ loop.index }} {{ img.original_name }}</p>
-            {% if img.prepared %}
-            <a href="/jobs/{{ job.id }}/files/{{ img.prepared }}" target="_blank">
-                <img src="/jobs/{{ job.id }}/files/{{ img.prepared }}" alt="处理后图片 {{ loop.index }}">
-            </a>
-            {% endif %}
-            <div style="margin-top:4px">
-                <a href="/jobs/{{ job.id }}/files/{{ img.source }}" target="_blank" class="btn btn-small">原始图片</a>
-                <a href="/jobs/{{ job.id }}/files/ocr/page_{{ '%02d' | format(loop.index) }}_overlay.jpg" target="_blank" class="btn btn-small">OCR Overlay</a>
-            </div>
-        </div>
-        {% endfor %}
+    <div class="job-state-card">
+        <span class="status status-{{ job.status | lower }}" id="job-status">{{ job.user_status or job.status }}</span>
+        {% if job.progress_label %}<small>{{ job.progress_label }}</small>{% endif %}
     </div>
 </section>
 
-<section class="actions-section">
-    <h3>操作</h3>
+{% if job.error %}
+<div class="error-box" role="alert">{{ job.error }}</div>
+{% endif %}
+
+<section id="review" class="review-workspace" data-job-id="{{ job.id }}">
+    <div class="review-toolbar">
+        <div>
+            <h2>配方确认</h2>
+            <p>有问题的配方排在前面。对照原图修改后，确认整条配方。</p>
+        </div>
+        <div class="review-toolbar-actions">
+            <button type="button" class="btn btn-small" id="toggle-formulas">展开全部</button>
+            <div class="review-summary" id="review-summary" aria-live="polite">正在加载识别结果…</div>
+        </div>
+    </div>
+    <div id="review-feedback" class="feedback" hidden></div>
+    <div id="review-groups" class="review-groups"></div>
+    <div id="review-finalize" class="review-finalize" hidden></div>
+    <template id="review-empty-template">
+        <div class="empty-state">
+            <h3>还没有可确认的配方</h3>
+            <p>识别完成后，配方会自动出现在这里。</p>
+        </div>
+    </template>
+    <span class="visually-hidden">确认这条配方</span>
+</section>
+
+<section class="job-actions">
+    <h2>其他操作</h2>
     <div class="action-buttons">
-        <a href="/jobs/{{ job.id }}/result" class="btn btn-primary">查看分组结果</a>
-        <form action="/jobs/{{ job.id }}/analyze" method="post" style="display:inline">
+        <form method="post" action="/jobs/{{ job.id }}/analyze">
             <button type="submit" class="btn">重新识别</button>
         </form>
-        <form action="/jobs/{{ job.id }}/export" method="post" style="display:inline">
+        <form method="post" action="/jobs/{{ job.id }}/export">
             <button type="submit" class="btn">导出 Excel</button>
         </form>
-        {% if job.export_file %}
-        <a href="/jobs/{{ job.id }}/files/{{ job.export_file }}" class="btn btn-success">下载 {{ job.export_file }}</a>
-        {% endif %}
-        <button class="btn" onclick="confirmAll()">确认所有字段</button>
     </div>
 </section>
 
-<!-- 字段级审查区域 -->
-<section class="fields-section" id="fields-section" style="display:none">
-    <h3>字段审查</h3>
-    <div class="field-filters">
-        <button class="btn btn-small" onclick="filterFields('all')">全部</button>
-        <button class="btn btn-small" onclick="filterFields('CONFLICT')">仅冲突</button>
-        <button class="btn btn-small" onclick="filterFields('NEED_REVIEW')">仅待复核</button>
-    </div>
-    <table class="fields-table" id="fields-table">
-        <thead>
-            <tr>
-                <th>字段ID</th>
-                <th>类型</th>
-                <th>OCR</th>
-                <th>VLM</th>
-                <th>历史</th>
-                <th>证据 / BBox</th>
-                <th>最终值</th>
-                <th>状态</th>
-                <th>操作</th>
-            </tr>
-        </thead>
-        <tbody id="fields-body"></tbody>
-    </table>
-</section>
-
-<!-- 高级 JSON 编辑 -->
-<section class="editor-section">
-    <h3 onclick="toggleEditor()" style="cursor:pointer">▶ 高级：JSON 编辑器</h3>
-    <div id="editor-panel" style="display:none">
-        <div id="save-feedback" class="feedback" style="display:none"></div>
-        <textarea id="json-editor" class="json-editor" rows="20">{{ result_json }}</textarea>
-        <button id="save-btn" class="btn btn-primary" onclick="saveResult()">保存修改</button>
-    </div>
-</section>
+<details class="advanced-diagnostics">
+    <summary>高级诊断</summary>
+    <p>记录编号：<span class="mono">{{ job.id }}</span></p>
+    <p>当前状态：{{ job.status }}</p>
+</details>
 {% endblock %}
-
 {% block scripts %}
-<script>
-const jobId = "{{ job.id }}";
-let allFields = [];
-
-// 状态轮询
-function pollStatus() {
-    fetch('/api/jobs/' + jobId)
-        .then(r => r.json())
-        .then(job => {
-            document.getElementById('job-status').textContent = job.status;
-            document.getElementById('job-status').className = 'status status-' + job.status.toLowerCase();
-            document.getElementById('status-msg').textContent = job.status_message || '';
-            const processing = ['UPLOADED','PREPROCESSING','OCR_RUNNING','VISION_RUNNING','MATCHING_HISTORY','FUSING','LOCAL_RECHECK'];
-            if (processing.includes(job.status)) {
-                setTimeout(pollStatus, 2000);
-            } else {
-                loadFields();
-            }
-        })
-        .catch(() => setTimeout(pollStatus, 3000));
-}
-
-// 加载融合字段
-function loadFields() {
-    fetch('/api/jobs/' + jobId)
-        .then(r => r.json())
-        .then(job => {
-            // 尝试从 fusion result 获取字段
-            return fetch('/jobs/' + jobId + '/files/fusion/result.json').catch(() => null);
-        })
-        .then(r => r ? r.json() : null)
-        .then(data => {
-            if (data && data.fields && data.fields.length > 0) {
-                allFields = data.fields;
-                document.getElementById('fields-section').style.display = 'block';
-                renderFields('all');
-            }
-        })
-        .catch(() => {});
-}
-
-function renderFields(filter) {
-    const tbody = document.getElementById('fields-body');
-    tbody.innerHTML = '';
-    const filtered = filter === 'all' ? allFields : allFields.filter(f => f.status === filter);
-    filtered.forEach(f => {
-        const ocr = (f.candidates || []).find(c => c.source && c.source.startsWith('ocr'));
-        const vlm = (f.candidates || []).find(c => c.source === 'vlm');
-        const hist = (f.candidates || []).find(c => c.source && c.source.startsWith('history'));
-        const crop = (f.candidates || []).flatMap(c => c.evidence || [])
-            .find(path => typeof path === 'string' && path.startsWith('review/crops/'));
-        const evidence = crop
-            ? `<a href="/jobs/${jobId}/files/${crop}" target="_blank">查看局部裁图</a>`
-            : `<code>${JSON.stringify(f.bbox || null)}</code>`;
-        const statusClass = f.status === 'CONFLICT' ? 'status-failed' : f.status === 'NEED_REVIEW' ? 'status-need_review' : 'status-ready';
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td class="mono">${f.field_id || ''}</td>
-            <td>${f.field_type || ''}</td>
-            <td>${ocr ? ocr.value + ' (' + (ocr.confidence||0).toFixed(2) + ')' : '-'}</td>
-            <td>${vlm ? vlm.value + ' (' + (vlm.confidence||0).toFixed(2) + ')' : '-'}</td>
-            <td>${hist ? hist.value : '-'}</td>
-            <td>${evidence}</td>
-            <td><input type="text" value="${f.final_value || ''}" data-field-id="${f.field_id}" style="width:80px"></td>
-            <td><span class="status ${statusClass}">${f.status}</span></td>
-            <td>
-                <button class="btn btn-small" onclick="acceptField('${f.field_id}', 'ocr')">OCR</button>
-                <button class="btn btn-small" onclick="acceptField('${f.field_id}', 'vlm')">VLM</button>
-                <button class="btn btn-small" onclick="recheckField('${f.field_id}')"
-                    ${f.recheck_count ? 'disabled' : ''}>局部复核</button>
-                <button class="btn btn-small btn-primary" onclick="saveField('${f.field_id}')">保存</button>
-            </td>`;
-        tbody.appendChild(row);
-    });
-}
-
-function filterFields(filter) { renderFields(filter); }
-
-function acceptField(fieldId, source) {
-    const field = allFields.find(f => f.field_id === fieldId);
-    if (!field) return;
-    const candidate = (field.candidates || []).find(c => c.source === source || c.source.startsWith(source));
-    if (!candidate) return;
-    fetch('/api/jobs/' + jobId + '/fields/' + fieldId, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({value: candidate.value, source: source, field_type: field.field_type})
-    }).then(r => r.json()).then(() => { field.final_value = candidate.value; field.status = 'MANUAL_CONFIRMED'; renderFields('all'); });
-}
-
-function saveField(fieldId) {
-    const input = document.querySelector(`input[data-field-id="${fieldId}"]`);
-    if (!input) return;
-    const field = allFields.find(f => f.field_id === fieldId);
-    fetch('/api/jobs/' + jobId + '/fields/' + fieldId, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({value: input.value, source: 'manual', field_type: field ? field.field_type : ''})
-    }).then(r => r.json()).then(() => { if(field){field.final_value=input.value; field.status='MANUAL_CONFIRMED';} renderFields('all'); });
-}
-
-function recheckField(fieldId) {
-    fetch('/api/jobs/' + jobId + '/fields/' + fieldId + '/recheck', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'}
-    })
-    .then(async response => {
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || '局部复核失败');
-        location.reload();
-    })
-    .catch(error => window.alert(error.message));
-}
-
-function confirmAll() {
-    fetch('/api/jobs/' + jobId + '/confirm', {method: 'POST'})
-        .then(r => r.json())
-        .then(data => { document.getElementById('job-status').textContent = data.status; location.reload(); });
-}
-
-function switchMode(mode) {
-    fetch('/api/jobs/' + jobId + '/mode', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({mode: mode})
-    }).then(() => { setTimeout(pollStatus, 1000); });
-}
-
-function toggleEditor() {
-    const panel = document.getElementById('editor-panel');
-    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-}
-
-function saveResult() {
-    const editor = document.getElementById('json-editor');
-    const feedback = document.getElementById('save-feedback');
-    const text = editor.value.trim();
-    try { JSON.parse(text); } catch (e) {
-        feedback.style.display = 'block';
-        feedback.className = 'feedback feedback-error';
-        feedback.textContent = 'JSON 格式错误: ' + e.message;
-        return;
-    }
-    fetch('/api/jobs/' + jobId + '/result', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: text})
-    .then(r => r.json()).then(data => {
-        feedback.style.display = 'block';
-        feedback.className = 'feedback ' + (data.validation_errors && data.validation_errors.length ? 'feedback-warn' : 'feedback-ok');
-        feedback.textContent = data.validation_errors && data.validation_errors.length ? '已保存，校验问题: ' + data.validation_errors.join('; ') : '保存成功。状态: ' + data.status;
-    }).catch(e => { feedback.style.display='block'; feedback.className='feedback feedback-error'; feedback.textContent='保存失败: '+e.message; });
-}
-
-// 初始化
-const currentStatus = "{{ job.status }}";
-const processing = ['UPLOADED','PREPROCESSING','OCR_RUNNING','VISION_RUNNING','MATCHING_HISTORY','FUSING','LOCAL_RECHECK'];
-if (processing.includes(currentStatus)) { pollStatus(); } else { loadFields(); }
-</script>
+<script src="/static/review.js" defer></script>
 {% endblock %}

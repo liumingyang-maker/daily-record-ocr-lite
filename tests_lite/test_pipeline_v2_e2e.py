@@ -237,13 +237,23 @@ async def test_v2_pipeline_conflict_manual_api_and_excel_source(
     ][0]["amount"]["value"] == "0.5"
 
     monkeypatch.setattr(main, "_get_storage", lambda: storage)
+    monkeypatch.setenv("KNOWLEDGE_DB_PATH", str(tmp_path / "knowledge.sqlite3"))
     with TestClient(main.app) as client:
         update = client.post(
             f"/api/jobs/{job['id']}/fields/{amount['field_id']}",
             json={"value": "0.15", "source": "manual"},
         )
         assert update.status_code == 200
-        assert update.json()["job_status"] == "READY"
+        assert update.json()["job_status"] == "REVIEW_REQUIRED"
+        review = client.get(f"/api/jobs/{job['id']}/review").json()
+        formula_id = review["groups"][0]["formulas"][0]["id"]
+        confirmed = client.post(
+            f"/api/jobs/{job['id']}/review/formulas/{formula_id}/confirm",
+            json={"version": review["version"]},
+        )
+        assert confirmed.status_code == 200
+        finalized = client.post(f"/api/jobs/{job['id']}/finalize")
+        assert finalized.status_code == 200
         exported = client.post(f"/api/jobs/{job['id']}/export")
         assert exported.status_code == 200
 

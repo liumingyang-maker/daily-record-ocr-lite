@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}识别记录 - 手写配方识别{% endblock %}
+{% block content %}
+<section>
+    <div class="section-heading">
+        <div>
+            <h2>识别记录</h2>
+            <p class="hint">按业务信息找到需要继续确认或导出的记录。</p>
+        </div>
+        <a href="/" class="btn btn-primary">开始新的识别</a>
+    </div>
+    {% if jobs %}
+    <table class="jobs-table">
+        <thead>
+            <tr>
+                <th>客户</th>
+                <th>产品/牌号</th>
+                <th>配方日期</th>
+                <th>状态</th>
+                <th>图片数</th>
+                <th>创建时间</th>
+                <th>下一步</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for job in jobs %}
+            <tr>
+                <td>{{ job.customer }}</td>
+                <td>{{ job.product }}</td>
+                <td>{{ job.date_range }}</td>
+                <td><span class="status status-{{ job.status.tone }}">{{ job.status.label }}</span></td>
+                <td>{{ job.image_count }}</td>
+                <td>{{ job.created_at }}</td>
+                <td><a href="/jobs/{{ job.id }}" class="btn btn-small">{{ job.next_action }}</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty">还没有识别记录，请先上传手写配方照片。</p>
+    {% endif %}
+</section>
+{% endblock %}

@@ -33,10 +33,11 @@ class TestSanitizeFilename:
 
 class TestJobStorage:
     def test_create_job(self, storage):
-        job = storage.create_job(rotation="auto")
+        job = storage.create_job(rotation="auto", rotations=["90cw", "auto"])
         assert job["id"]
         assert job["status"] == "UPLOADED"
         assert job["rotation"] == "auto"
+        assert job["rotations"] == ["90cw", "auto"]
         assert job["images"] == []
 
     def test_create_job_unique_ids(self, storage):

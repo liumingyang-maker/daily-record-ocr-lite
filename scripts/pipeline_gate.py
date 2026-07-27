@@ -1,7 +1,7 @@
 """Full Pipeline Gate: run complete pipeline 3 times with real image.
 
 Usage:
-    set QWEN_TEST_API_KEY=sk-ws-...
+    set QWEN_TEST_API_KEY=<your-test-key>
     python scripts/pipeline_gate.py --image <path> --runs 3
 """
 import asyncio

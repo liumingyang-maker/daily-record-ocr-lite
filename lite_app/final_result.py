@@ -6,7 +6,7 @@ import copy
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .storage import (
     read_json_optional,
@@ -208,6 +208,22 @@ class FinalResultService:
         final["summary"] = summarize_final_result(final)
         self.save(final)
         self._project_business_entities(final)
+
+    def mutate(
+        self,
+        expected_version: str,
+        callback: Callable[[dict[str, Any]], Any],
+    ) -> tuple[Any, dict[str, Any]]:
+        """Apply one schema-validated mutation to the canonical result."""
+        final = self.load()
+        if str(final.get("updated_at", "")) != expected_version:
+            raise FinalResultError("结果已在另一个窗口更新，请刷新后重试")
+        result = callback(final)
+        final["updated_at"] = _now()
+        final["summary"] = summarize_final_result(final)
+        self.save(final)
+        self._project_business_entities(final)
+        return result, final
 
     def _sync_fusion(self, field_id: str, field: dict[str, Any]) -> None:
         path = self.job_dir / "fusion" / "result.json"

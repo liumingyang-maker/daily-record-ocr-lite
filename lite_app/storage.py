@@ -149,7 +149,9 @@ class JobStorage:
             raise ValueError(f"非法任务 ID: {job_id}") from exc
         return candidate
 
-    def create_job(self, rotation: str = "auto") -> dict[str, Any]:
+    def create_job(
+        self, rotation: str = "auto", rotations: list[str] | None = None
+    ) -> dict[str, Any]:
         """创建新任务。"""
         job_id = _generate_job_id()
         job_dir = self._job_dir(job_id)
@@ -162,6 +164,7 @@ class JobStorage:
             "created_at": now,
             "updated_at": now,
             "rotation": rotation,
+            "rotations": list(rotations or []),
             "images": [],
             "provider": "",
             "model": "",
