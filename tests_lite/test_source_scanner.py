@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from lite_app.knowledge.source_scanner import classify_source, scan_sources
 
 
@@ -28,6 +30,23 @@ def test_non_formula_business_documents_are_excluded() -> None:
     assert classify_source(Path("客户/产品标签.xlsx")).reason == (
         "NON_FORMULA_DOCUMENT"
     )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "客户/年度报价.xlsx",
+        "客户/SGS检测报告.xlsx",
+        "客户/产品成分表.xlsx",
+        "客户/原料物性.xlsx",
+        "1报告合集/任意文件.xlsx",
+    ],
+)
+def test_each_known_non_formula_category_is_rejected(path: str) -> None:
+    decision = classify_source(Path(path))
+
+    assert decision.action == "exclude"
+    assert decision.reason == "NON_FORMULA_DOCUMENT"
 
 
 def test_non_excel_files_are_excluded() -> None:

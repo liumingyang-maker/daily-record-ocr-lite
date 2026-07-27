@@ -90,6 +90,10 @@ def project_final_result(
         )
         field["source"] = match.get("final_source", "vlm") if match else "vlm"
         field["candidates"] = copy.deepcopy(match.get("candidates", [])) if match else []
+        if match and match.get("knowledge_trace"):
+            field["knowledge_trace"] = copy.deepcopy(
+                match["knowledge_trace"]
+            )
         field["bbox"] = match.get("bbox", field.get("bbox")) if match else field.get("bbox")
         field["source_image_index"] = source_image_index
         field["record_bbox"] = record_bbox

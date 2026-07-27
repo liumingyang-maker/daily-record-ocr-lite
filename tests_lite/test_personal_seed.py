@@ -15,6 +15,7 @@ def _seed(root: Path) -> None:
         "knowledge.sqlite3": b"seed-database",
         "personal_imports/v1/evidence/a.png": b"evidence",
         "secrets.env": b"VISION_API_KEY=private-build-value\n",
+        "settings.json": b'{"vision":{"model":"qwen3.7-plus"}}\n',
     }
     for name, content in files.items():
         path = root / name
@@ -57,6 +58,7 @@ def test_first_install_copies_seed_database_evidence_and_private_config(
         data / "personal_imports/v1/evidence/a.png"
     ).read_bytes() == b"evidence"
     assert (data / "secrets.env").exists()
+    assert (data / "settings.json").exists()
 
 
 def test_upgrade_preserves_learned_database_and_user_key(tmp_path: Path) -> None:
@@ -66,6 +68,11 @@ def test_upgrade_preserves_learned_database_and_user_key(tmp_path: Path) -> None
     initialize_personal_seed(seed, data, "v1.1.0-personal.1")
     (data / "knowledge.sqlite3").write_bytes(b"learned-user-data")
     (data / "secrets.env").write_bytes(b"VISION_API_KEY=user-override\n")
+    (data / "settings.json").write_bytes(b'{"vision":{"timeout":300}}\n')
+    protected = {
+        name: hashlib.sha256((data / name).read_bytes()).hexdigest()
+        for name in ("knowledge.sqlite3", "secrets.env", "settings.json")
+    }
 
     result = initialize_personal_seed(
         seed,
@@ -78,6 +85,10 @@ def test_upgrade_preserves_learned_database_and_user_key(tmp_path: Path) -> None
     assert (data / "secrets.env").read_bytes() == (
         b"VISION_API_KEY=user-override\n"
     )
+    assert {
+        name: hashlib.sha256((data / name).read_bytes()).hexdigest()
+        for name in ("knowledge.sqlite3", "secrets.env", "settings.json")
+    } == protected
 
 
 def test_seed_checksum_mismatch_fails_before_writing_data(

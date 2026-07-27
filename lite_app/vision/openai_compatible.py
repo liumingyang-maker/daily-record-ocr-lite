@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import logging
 import time
@@ -11,6 +12,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+from PIL import Image
 
 from .base import (
     VisionConfigurationError,
@@ -172,8 +174,20 @@ class OpenAICompatibleVisionProvider(VisionProvider):
             f"响应: {json.dumps(data, ensure_ascii=False)[:500]}"
         )
 
-    @staticmethod
-    def _image_to_data_url(image_path: Path) -> str:
+    def _image_to_data_url(self, image_path: Path) -> str:
         data = image_path.read_bytes()
+        if self.is_alibaba_qwen37:
+            with Image.open(io.BytesIO(data)) as image:
+                if max(image.size) > 1024:
+                    image = image.convert("RGB")
+                    image.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                    output = io.BytesIO()
+                    image.save(
+                        output,
+                        format="JPEG",
+                        quality=70,
+                        optimize=True,
+                    )
+                    data = output.getvalue()
         b64 = base64.b64encode(data).decode("ascii")
         return f"data:image/jpeg;base64,{b64}"

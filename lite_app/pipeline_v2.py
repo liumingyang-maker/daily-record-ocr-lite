@@ -33,8 +33,15 @@ from .fusion.association import (
 )
 from .fusion.engine import Candidate, FusedField, FusionEngine
 from .image_utils_v2 import ImageProcessError, prepare_dual_images
-from .knowledge.database import KnowledgeDB
-from .knowledge.matcher import HistoryMatcher, normalize_text
+from .knowledge.correction import (
+    CorrectionCandidate,
+    decide_correction,
+)
+from .knowledge.matcher import normalize_text
+from .knowledge.retrieval import (
+    KnowledgeRetrieval,
+    RetrievalRequest,
+)
 from .layout.geometry import build_layout_evidence
 from .ocr.base import OCRPage, OCRToken, scope_token_ids
 from .ocr.manager import OCRModelManager, OCRUnavailableError
@@ -270,11 +277,27 @@ async def analyze_job_v2(
             }
             for page_index, evidence in layout_by_page.items()
         }
+        knowledge_enabled = _knowledge_assist_enabled()
+        knowledge_prompt = (
+            _build_knowledge_prompt(
+                ocr_pages,
+                _knowledge_db_path(),
+            )
+            if knowledge_enabled
+            else {
+                "policy": {"role": "disabled_for_ab_gate"},
+                "references": [],
+            }
+        )
+        job["knowledge_assist_enabled"] = knowledge_enabled
         user_prompt = (
             f"{schema_config.get('instructions', '')}\n\n"
             "以下 OCR 与本地布局仅为辅助证据，可能有误：\n"
             f"OCR={json.dumps(ocr_evidence, ensure_ascii=False)}\n"
             f"LAYOUT={json.dumps(layout_prompt, ensure_ascii=False)}\n"
+            "以下知识候选仅用于核对文字名称，不是图片事实；"
+            "新名称必须保留，数量、日期、配方号、编号和单位绝不按历史修改：\n"
+            f"KNOWLEDGE={json.dumps(knowledge_prompt, ensure_ascii=False)}\n"
             "只返回严格符合 JSON Schema 的 JSON。"
         )
         vision_key = _hash_payload(
@@ -291,6 +314,7 @@ async def analyze_job_v2(
                 "schema": schema,
                 "ocr": ocr_evidence,
                 "layout": layout_prompt,
+                "knowledge": knowledge_prompt,
                 "image_detail": vision_config.get("image_detail"),
                 "extra_body": vision_config.get("extra_body", {}),
             }
@@ -347,7 +371,7 @@ async def analyze_job_v2(
         job["status_message"] = "正在匹配历史知识..."
         storage.save_job(job)
         started = time.time()
-        history = _history_candidates(structured)
+        history = _history_candidates(structured) if knowledge_enabled else {}
         timings["history_ms"] = int((time.time() - started) * 1000)
 
         job["status"] = JobStatus.FUSING
@@ -459,6 +483,11 @@ def _build_fusion_result(
                         history_candidates.get(field_id, []),
                         layout,
                         material.get("name", {}) if field_name == "amount" else None,
+                        {
+                            "name": "material",
+                            "amount": "amount",
+                            "unit": "unit",
+                        }[field_name],
                     )
                 )
         for parameter_index, parameter in enumerate(
@@ -485,6 +514,11 @@ def _build_fusion_result(
                         [],
                         layout,
                         parameter.get("name", {}) if field_name == "value" else None,
+                        {
+                            "name": "process",
+                            "value": "amount",
+                            "unit": "unit",
+                        }[field_name],
                     )
                 )
 
@@ -516,6 +550,7 @@ def _fuse_one(
     history: list[Any],
     layout: dict[str, Any] | None,
     anchor_object: Any = None,
+    knowledge_field_type: str | None = None,
 ) -> dict[str, Any]:
     value, confidence, evidence_ids, bbox = _extract_field_info(field_object)
     anchor_value, _, anchor_evidence_ids, anchor_bbox = _extract_field_info(
@@ -564,20 +599,13 @@ def _fuse_one(
                 evidence=association.token_ids,
             )
         )
-    for match in history[:2]:
-        standard = match.get("standard_name", match.get("value", ""))
-        if standard:
-            candidates.append(
-                Candidate(
-                    value=standard,
-                    normalized_value=normalize_text(standard),
-                    source="history_material",
-                    confidence=float(match.get("score", 0.0)) * 0.7,
-                    evidence=["history"],
-                )
-            )
     fused = engine.fuse_field(field_id, field_type, candidates)
     result = _fused_to_dict(fused)
+    result = _apply_knowledge_correction(
+        result,
+        knowledge_field_type or field_type,
+        history,
+    )
     result["bbox"] = associations[0].bbox if associations else bbox
     result["source_image_index"] = image_index
     if associations:
@@ -596,27 +624,253 @@ def _fuse_one(
     return result
 
 
-def _history_candidates(structured: dict[str, Any]) -> dict[str, list]:
-    candidates: dict[str, list] = {}
+def _knowledge_db_path() -> Path:
+    return Path(
+        os.environ.get(
+            "KNOWLEDGE_DB_PATH",
+            str(DATA_ROOT / "knowledge.sqlite3"),
+        )
+    )
+
+
+def _knowledge_assist_enabled() -> bool:
+    return _as_bool(os.environ.get("KNOWLEDGE_ASSIST_ENABLED", "true"))
+
+
+def _build_knowledge_prompt(
+    ocr_pages: list[OCRPage],
+    database_path: Path,
+) -> dict[str, Any]:
+    policy = {
+        "role": "reference_only",
+        "never_override": [
+            "amount",
+            "date",
+            "formula_no",
+            "identifier",
+            "unit",
+        ],
+    }
+    if not database_path.exists():
+        return {"policy": policy, "references": []}
+    references: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    retrieval = KnowledgeRetrieval(database_path)
     try:
-        database = KnowledgeDB(DATA_ROOT / "knowledge.sqlite3")
-        database.initialize()
-        matcher = HistoryMatcher(database)
-        for record in _extract_records_from_vlm(structured):
-            formula_id = record.get("formula_id", "formula")
-            for index, material in enumerate(record.get("materials", []), 1):
-                material_id = material.get("material_id", f"material_{index:03d}")
-                name, _, _, _ = _extract_field_info(material.get("name", {}))
-                if not name:
+        for page in ocr_pages:
+            for token in page.tokens[:80]:
+                raw_text = token.text.strip()
+                if not _knowledge_text_candidate(raw_text):
                     continue
-                matches = matcher.match_material(name, max_candidates=3)
-                if matches:
-                    candidates[
-                        f"{formula_id}__{material_id}__name"
-                    ] = matches
+                for term_type in ("customer", "product", "material", "process"):
+                    matches = retrieval.retrieve(
+                        RetrievalRequest(
+                            raw_text=raw_text,
+                            term_type=term_type,
+                            limit=1,
+                        )
+                    )
+                    if not matches or matches[0].score < 0.88:
+                        continue
+                    match = matches[0]
+                    key = (raw_text, term_type, match.value)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    references.append(
+                        {
+                            "raw_text": raw_text,
+                            "candidate": match.value,
+                            "term_type": term_type,
+                            "score": match.score,
+                            "reasons": list(match.reasons),
+                            "source_image_index": page.image_index,
+                            "evidence_token_id": token.id,
+                        }
+                    )
+    except Exception as exc:
+        logger.warning("知识提示候选不可用（非关键）: %s", exc)
+        return {"policy": policy, "references": []}
+    references.sort(
+        key=lambda item: (item["score"], item["term_type"]),
+        reverse=True,
+    )
+    return {"policy": policy, "references": references[:20]}
+
+
+def _knowledge_text_candidate(value: str) -> bool:
+    if len(value) < 2 or len(value) > 80:
+        return False
+    compact = value.replace(" ", "")
+    if compact.replace(".", "", 1).isdigit():
+        return False
+    if all(character.isdigit() or character in "-/.年月日" for character in compact):
+        return False
+    return any(character.isalpha() or "\u4e00" <= character <= "\u9fff" for character in compact)
+
+
+def _history_candidates(
+    structured: dict[str, Any],
+    database_path: Path | None = None,
+) -> dict[str, list]:
+    candidates: dict[str, list] = {}
+    database_path = database_path or _knowledge_db_path()
+    if not database_path.exists():
+        return candidates
+    try:
+        retrieval = KnowledgeRetrieval(database_path)
+        for page in structured.get("pages", []):
+            company = page.get("company", {})
+            customer = str(
+                company.get("standard_value")
+                or company.get("raw_value")
+                or company.get("value")
+                or ""
+            ) if isinstance(company, dict) else str(company or "")
+            for section in page.get("product_sections", []):
+                product, _, _, _ = _extract_field_info(
+                    section.get("product_or_series", {})
+                )
+                for formula in section.get("formulas", []):
+                    formula_id = formula.get("formula_id", "formula")
+                    for index, material in enumerate(
+                        formula.get("materials", []), 1
+                    ):
+                        material_id = material.get(
+                            "material_id", f"material_{index:03d}"
+                        )
+                        name, _, _, _ = _extract_field_info(
+                            material.get("name", {})
+                        )
+                        _store_retrieval_candidates(
+                            candidates,
+                            f"{formula_id}__{material_id}__name",
+                            retrieval,
+                            name,
+                            "material",
+                            customer,
+                            product,
+                        )
+                    for index, parameter in enumerate(
+                        formula.get("process_parameters", []), 1
+                    ):
+                        parameter_id = parameter.get(
+                            "parameter_id", f"parameter_{index:03d}"
+                        )
+                        name, _, _, _ = _extract_field_info(
+                            parameter.get("name", {})
+                        )
+                        _store_retrieval_candidates(
+                            candidates,
+                            f"{formula_id}__{parameter_id}__name",
+                            retrieval,
+                            name,
+                            "process",
+                            customer,
+                            product,
+                        )
     except Exception as exc:
         logger.warning("历史匹配不可用（非关键）: %s", exc)
     return candidates
+
+
+def _store_retrieval_candidates(
+    output: dict[str, list],
+    field_id: str,
+    retrieval: KnowledgeRetrieval,
+    raw_value: str,
+    term_type: str,
+    customer: str,
+    product: str,
+) -> None:
+    if not raw_value:
+        return
+    matches = retrieval.retrieve(
+        RetrievalRequest(
+            raw_text=raw_value,
+            term_type=term_type,
+            customer=customer,
+            product=product,
+            limit=3,
+        )
+    )
+    if matches:
+        output[field_id] = [
+            {
+                "value": match.value,
+                "term_type": match.term_type,
+                "score": match.score,
+                "context_aligned": match.context_aligned,
+                "reasons": list(match.reasons),
+            }
+            for match in matches
+        ]
+
+
+def _apply_knowledge_correction(
+    result: dict[str, Any],
+    field_type: str,
+    history: list[Any],
+) -> dict[str, Any]:
+    raw_value = str(result.get("final_value", ""))
+    correction_candidates = [
+        CorrectionCandidate(
+            value=str(match.get("value", match.get("standard_name", ""))),
+            score=float(match.get("score", 0.0)),
+            context_aligned=bool(match.get("context_aligned", False)),
+            reasons=tuple(match.get("reasons", [])),
+        )
+        for match in history
+        if match.get("value") or match.get("standard_name")
+    ]
+    evidence_present = any(
+        candidate.get("evidence")
+        for candidate in result.get("candidates", [])
+        if candidate.get("source") in {"vlm", "ocr_base"}
+    )
+    decision = decide_correction(
+        field_type=field_type,
+        raw_value=raw_value,
+        candidates=correction_candidates,
+        evidence_present=evidence_present,
+    )
+    result["knowledge_trace"] = {
+        "original_value": decision.original_value,
+        "history_candidate": decision.candidate_value,
+        "final_value": decision.value,
+        "decision": decision.action,
+        "score": decision.score,
+        "margin": round(decision.margin, 4),
+        "reasons": list(decision.reasons),
+    }
+    for match in history[:3]:
+        value = str(match.get("value", match.get("standard_name", "")))
+        if value:
+            result.setdefault("candidates", []).append(
+                {
+                    "value": value,
+                    "source": "knowledge_history",
+                    "confidence": float(match.get("score", 0.0)),
+                    "evidence": [],
+                    "context_aligned": bool(
+                        match.get("context_aligned", False)
+                    ),
+                    "reasons": list(match.get("reasons", [])),
+                }
+            )
+    if decision.action == "AUTO_CORRECT":
+        result["final_value"] = decision.value
+        result["final_source"] = "knowledge_assisted"
+        result["final_confidence"] = round(
+            min(0.98, max(float(result.get("final_confidence", 0.0)), decision.score)),
+            4,
+        )
+    elif decision.action == "SUGGEST":
+        result["status"] = "NEED_REVIEW"
+    result.setdefault("reasons", []).append(
+        f"knowledge:{decision.action}"
+    )
+    return result
 
 
 def _extract_records_from_vlm(vlm_result: dict[str, Any]) -> list[dict[str, Any]]:

@@ -88,11 +88,11 @@ def knowledge_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from lite_app import main
 
     with TestClient(main.app) as client:
-        yield client, formula_ids, source_jobs
+        yield client, formula_ids, source_jobs, db_path, evidence_path
 
 
 def test_knowledge_tree_detail_and_comparison(knowledge_client):
-    client, (older, newer), source_jobs = knowledge_client
+    client, (older, newer), source_jobs, _db_path, _evidence_path = knowledge_client
 
     tree = client.get("/api/knowledge/tree?q=G30A").json()
     product = tree["customers"][0]["products"][0]
@@ -119,7 +119,7 @@ def test_knowledge_tree_detail_and_comparison(knowledge_client):
 
 
 def test_knowledge_page_is_customer_product_date_timeline(knowledge_client):
-    client, _formula_ids, _source_jobs = knowledge_client
+    client, _formula_ids, _source_jobs, _db_path, _evidence_path = knowledge_client
 
     page = client.get("/knowledge")
 
@@ -132,10 +132,39 @@ def test_knowledge_page_is_customer_product_date_timeline(knowledge_client):
 
 
 def test_pending_review_identifies_formula_and_material(knowledge_client):
-    client, _formula_ids, _source_jobs = knowledge_client
+    client, _formula_ids, _source_jobs, _db_path, _evidence_path = knowledge_client
 
     pending = client.get("/api/knowledge/pending").json()
 
     assert pending["total"] == 1
     assert pending["items"][0]["product"] == "G30A"
     assert pending["items"][0]["materials"] == ["PA66"]
+
+
+def test_evidence_path_cannot_escape_data_root(knowledge_client):
+    client, (_older, newer), _source_jobs, db_path, _evidence_path = knowledge_client
+    detail = client.get(f"/api/knowledge/formulas/{newer}").json()
+    evidence_url = detail["evidence"][0]["image_url"]
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        "UPDATE formula_evidence SET relative_path = '../secret.xlsx'"
+    )
+    connection.commit()
+    connection.close()
+
+    response = client.get(evidence_url)
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "证据路径无效"
+
+
+def test_evidence_sha_mismatch_is_rejected(knowledge_client):
+    client, (_older, newer), _source_jobs, _db_path, evidence_path = knowledge_client
+    detail = client.get(f"/api/knowledge/formulas/{newer}").json()
+    evidence_url = detail["evidence"][0]["image_url"]
+    evidence_path.write_bytes(b"tampered")
+
+    response = client.get(evidence_url)
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "证据校验失败"
