@@ -16,6 +16,7 @@ def review_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     jobs_dir = tmp_path / "jobs"
     data_dir = tmp_path / "data"
     monkeypatch.setenv("JOBS_DIR", str(jobs_dir))
+    monkeypatch.setenv("KNOWLEDGE_DB_PATH", str(data_dir / "knowledge.sqlite3"))
     monkeypatch.setenv("DEMO_MODE", "true")
 
     from lite_app import main
@@ -145,6 +146,53 @@ def test_review_api_supports_business_structure_lifecycle_and_undo(review_client
     assert removed.status_code == 200
     final = FinalResultService(storage.get_job_dir(job_id)).load()
     assert len(final["pages"][0]["product_sections"][0]["formulas"]) == 1
+
+
+def test_finalize_appends_knowledge_writes_receipt_and_enters_ready(review_client):
+    client, storage, job_id = review_client
+    job = storage.get_job(job_id)
+    job.update(
+        {
+            "demo_mode": False,
+            "recognition_run_id": "review-run",
+            "final_result_run_id": "review-run",
+            "ocr_engine": {"effective_provider": "paddleocr_v6", "loaded": True},
+            "vision_engine": {
+                "provider": "openai_compatible",
+                "model": "qwen3.7-plus",
+                "healthy": True,
+            },
+        }
+    )
+    storage.save_job(job)
+    service = FinalResultService(storage.get_job_dir(job_id))
+    final = service.load()
+    final["recognition_run_id"] = "review-run"
+    service.replace(final)
+
+    view = client.get(f"/api/jobs/{job_id}/review").json()
+    formula = view["groups"][0]["formulas"][0]
+    saved = client.patch(
+        f"/api/jobs/{job_id}/review/formulas/{formula['id']}",
+        json={"version": view["version"], "record_date": "2026-07-27"},
+    ).json()
+    saved = client.patch(
+        f"/api/jobs/{job_id}/review/formulas/{formula['id']}/materials/material_001",
+        json={"version": saved["version"], "amount": "60"},
+    ).json()
+    confirmed = client.post(
+        f"/api/jobs/{job_id}/review/formulas/{formula['id']}/confirm",
+        json={"version": saved["version"]},
+    ).json()
+
+    response = client.post(f"/api/jobs/{job_id}/finalize")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "READY"
+    assert response.json()["receipt"]["formula_count"] == 1
+    assert (storage.get_job_dir(job_id) / "review" / "finalization.json").exists()
+    assert storage.get_job(job_id)["status"] == "READY"
+    assert confirmed["confirmed"] is True
 
 
 def test_job_page_is_business_review_workspace_and_old_result_redirects(review_client):

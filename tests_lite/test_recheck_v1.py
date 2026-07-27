@@ -12,6 +12,7 @@ from PIL import Image
 
 from lite_app.exporter import export_job
 from lite_app.final_result import FinalResultService, project_final_result
+from lite_app.grouping.service import final_result_fingerprint
 from lite_app.ocr.base import OCRPage, OCRToken
 from lite_app.readiness import iter_final_fields
 from lite_app.review.recheck import RecheckError, crop_field_region, recheck_fields
@@ -201,6 +202,10 @@ async def test_batch_recheck_uses_correct_pages_one_vlm_call_and_updates_excel(
     job["status"] = "READY"
     job["final_result_run_id"] = "recheck-run"
     storage.save_job(job)
+    write_json_atomic(
+        storage.get_job_dir(job["id"]) / "review" / "finalization.json",
+        {"final_result_sha256": final_result_fingerprint(final)},
+    )
     filename = export_job(job["id"], storage)
     workbook = load_workbook(storage.get_job_dir(job["id"]) / filename, data_only=True)
     assert workbook["配方明细"]["G2"].value == "0.15"

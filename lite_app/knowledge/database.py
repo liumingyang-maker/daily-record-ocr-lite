@@ -145,7 +145,15 @@ class KnowledgeDB:
     def initialize(self) -> None:
         """创建表结构。"""
         conn = self._get_conn()
+        from .migrations import apply_migrations
+
+        formulas_exist = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='formulas'"
+        ).fetchone()
+        if formulas_exist:
+            apply_migrations(conn, self.db_path)
         conn.executescript(_SCHEMA_SQL)
+        apply_migrations(conn, self.db_path)
         correction_columns = {
             str(row["name"])
             for row in conn.execute("PRAGMA table_info(correction_logs)").fetchall()

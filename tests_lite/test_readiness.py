@@ -8,8 +8,10 @@ import json
 from lite_app.contracts import normalize_legacy_result
 from lite_app.final_result import FinalResultService, project_final_result
 from lite_app.grouping.models import BusinessEntities
+from lite_app.grouping.service import final_result_fingerprint
 from lite_app.grouping.storage import save_business_entities
-from lite_app.readiness import evaluate_ready_gate, iter_final_fields
+from lite_app.readiness import evaluate_content_gate, evaluate_ready_gate, iter_final_fields
+from lite_app.storage import write_json_atomic
 
 
 def _ready_case(storage):
@@ -43,11 +45,28 @@ def _ready_case(storage):
     return job, final
 
 
-def test_ready_gate_accepts_only_complete_real_current_result(storage):
+def test_ready_gate_requires_matching_finalization_receipt(storage):
     job, final = _ready_case(storage)
+    job_dir = storage.get_job_dir(job["id"])
+    content = evaluate_content_gate(job, final, job_dir)
+    assert content.ready is True
+
+    before_receipt = evaluate_ready_gate(job, final, job_dir)
+    assert before_receipt.ready is False
+    assert any("确认回执" in reason for reason in before_receipt.reasons)
+
+    write_json_atomic(
+        job_dir / "review" / "finalization.json",
+        {"final_result_sha256": final_result_fingerprint(final)},
+    )
     gate = evaluate_ready_gate(job, final, storage.get_job_dir(job["id"]))
     assert gate.ready is True
     assert gate.reasons == []
+
+    final["updated_at"] = "changed"
+    stale = evaluate_ready_gate(job, final, job_dir)
+    assert stale.ready is False
+    assert any("确认回执" in reason for reason in stale.reasons)
 
 
 def test_ready_gate_rejects_demo_company_empty_and_unavailable_provider(storage):

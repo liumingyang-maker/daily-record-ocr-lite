@@ -8,6 +8,7 @@
     const root = document.getElementById("review-groups");
     const summary = document.getElementById("review-summary");
     const feedback = document.getElementById("review-feedback");
+    const finalize = document.getElementById("review-finalize");
     const toggle = document.getElementById("toggle-formulas");
     let version = "";
     let saveChain = Promise.resolve();
@@ -91,12 +92,32 @@
     function render(view) {
         root.replaceChildren();
         summary.textContent = `共 ${view.summary.total_formulas} 条 · 待处理 ${view.summary.needs_confirmation} 条 · 已确认 ${view.summary.confirmed} 条`;
+        renderFinalize(view.summary);
         if (!view.groups.length) {
             const template = document.getElementById("review-empty-template");
             root.append(template.content.cloneNode(true));
             return;
         }
         view.groups.forEach((group) => root.append(renderGroup(group)));
+    }
+
+    function renderFinalize(counts) {
+        finalize.replaceChildren();
+        const allConfirmed = counts.total_formulas > 0 && counts.confirmed === counts.total_formulas;
+        finalize.hidden = !allConfirmed;
+        if (!allConfirmed) return;
+        finalize.append(
+            node("p", "", "所有配方都已确认。加入知识库后即可导出 Excel。"),
+            button("确认完成并加入知识库", "btn btn-primary", () => queueSave(
+                () => api(`/api/jobs/${encodeURIComponent(jobId)}/finalize`, {
+                    method: "POST",
+                    body: JSON.stringify({}),
+                }).then((payload) => {
+                    window.location.reload();
+                    return payload;
+                }),
+            )),
+        );
     }
 
     function renderGroup(group) {

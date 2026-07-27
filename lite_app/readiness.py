@@ -14,6 +14,7 @@ from .contracts import (
 )
 from .grouping.service import final_result_fingerprint
 from .grouping.storage import load_business_entities
+from .storage import read_json_optional
 
 _RESOLVED_STATUSES = {
     "AUTO_ACCEPT",
@@ -109,11 +110,12 @@ def collect_unresolved_fields(final: dict[str, Any]) -> list[str]:
     return unresolved
 
 
-def evaluate_ready_gate(
+def evaluate_content_gate(
     job: dict[str, Any],
     final: dict[str, Any],
     job_dir: Path,
 ) -> ReadyGateResult:
+    """Check recognized content and projections before knowledge finalization."""
     validation = validate_final_result_contract(final)
     validation.fatal.extend(
         validate_page_coverage(final, expected_pages=len(job.get("images", [])))
@@ -185,4 +187,25 @@ def evaluate_ready_gate(
         unresolved_fields=unresolved,
         reasons=reasons,
         validation=validation,
+    )
+
+
+def evaluate_ready_gate(
+    job: dict[str, Any],
+    final: dict[str, Any],
+    job_dir: Path,
+) -> ReadyGateResult:
+    """Require content readiness plus a receipt bound to this exact FinalResult."""
+    content = evaluate_content_gate(job, final, job_dir)
+    reasons = list(content.reasons)
+    receipt = read_json_optional(job_dir / "review" / "finalization.json")
+    if not isinstance(receipt, dict) or receipt.get(
+        "final_result_sha256"
+    ) != final_result_fingerprint(final):
+        reasons.append("最终确认回执缺失或已失效")
+    return ReadyGateResult(
+        ready=not reasons,
+        unresolved_fields=content.unresolved_fields,
+        reasons=reasons,
+        validation=content.validation,
     )

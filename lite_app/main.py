@@ -30,6 +30,7 @@ from .final_result import (
 from .presentation import present_stored_job
 from .readiness import (
     collect_unresolved_fields,
+    evaluate_content_gate,
     evaluate_ready_gate,
     validate_final_result_contract,
 )
@@ -38,7 +39,7 @@ from .review_state import ReviewStateStore, confirm_formula
 from .review_view import build_review_view
 from .settings import SettingsService
 from .status import JobStatus, SetupState
-from .storage import JobStorage
+from .storage import JobStorage, write_json_atomic
 from .upload_options import VALID_ROTATIONS, normalize_rotations
 
 logger = logging.getLogger(__name__)
@@ -1205,9 +1206,8 @@ async def update_field(job_id: str, field_id: str, request: Request):
     }
 
 
-@app.post("/api/jobs/{job_id}/confirm")
-async def confirm_job(job_id: str):
-    """仅在正式 FinalResult 完整、有效且无待复核字段时确认。"""
+def _finalize_job(job_id: str) -> dict:
+    """Append confirmed formulas, bind a receipt, then cross the READY gate."""
     storage = _get_storage()
     try:
         job = storage.get_job(job_id)
@@ -1223,26 +1223,67 @@ async def confirm_job(job_id: str):
         storage.save_job(job)
         raise HTTPException(status_code=409, detail=job["status_message"]) from exc
 
-    gate = evaluate_ready_gate(job, final, job_dir)
-    if not gate.ready:
+    content = evaluate_content_gate(job, final, job_dir)
+    if not content.ready:
         job["status"] = JobStatus.REVIEW_REQUIRED
         job["validation_errors"] = [
-            issue.to_dict() for issue in gate.validation.issues
+            issue.to_dict() for issue in content.validation.issues
         ]
-        job["status_message"] = "；".join(gate.reasons)
+        job["status_message"] = "；".join(content.reasons)
         storage.save_job(job)
         raise HTTPException(
             status_code=409,
             detail={
                 "message": job["status_message"],
-                "unresolved_fields": gate.unresolved_fields[:20],
+                "unresolved_fields": content.unresolved_fields[:20],
             },
         )
 
+    from .knowledge.history import KnowledgeHistory
+
+    state = ReviewStateStore(job_dir)
+    history = KnowledgeHistory(
+        Path(os.environ.get("KNOWLEDGE_DB_PATH", PROJECT_ROOT / "data" / "knowledge.sqlite3"))
+    )
+    try:
+        receipt = history.append_confirmed_job(
+            job,
+            final,
+            state.confirmed_hashes(final),
+        )
+    except (ValueError, FinalResultError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    finally:
+        history.close()
+
+    write_json_atomic(job_dir / "review" / "finalization.json", receipt)
+    gate = evaluate_ready_gate(job, final, job_dir)
+    if not gate.ready:
+        job["status"] = JobStatus.REVIEW_REQUIRED
+        job["status_message"] = "；".join(gate.reasons)
+        storage.save_job(job)
+        raise HTTPException(status_code=409, detail=job["status_message"])
+
     job["status"] = JobStatus.READY
-    job["status_message"] = "所有 READY Gate 均已确认。"
+    job["status_message"] = "配方已确认并加入知识库，可以导出 Excel。"
     storage.save_job(job)
-    return {"status": JobStatus.READY}
+    return {
+        "status": JobStatus.READY,
+        "saved": True,
+        "message": job["status_message"],
+        "receipt": receipt,
+    }
+
+
+@app.post("/api/jobs/{job_id}/finalize")
+async def finalize_job(job_id: str):
+    return _finalize_job(job_id)
+
+
+@app.post("/api/jobs/{job_id}/confirm")
+async def confirm_job(job_id: str):
+    """Compatibility alias for whole-job finalization."""
+    return _finalize_job(job_id)
 
 
 @app.post("/api/jobs/{job_id}/fields/{field_id}/recheck")

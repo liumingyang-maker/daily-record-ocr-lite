@@ -25,6 +25,7 @@ def v1_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     jobs_dir = tmp_path / "jobs"
     data_dir = tmp_path / "data"
     monkeypatch.setenv("JOBS_DIR", str(jobs_dir))
+    monkeypatch.setenv("KNOWLEDGE_DB_PATH", str(data_dir / "knowledge.sqlite3"))
     monkeypatch.setenv("DEMO_MODE", "true")
 
     from lite_app import main
@@ -386,6 +387,17 @@ def test_final_result_manual_value_is_excel_source(v1_client):
     ][0]["amount"]["value"]
     assert vision_amount == "0.5"
 
+    blocked = client.post(f"/api/jobs/{job_id}/export")
+    assert blocked.status_code == 400
+    review = client.get(f"/api/jobs/{job_id}/review").json()
+    formula_id = review["groups"][0]["formulas"][0]["id"]
+    confirmed = client.post(
+        f"/api/jobs/{job_id}/review/formulas/{formula_id}/confirm",
+        json={"version": review["version"]},
+    )
+    assert confirmed.status_code == 200
+    finalized = client.post(f"/api/jobs/{job_id}/finalize")
+    assert finalized.status_code == 200
     response = client.post(f"/api/jobs/{job_id}/export")
     assert response.status_code == 200
     workbook = load_workbook(

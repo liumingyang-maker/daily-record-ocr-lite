@@ -11,7 +11,9 @@ from openpyxl import load_workbook
 
 from lite_app.exporter import ExportError, _resolve_value, export_job
 from lite_app.final_result import FinalResultService, project_final_result
+from lite_app.grouping.service import final_result_fingerprint
 from lite_app.readiness import iter_final_fields
+from lite_app.storage import write_json_atomic
 
 
 class TestResolveValue:
@@ -104,6 +106,11 @@ class TestExportJob:
             field["status"] = "MANUAL_CONFIRMED"
             field["review_status"] = "MANUAL_CONFIRMED"
         FinalResultService(storage.get_job_dir(job["id"])).replace(final)
+        final = FinalResultService(storage.get_job_dir(job["id"])).load()
+        write_json_atomic(
+            storage.get_job_dir(job["id"]) / "review" / "finalization.json",
+            {"final_result_sha256": final_result_fingerprint(final)},
+        )
         job["status"] = "READY"
         job["demo_mode"] = False
         job["images"] = [{"source": "source/source_01_test.jpg"}]
@@ -178,6 +185,11 @@ class TestExportJob:
         field["value"] = '=HYPERLINK("https://evil.example","click")'
         field["status"] = "MANUAL_CONFIRMED"
         service.replace(final)
+        final = service.load()
+        write_json_atomic(
+            job_dir / "review" / "finalization.json",
+            {"final_result_sha256": final_result_fingerprint(final)},
+        )
 
         filename = export_job(job_with_result["id"], storage)
         cell = load_workbook(job_dir / filename)["配方明细"]["F2"]
