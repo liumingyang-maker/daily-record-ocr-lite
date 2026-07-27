@@ -375,4 +375,5 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
     .evidence-card { position: static; }
     .evidence-frame { aspect-ratio: auto; min-height: 0; }
     .evidence-frame img { height: auto; max-height: none; }
+    .review-workspace .btn { min-height: 44px; }
 }

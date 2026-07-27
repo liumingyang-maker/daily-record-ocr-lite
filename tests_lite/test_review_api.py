@@ -31,8 +31,10 @@ def review_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     job = storage.create_job()
     job["images"] = [{"source": "source/a.jpg"}]
     job["status"] = "REVIEW_REQUIRED"
+    job["recognition_run_id"] = "review-fixture-run"
     storage.save_job(job)
     final = make_review_final(job["id"])
+    final["recognition_run_id"] = "review-fixture-run"
     FinalResultService(storage.get_job_dir(job["id"])).save(final)
     with TestClient(main.app) as client:
         yield client, storage, job["id"]
@@ -224,20 +226,38 @@ def test_review_evidence_route_verifies_manifest_hash_and_falls_back(review_clie
     crop.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", (800, 600), "white").save(source)
     Image.new("RGB", (400, 300), "white").save(crop)
+    oriented = job_dir / "review" / "evidence" / "page_001_oriented.jpg"
+    Image.new("RGB", (800, 600), "white").save(oriented)
     formula_id = make_review_final(job_id)["pages"][0]["product_sections"][0][
         "formulas"
     ][0]["formula_id"]
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "recognition_run_id": "review-fixture-run",
         "formulas": {
             formula_id: {
+                "formula_id": formula_id,
+                "source_image_index": 1,
+                "source_order": 1,
                 "source_path": "source/a.jpg",
                 "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-                "crop_path": "review/evidence/formula.jpg",
+                "recognition_run_id": "review-fixture-run",
+                "oriented_source_path": "review/evidence/page_001_oriented.jpg",
+                "oriented_source_sha256": hashlib.sha256(
+                    oriented.read_bytes()
+                ).hexdigest(),
+                "crop_path": (
+                    "review/evidence/formula_"
+                    + hashlib.sha256(formula_id.encode()).hexdigest()[:20]
+                    + ".jpg"
+                ),
                 "crop_sha256": hashlib.sha256(crop.read_bytes()).hexdigest(),
             }
         },
     }
+    expected_crop = job_dir / manifest["formulas"][formula_id]["crop_path"]
+    expected_crop.parent.mkdir(parents=True, exist_ok=True)
+    crop.replace(expected_crop)
     (job_dir / "review" / "evidence_regions.json").write_text(
         json.dumps(manifest), encoding="utf-8"
     )
@@ -245,14 +265,32 @@ def test_review_evidence_route_verifies_manifest_hash_and_falls_back(review_clie
     view = client.get(f"/api/jobs/{job_id}/review").json()
     evidence = view["groups"][0]["formulas"][0]["evidence"]
     assert evidence["image_url"].endswith(f"/review/evidence/{formula_id}")
-    assert evidence["full_image_url"].endswith("source/a.jpg")
+    assert evidence["full_image_url"].endswith(f"/review/evidence/{formula_id}/full")
     response = client.get(evidence["image_url"])
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/jpeg"
+    assert client.get(evidence["full_image_url"]).status_code == 200
 
-    crop.write_bytes(b"tampered")
+    expected_crop.write_bytes(b"tampered")
     assert client.get(evidence["image_url"]).status_code == 404
     fallback = client.get(f"/api/jobs/{job_id}/review").json()["groups"][0][
         "formulas"
     ][0]["evidence"]
     assert fallback["image_url"] == fallback["full_image_url"]
+
+
+def test_generic_file_route_cannot_bypass_review_evidence_validation(review_client):
+    client, storage, job_id = review_client
+    job_dir = storage.get_job_dir(job_id)
+    manifest = job_dir / "review" / "evidence_regions.json"
+    crop = job_dir / "review" / "evidence" / "formula.jpg"
+    crop.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text("{}", encoding="utf-8")
+    crop.write_bytes(b"private review evidence")
+
+    assert client.get(
+        f"/jobs/{job_id}/files/review/evidence_regions.json"
+    ).status_code == 404
+    assert client.get(
+        f"/jobs/{job_id}/files/review/evidence/formula.jpg"
+    ).status_code == 404

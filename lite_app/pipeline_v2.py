@@ -26,7 +26,7 @@ from .contracts import (
     validate_page_coverage,
     validate_record_result,
 )
-from .evidence_regions import generate_formula_evidence
+from .evidence_regions import generate_formula_evidence, invalidate_formula_evidence
 from .final_result import FinalResultService, project_final_result
 from .fusion.association import (
     FieldEvidence,
@@ -146,6 +146,7 @@ async def analyze_job_v2(
             }
         )
         storage.save_job(job)
+        invalidate_formula_evidence(job_dir, recognition_run_id)
 
         started = time.time()
         vlm_paths: list[Path] = []
@@ -428,6 +429,7 @@ async def analyze_job_v2(
                 final,
                 ocr_pages,
                 layout_by_page,
+                cfg.preprocess,
             )
         except Exception:
             logger.warning("配方审查证据生成失败，审查页将回退显示整图")

@@ -83,6 +83,21 @@ def test_review_view_preserves_date_text_and_exposes_internal_sort_state():
     assert date["parse_status"] == "KNOWN"
 
 
+def test_unparsed_nonempty_date_is_explicitly_marked_for_confirmation():
+    final = make_review_final("job-review")
+    formula = final["pages"][0]["product_sections"][0]["formulas"][0]
+    formula["record_date"]["value"] = "date unclear"
+    formula["record_date"]["status"] = "AUTO_ACCEPT"
+    formula["materials"][0]["amount"]["status"] = "AUTO_ACCEPT"
+
+    view = build_review_view(_job(), final, confirmed={})
+    presented = view["groups"][0]["formulas"][0]
+
+    assert presented["date"]["parse_status"] == "UNPARSED"
+    assert presented["date"]["needs_confirmation"] is True
+    assert presented["needs_confirmation"] is True
+
+
 def test_review_view_prefers_verified_crop_but_always_keeps_full_image_url():
     final = make_review_final("job-review")
     formula_id = final["pages"][0]["product_sections"][0]["formulas"][0][

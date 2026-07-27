@@ -58,7 +58,7 @@ def prepare_dual_images(
     img = _to_rgb(img)
 
     # 旋转
-    img = _apply_rotation(img, rotation, auto_rotate)
+    img = orient_image(img, rotation, auto_rotate=auto_rotate)
 
     # VLM 图：保留色彩和布局，只做缩放
     vlm_img = _resize_max_side(img, max_side_vlm)
@@ -110,7 +110,7 @@ def prepare_single_image(
 
     img = ImageOps.exif_transpose(img)
     img = _to_rgb(img)
-    img = _apply_rotation(img, rotation, auto_rotate)
+    img = orient_image(img, rotation, auto_rotate=auto_rotate)
     img = _resize_max_side(img, max_side)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -169,7 +169,13 @@ def _to_rgb(img: Image.Image) -> Image.Image:
     return img.convert("RGB")
 
 
-def _apply_rotation(img: Image.Image, rotation: str, auto_rotate: bool) -> Image.Image:
+def orient_image(
+    img: Image.Image,
+    rotation: str,
+    *,
+    auto_rotate: bool = True,
+) -> Image.Image:
+    """Apply the exact orientation used by OCR/VLM preprocessing."""
     if rotation == "auto":
         if auto_rotate:
             width, height = img.size

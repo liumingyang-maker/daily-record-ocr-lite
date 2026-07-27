@@ -64,7 +64,7 @@ def apply_migrations(connection: sqlite3.Connection, db_path: Path) -> Path | No
                 db_path,
                 version=V4_VERSION,
             )
-        _apply_v4(connection)
+        _apply_v4_atomic(connection)
     connection.commit()
     return backup_path
 
@@ -309,6 +309,18 @@ def _apply_v4(connection: sqlite3.Connection) -> None:
         "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
         (V4_VERSION, datetime.now(UTC).isoformat()),
     )
+
+
+def _apply_v4_atomic(connection: sqlite3.Connection) -> None:
+    """Keep the schema change and date backfill in one rollback boundary."""
+    connection.execute("SAVEPOINT knowledge_v4")
+    try:
+        _apply_v4(connection)
+    except BaseException:
+        connection.execute("ROLLBACK TO SAVEPOINT knowledge_v4")
+        connection.execute("RELEASE SAVEPOINT knowledge_v4")
+        raise
+    connection.execute("RELEASE SAVEPOINT knowledge_v4")
 
 
 def _migration_applied(connection: sqlite3.Connection, version: int) -> bool:

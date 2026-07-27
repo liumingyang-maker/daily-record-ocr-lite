@@ -197,6 +197,7 @@
         "formula_id": {"type": "string", "minLength": 1},
         "formula_no": {"type": "string"},
         "formula_sequence": {"type": "integer", "minimum": 1},
+        "source_order": {"type": "integer", "minimum": 1},
         "record_date": {"$ref": "#/$defs/evidenceField"},
         "record_bbox": {
           "anyOf": [

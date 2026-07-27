@@ -258,6 +258,24 @@ def test_compact_records_preserve_page_customer_and_product_context():
     ][0]["amount"]["value"] == "25"
 
 
+def test_compact_records_preserve_interleaved_page_source_order():
+    from lite_app.contracts import normalize_legacy_result
+
+    raw = {
+        "records": [
+            {"source_image_index": 1, "company": "C", "product_or_series": "A", "formula_no": "A1"},
+            {"source_image_index": 1, "company": "C", "product_or_series": "B", "formula_no": "B1"},
+            {"source_image_index": 1, "company": "C", "product_or_series": "A", "formula_no": "A2"},
+        ]
+    }
+
+    normalized = normalize_legacy_result(raw, "job-order")
+    sections = normalized["pages"][0]["product_sections"]
+
+    assert [formula["source_order"] for formula in sections[0]["formulas"]] == [1, 3]
+    assert [formula["source_order"] for formula in sections[1]["formulas"]] == [2]
+
+
 def test_v1_error_taxonomy_is_importable():
     from lite_app.exporter import UnresolvedReviewError
     from lite_app.fusion.association import AssociationError

@@ -28,10 +28,12 @@ def build_review_view(
     confirmed: dict[str, Any] | None = None,
     *,
     evidence_urls: dict[str, str] | None = None,
+    full_evidence_urls: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Group formulas into customer/product cards with evidence and issue state."""
     confirmed = confirmed or {}
     evidence_urls = evidence_urls or {}
+    full_evidence_urls = full_evidence_urls or {}
     groups: list[dict[str, Any]] = []
     issue_count = 0
     confirmed_count = 0
@@ -51,6 +53,9 @@ def build_review_view(
                     product=product,
                     image_url=image_url,
                     crop_url=evidence_urls.get(str(formula.get("formula_id", "")), ""),
+                    full_crop_url=full_evidence_urls.get(
+                        str(formula.get("formula_id", "")), ""
+                    ),
                     confirmed=bool(confirmed.get(str(formula.get("formula_id", "")), False)),
                 )
                 for formula in section.get("formulas", [])
@@ -95,6 +100,7 @@ def _present_formula(
     product: str,
     image_url: str,
     crop_url: str,
+    full_crop_url: str,
     confirmed: bool,
 ) -> dict[str, Any]:
     formula_id = str(formula.get("formula_id", ""))
@@ -103,6 +109,8 @@ def _present_formula(
     parsed_date = parse_record_date(date["value"])
     date["sort_value"] = parsed_date.sort_value
     date["parse_status"] = parsed_date.status
+    if parsed_date.status == "UNPARSED":
+        date["needs_confirmation"] = True
     date_pending = not date["value"].strip()
     if date_pending:
         date["needs_confirmation"] = False
@@ -143,7 +151,7 @@ def _present_formula(
         ),
         "evidence": {
             "image_url": crop_url or image_url,
-            "full_image_url": image_url,
+            "full_image_url": full_crop_url or image_url,
             "rect": None if crop_url else _normalized_rect(formula.get("record_bbox")),
         },
         "labels": {

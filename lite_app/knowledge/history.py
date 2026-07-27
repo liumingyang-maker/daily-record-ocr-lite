@@ -469,7 +469,11 @@ class KnowledgeHistory:
                 int(page.get("source_image_index", 1)),
                 int(revision["id"]) if revision else None,
                 parsed_date.status,
-                int(formula.get("formula_sequence", 0)),
+                int(
+                    formula.get(
+                        "source_order", formula.get("formula_sequence", 0)
+                    )
+                ),
                 str(formula.get("notes", {}).get("value", "")),
             ),
         )

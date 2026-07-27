@@ -224,6 +224,7 @@ def normalize_legacy_result(result: dict[str, Any], job_id: str = "legacy") -> d
                 "formula_id": formula_id,
                 "formula_no": str(record.get("formula_no", "")),
                 "formula_sequence": sequence,
+                "source_order": sequence,
                 "record_date": _legacy_field(record.get("record_date", "")),
                 "record_bbox": record.get("record_bbox"),
                 "materials": materials,
@@ -254,6 +255,18 @@ def _assign_stable_ids(result: dict[str, Any], job_id: str) -> None:
             section["section_id"] = f"{page_id}__section_{section_position:03d}"
             for formula in section.get("formulas", []):
                 formula_position += 1
+                try:
+                    source_order = int(
+                        formula.get(
+                            "source_order",
+                            formula.get("formula_sequence", formula_position),
+                        )
+                    )
+                except (TypeError, ValueError):
+                    source_order = formula_position
+                formula["source_order"] = (
+                    source_order if source_order > 0 else formula_position
+                )
                 formula["formula_id"] = f"{job_id}__{page_id}__formula_{formula_position:03d}"
                 formula["formula_sequence"] = formula_position
                 for material_position, material in enumerate(formula.get("materials", []), 1):

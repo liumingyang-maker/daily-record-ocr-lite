@@ -944,6 +944,15 @@ async def export_api(job_id: str):
 @app.get("/jobs/{job_id}/files/{filename:path}")
 async def download_file(job_id: str, filename: str):
     storage = _get_storage()
+    normalized = "/".join(
+        part
+        for part in str(filename).replace("\\", "/").split("/")
+        if part not in {"", "."}
+    )
+    if normalized == "review/evidence_regions.json" or normalized.startswith(
+        "review/evidence/"
+    ):
+        raise HTTPException(status_code=404, detail="文件不存在。")
     try:
         file_path = storage.get_file_path(job_id, filename)
     except (FileNotFoundError, ValueError) as e:
@@ -1019,19 +1028,35 @@ async def get_review(job_id: str):
     except FinalResultError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     job_dir = storage.get_job_dir(job_id)
+    evidence_hash_cache: dict[Path, str] = {}
     evidence_urls = {
         formula_id: (
             f"/api/jobs/{quote(job_id, safe='')}/review/evidence/"
             f"{quote(formula_id, safe='')}"
         )
         for formula_id in _formula_ids(final)
-        if verified_evidence_path(job_dir, formula_id) is not None
+        if verified_evidence_path(
+            job_dir,
+            formula_id,
+            job=job,
+            final=final,
+            hash_cache=evidence_hash_cache,
+        )
+        is not None
+    }
+    full_evidence_urls = {
+        formula_id: (
+            f"/api/jobs/{quote(job_id, safe='')}/review/evidence/"
+            f"{quote(formula_id, safe='')}/full"
+        )
+        for formula_id in evidence_urls
     }
     view = build_review_view(
         job,
         final,
         state.confirmation_map(final),
         evidence_urls=evidence_urls,
+        full_evidence_urls=full_evidence_urls,
     )
     view["version"] = str(final["updated_at"])
     return view
@@ -1039,16 +1064,42 @@ async def get_review(job_id: str):
 
 @app.get("/api/jobs/{job_id}/review/evidence/{formula_id}")
 async def get_review_evidence(job_id: str, formula_id: str):
-    storage, _job, editor, _state = _review_resources(job_id)
+    storage, job, editor, _state = _review_resources(job_id)
     try:
         final = editor.load()
     except FinalResultError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if formula_id not in _formula_ids(final):
         raise HTTPException(status_code=404, detail="配方证据不存在。")
-    path = verified_evidence_path(storage.get_job_dir(job_id), formula_id)
+    path = verified_evidence_path(
+        storage.get_job_dir(job_id),
+        formula_id,
+        job=job,
+        final=final,
+    )
     if path is None:
         raise HTTPException(status_code=404, detail="配方证据不存在或校验失败。")
+    return FileResponse(path, media_type="image/jpeg")
+
+
+@app.get("/api/jobs/{job_id}/review/evidence/{formula_id}/full")
+async def get_review_full_image(job_id: str, formula_id: str):
+    storage, job, editor, _state = _review_resources(job_id)
+    try:
+        final = editor.load()
+    except FinalResultError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if formula_id not in _formula_ids(final):
+        raise HTTPException(status_code=404, detail="配方证据不存在。")
+    path = verified_evidence_path(
+        storage.get_job_dir(job_id),
+        formula_id,
+        job=job,
+        final=final,
+        kind="full",
+    )
+    if path is None:
+        raise HTTPException(status_code=404, detail="整图证据不存在或校验失败。")
     return FileResponse(path, media_type="image/jpeg")
 
 
