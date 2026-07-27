@@ -28,6 +28,7 @@
 - 不在普通页面提供完整 JSON 编辑器；高级诊断仍可保留只读入口。
 - 不在本任务中合并、Tag 或发布版本；先创建并验证独立 Draft PR。
 - 不重做为 React、Vue 等新前端框架，继续使用 FastAPI、Jinja、原生 JavaScript 和现有 CSS。
+- 桌面安装包由配套规格 `2026-07-27-desktop-installers-design.md` 单独实施；本规格只提供其需要的稳定应用和数据目录接口。
 
 ## 4. 统一业务语言
 
