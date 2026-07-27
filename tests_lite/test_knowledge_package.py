@@ -1,5 +1,6 @@
 import hashlib
 import json
+import sqlite3
 import stat
 import zipfile
 from pathlib import Path
@@ -9,6 +10,7 @@ import pytest
 
 from lite_app.knowledge.package import (
     KnowledgePackageError,
+    KnowledgePackageService,
     validate_knowledge_package,
 )
 
@@ -240,3 +242,28 @@ def test_amount_normalization_is_forbidden(tmp_path: Path) -> None:
 
     with pytest.raises(KnowledgePackageError, match="normalized_amount"):
         validate_knowledge_package(package, tmp_path / "previews")
+
+
+def test_database_changes_only_after_explicit_preview_commit(
+    tmp_path: Path,
+) -> None:
+    package = _write_package(tmp_path / "commit.zip")
+    data_dir = tmp_path / "data"
+    database = data_dir / "knowledge.sqlite3"
+    service = KnowledgePackageService(database, data_dir)
+
+    preview = service.validate(package)
+
+    assert not database.exists()
+    summary = service.commit_preview(preview.preview_id)
+    assert summary.formulas_imported == 1
+    with sqlite3.connect(database) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM formulas"
+        ).fetchone()[0] == 1
+        evidence_path = connection.execute(
+            "SELECT relative_path FROM formula_evidence LIMIT 1"
+        ).fetchone()[0]
+    assert evidence_path.startswith(
+        f"personal_imports/previews/{preview.preview_id}/evidence/"
+    )

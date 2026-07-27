@@ -3,6 +3,13 @@
 [![CI](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/ci.yml)
 [![Real OCR](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/real-ocr.yml/badge.svg?branch=master)](https://github.com/liumingyang-maker/daily-record-ocr-lite/actions/workflows/real-ocr.yml)
 
+## 让其他 AI 整理历史配方
+
+请让 AI 生成带 Manifest、JSONL、必要证据和 SHA-256 的标准 ZIP，不要让 AI
+直接修改 SQLite。系统先预检和预览，用户明确确认后才事务导入。可复制提示词、
+精确字段、排除规则、ZIP 目录和校验命令见
+[`docs/AI_KNOWLEDGE_PACKAGE.md`](docs/AI_KNOWLEDGE_PACKAGE.md)。
+
 将中文手写生产记录、配方记录或日常记录图片，通过 PP-OCRv6、Qwen3.7 Plus 视觉模型、
 OCR/Layout/Vision 融合和人工复核，转换为结构化记录，并导出为 Excel。
 

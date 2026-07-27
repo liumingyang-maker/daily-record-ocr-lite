@@ -17,6 +17,7 @@ from lite_app.knowledge.legacy_builder import (
     prepare_personal_import,
     scan_summary,
 )
+from lite_app.knowledge.package import KnowledgePackageService
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -36,6 +37,14 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--run-id", required=True)
         if name == "import":
             command.add_argument("--database", type=Path, required=True)
+    validate_package = subparsers.add_parser("validate-package")
+    validate_package.add_argument("--package", type=Path, required=True)
+    validate_package.add_argument("--data-dir", type=Path, required=True)
+    validate_package.add_argument("--report", type=Path, required=True)
+    commit_package = subparsers.add_parser("commit-package")
+    commit_package.add_argument("--preview-id", required=True)
+    commit_package.add_argument("--data-dir", type=Path, required=True)
+    commit_package.add_argument("--database", type=Path, required=True)
     return parser
 
 
@@ -44,6 +53,25 @@ def main(arguments: list[str] | None = None) -> int:
     if args.command == "scan":
         summary = scan_summary(args.source)
         _write_json(args.report, summary)
+        print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+        return 0
+    if args.command == "validate-package":
+        service = KnowledgePackageService(
+            args.data_dir / "knowledge.sqlite3",
+            args.data_dir,
+        )
+        preview = service.validate(args.package)
+        payload = asdict(preview)
+        payload["staging_dir"] = str(preview.staging_dir)
+        _write_json(args.report, payload)
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        return 0
+    if args.command == "commit-package":
+        service = KnowledgePackageService(
+            args.database,
+            args.data_dir,
+        )
+        summary = asdict(service.commit_preview(args.preview_id))
         print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
         return 0
 

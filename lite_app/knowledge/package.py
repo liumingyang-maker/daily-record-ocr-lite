@@ -7,11 +7,27 @@ import json
 import stat
 import tempfile
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from jsonschema import Draft202012Validator
+
+from .import_models import (
+    ExtractionIssue,
+    FormulaCandidate,
+    LexiconTermCandidate,
+    MaterialCandidate,
+    ProcessParameterCandidate,
+    SourceSpan,
+)
+from .import_records import FormulaSourceRecord, deduplicate_formulas
+from .import_service import (
+    ImportSummary,
+    PersonalImportBatch,
+    PersonalImportService,
+    StagedIssue,
+)
 
 SCHEMA_PATH = (
     Path(__file__).resolve().parents[2]
@@ -49,6 +65,41 @@ class KnowledgePackagePreview:
     pending_count: int
     excluded_count: int
     evidence_count: int
+
+
+class KnowledgePackageService:
+    """Keep validation read-only and require an explicit preview commit."""
+
+    def __init__(self, database_path: Path, data_root: Path) -> None:
+        self.database_path = Path(database_path).resolve()
+        self.data_root = Path(data_root).resolve()
+        self.preview_root = (
+            self.data_root / "personal_imports" / "previews"
+        )
+        if self.database_path.parent != self.data_root:
+            raise ValueError("database_path must be directly inside data_root")
+
+    def validate(self, archive_path: Path) -> KnowledgePackagePreview:
+        return validate_knowledge_package(archive_path, self.preview_root)
+
+    def commit_preview(self, preview_id: str) -> ImportSummary:
+        if (
+            len(preview_id) != 64
+            or any(char not in "0123456789abcdef" for char in preview_id)
+        ):
+            raise KnowledgePackageError("invalid preview_id")
+        preview_dir = (self.preview_root / preview_id).resolve()
+        if preview_dir.parent != self.preview_root:
+            raise KnowledgePackageError("unsafe preview path")
+        batch = _batch_from_staged_preview(
+            preview_dir,
+            self.data_root,
+        )
+        service = PersonalImportService(self.database_path)
+        try:
+            return service.import_batch(batch)
+        finally:
+            service.close()
 
 
 def validate_knowledge_package(
@@ -539,3 +590,207 @@ def _file_sha256(path: Path) -> str:
 
 def _bytes_sha256(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
+
+
+def _batch_from_staged_preview(
+    preview_dir: Path,
+    data_root: Path,
+) -> PersonalImportBatch:
+    payloads, manifest = _verify_staged_preview(preview_dir)
+    records = {
+        path: _parse_jsonl(payloads[path], path)
+        for path in JSONL_FILES
+    }
+    _validate_records(records, payloads)
+    provenance_by_formula: dict[str, list[dict[str, Any]]] = {}
+    for source in records["provenance.jsonl"]:
+        provenance_by_formula.setdefault(
+            str(source["formula_id"]),
+            [],
+        ).append(source)
+
+    source_records: list[FormulaSourceRecord] = []
+    for order, record in enumerate(records["formulas.jsonl"], 1):
+        formula_id = str(record["formula_id"])
+        sources = provenance_by_formula[formula_id]
+        first_source = sources[0]
+        formula = _formula_candidate(record, first_source, order)
+        for source in sources:
+            source_formula = replace(
+                formula,
+                source_span=_source_span(source),
+            )
+            evidence = [
+                str(path) for path in source["evidence"]
+            ]
+            tight = next(
+                (path for path in evidence if "tight" in Path(path).stem),
+                evidence[0] if evidence else "",
+            )
+            context = next(
+                (
+                    path
+                    for path in evidence
+                    if "context" in Path(path).stem
+                ),
+                "",
+            )
+            source_records.append(
+                FormulaSourceRecord(
+                    formula=source_formula,
+                    source_path=str(source["source_file"]),
+                    cell_range=str(source["cell_range"]),
+                    tight_evidence=_data_relative_path(
+                        preview_dir / tight,
+                        data_root,
+                    ),
+                    context_evidence=(
+                        _data_relative_path(
+                            preview_dir / context,
+                            data_root,
+                        )
+                        if context
+                        else ""
+                    ),
+                    tight_sha256=_file_sha256(preview_dir / tight),
+                    context_sha256=(
+                        _file_sha256(preview_dir / context)
+                        if context
+                        else ""
+                    ),
+                )
+            )
+
+    lexicon = tuple(
+        LexiconTermCandidate(
+            term_type=record["term_type"],
+            value=str(record["standard_value"]),
+            source_quality=record["source_quality"],
+        )
+        for record in records["lexicon.jsonl"]
+    )
+    pending = tuple(
+        StagedIssue(
+            source_path="AI_PACKAGE",
+            sheet_name="",
+            issue=ExtractionIssue(
+                reason=str(record["reason"]),
+                start_row=0,
+                end_row=0,
+                details=json.dumps(
+                    record["payload"],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            ),
+        )
+        for record in records["pending_review.jsonl"]
+    )
+    exclusions = tuple(
+        StagedIssue(
+            source_path=str(record["source_file"]),
+            sheet_name="",
+            issue=ExtractionIssue(
+                reason=str(record["reason"]),
+                start_row=0,
+                end_row=0,
+            ),
+        )
+        for record in records["excluded_files.jsonl"]
+    )
+    return PersonalImportBatch(
+        run_id=str(manifest["package_id"]),
+        formulas=deduplicate_formulas(source_records),
+        lexicon_terms=lexicon,
+        pending=pending,
+        exclusions=exclusions,
+    )
+
+
+def _verify_staged_preview(
+    preview_dir: Path,
+) -> tuple[dict[str, bytes], dict[str, Any]]:
+    marker_path = preview_dir / ".validated-package.json"
+    if not marker_path.is_file():
+        raise KnowledgePackageError("validated preview marker is missing")
+    manifest_bytes = (preview_dir / "manifest.json").read_bytes()
+    manifest = _load_json_object(manifest_bytes, "manifest.json")
+    _validate_manifest(manifest)
+    declared = _declared_files(manifest)
+    checksums = _parse_checksums(
+        (preview_dir / "checksums.sha256").read_bytes()
+    )
+    if checksums.get("manifest.json") != _bytes_sha256(manifest_bytes):
+        raise KnowledgePackageError("staged manifest checksum mismatch")
+    payloads: dict[str, bytes] = {}
+    for path, declaration in declared.items():
+        source = preview_dir.joinpath(*PurePosixPath(path).parts)
+        if not source.is_file():
+            raise KnowledgePackageError(
+                f"staged package member is missing: {path}"
+            )
+        content = source.read_bytes()
+        digest = _bytes_sha256(content)
+        if (
+            len(content) != declaration["size"]
+            or digest != declaration["sha256"]
+            or digest != checksums.get(path)
+        ):
+            raise KnowledgePackageError(
+                f"staged package checksum mismatch: {path}"
+            )
+        payloads[path] = content
+    return payloads, manifest
+
+
+def _formula_candidate(
+    record: dict[str, Any],
+    source: dict[str, Any],
+    source_order: int,
+) -> FormulaCandidate:
+    return FormulaCandidate(
+        customer=str(record["customer"]),
+        product=str(record["product"]),
+        record_date=record["record_date"],
+        date_status=record["date_status"],
+        source_order=source_order,
+        formula_label=str(record["formula_label"]),
+        materials=tuple(
+            MaterialCandidate(
+                name_raw=str(item["name_raw"]),
+                amount_raw=str(item["amount_raw"]),
+                column=index,
+            )
+            for index, item in enumerate(record["materials"], 1)
+        ),
+        process_parameters=tuple(
+            ProcessParameterCandidate(
+                name_raw=str(item["name_raw"]),
+                value_raw=str(item["value_raw"]),
+                column=index,
+            )
+            for index, item in enumerate(record["process"], 1)
+        ),
+        notes_raw=str(record["notes_raw"]),
+        confidence=1.0,
+        source_span=_source_span(source),
+    )
+
+
+def _source_span(source: dict[str, Any]) -> SourceSpan:
+    return SourceSpan(
+        sheet_name=str(source["sheet_name"]),
+        start_row=0,
+        end_row=0,
+        start_column=0,
+        end_column=0,
+    )
+
+
+def _data_relative_path(path: Path, data_root: Path) -> str:
+    try:
+        return path.resolve().relative_to(data_root.resolve()).as_posix()
+    except ValueError as exc:
+        raise KnowledgePackageError(
+            "preview evidence is outside data_root"
+        ) from exc

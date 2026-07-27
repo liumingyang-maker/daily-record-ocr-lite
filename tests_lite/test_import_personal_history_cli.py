@@ -164,3 +164,23 @@ def test_script_path_entry_can_import_the_application(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert "构建并导入专属配方知识库" in result.stdout
+
+
+def test_script_exposes_explicit_package_preview_and_commit_commands(
+    tmp_path: Path,
+) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(PROJECT_ROOT / "scripts" / "import_personal_history.py"),
+            "--help",
+        ],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "validate-package" in result.stdout
+    assert "commit-package" in result.stdout
