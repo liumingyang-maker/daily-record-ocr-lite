@@ -14,15 +14,23 @@ OCR/Layout/Vision 融合和人工复核，转换为结构化记录，并导出�
 
 ## 当前版本状态
 
-- **当前稳定 Release：** `v1.0.1`
-- **master 当前包含：**
-  - Qwen Vision 300 秒超时修复
-  - Pipeline Gate
-  - Windows 安装器 SETUP_REQUIRED 修复
-  - 面向用户的配方卡片审查、按日期追加的知识历史（合并后生效）
-  - 相关改动将在下一稳定版本发布
+- **当前稳定 Release：** [`v1.0.1`](https://github.com/liumingyang-maker/daily-record-ocr-lite/releases/tag/v1.0.1)
+- **下一版本 Draft：**
+  - [PR #7](https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/7)：证据优先的配方卡片审查与按日期追加的知识历史
+  - [PR #8](https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/8)：Windows x64 EXE 与 Apple Silicon macOS DMG 安装层
+  - PR #8 的 Windows/macOS 未签名原生测试 Gate 已通过；正式签名、公证、合并和 Release 尚未执行
 
-**普通用户使用 Release；开发或抢先体验用户使用 master。**
+**普通用户只使用最新稳定 Release；开发或抢先体验用户才使用 Draft 分支或 master。**
+
+## 选择安装方式
+
+普通用户优先从 [最新稳定 Release](https://github.com/liumingyang-maker/daily-record-ocr-lite/releases/latest)
+下载正式资产。如果当前 Release 没有 Windows EXE 或 macOS DMG，请使用下方 Git 安装方式，
+不要把文件名带 `UNSIGNED` 的 CI Artifact 当作正式安装包。
+
+桌面安装层将应用文件与用户数据分开。Windows 数据位于 `%LOCALAPPDATA%\DailyRecordOCR`，
+macOS 数据位于 `~/Library/Application Support/DailyRecordOCR`；安装新版不会用程序文件覆盖
+settings、secrets、jobs、知识库或导出的 Excel。
 
 ## Windows 快速开始
 
@@ -188,11 +196,34 @@ AI 必须输出 `INSTALL_REPORT`，包括真实 OCR 通过数与 doctor 状态�
 
 普通用户默认更新到最新稳定 Release Tag，不拉取尚未发布的 `master`。
 
-Windows Git 安装目录中运行：
+### Windows Git 安装
+
+在项目目录中运行现有安全更新器：
 
 ```powershell
 .\install\update-windows.ps1
 ```
+
+### Linux / macOS Git 安装
+
+先备份 `data/`，再只切换到仓库中最高的稳定版本 Tag：
+
+```bash
+test -z "$(git status --porcelain --untracked-files=no)"
+git fetch --tags --prune
+stable_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)"
+test -n "$stable_tag"
+git switch --detach "$stable_tag"
+```
+
+随后按对应平台安装依赖并运行 `python scripts/doctor.py --full --json`。不要在普通更新中默认
+切换到 `master`，也不要执行 `git reset --hard` 或 `git clean`。
+
+### Windows EXE / macOS DMG 安装
+
+设置页的“版本与更新”只推荐已发布、非预发布的稳定 Release。看到新版本后，从
+[Releases](https://github.com/liumingyang-maker/daily-record-ocr-lite/releases) 下载对应平台的正式
+签名安装器并覆盖安装；平台用户数据目录保持不变。
 
 也可以把下面整段直接复制给 AI：
 
@@ -208,9 +239,10 @@ Windows Git 安装目录中运行：
 完整步骤见 [`docs/AI_AGENT_UPGRADE.md`](docs/AI_AGENT_UPGRADE.md)。`master` 仅供用户
 明确要求抢先体验时使用，不是普通更新的默认目标。
 
-Windows x64 EXE 和 Apple Silicon macOS DMG 的打包层正在独立 Draft PR 中验收。普通用户仍应只从
-**最新稳定 Release** 下载正式资产；文件名带 `UNSIGNED` 的 CI Artifact 仅供测试，可能触发
-SmartScreen 或 Gatekeeper，不能描述为正式无警告安装包。安装、升级、数据保留和签名/公证说明见
+Windows x64 EXE 和 Apple Silicon macOS DMG 已在 [Draft PR #8](https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/8)
+通过未签名原生测试 Gate。普通用户仍应只从 **最新稳定 Release** 下载正式资产；文件名带
+`UNSIGNED` 的 CI Artifact 仅供测试，可能触发 SmartScreen 或 Gatekeeper，不能描述为正式
+无警告安装包。安装、升级、数据保留和签名/公证说明见
 [`docs/DESKTOP_INSTALLERS.md`](docs/DESKTOP_INSTALLERS.md)。
 
 ## 常见问题
