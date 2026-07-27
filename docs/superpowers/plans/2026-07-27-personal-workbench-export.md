@@ -154,4 +154,3 @@ python -m pytest -m "not real_ocr" -q
 python -m ruff check .
 git diff --check
 ```
-

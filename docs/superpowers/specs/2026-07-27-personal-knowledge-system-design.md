@@ -330,4 +330,3 @@ Gate：
 发布前在 `docs/audits/` 生成独立审计报告，顶部包含可直接复制给 GPT 的脱敏
 审查提示词。报告覆盖数据范围、排除项、Commit/PR/Tag、测试与 CI、真实 OCR、
 真实 Qwen、词库 A/B、Secret 扫描、安装验收、Release 资产和遗留风险。
-

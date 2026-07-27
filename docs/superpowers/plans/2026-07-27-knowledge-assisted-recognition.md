@@ -273,4 +273,3 @@ git diff --check
 
 - [ ] Run real OCR and Qwen gates with private local configuration; keep complete
 model content and credentials out of public logs and Git.
-

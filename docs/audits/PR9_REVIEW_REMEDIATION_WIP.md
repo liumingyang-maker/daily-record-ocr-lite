@@ -1,8 +1,8 @@
 # PR #9 独立审查整改审计（WIP）
 
-> 状态：**阻塞 / 保持 Draft / 禁止 Merge、Tag、Release**  
-> 日期：2026-07-27  
-> 分支：`feat/personal-knowledge-layer`  
+> 状态：**阻塞 / 保持 Draft / 禁止 Merge、Tag、Release**
+> 日期：2026-07-27
+> 分支：`feat/personal-knowledge-layer`
 > PR：https://github.com/liumingyang-maker/daily-record-ocr-lite/pull/9
 
 ## 可直接复制给独立 GPT 的复核提示词
@@ -95,4 +95,3 @@
 - Merge：不允许。
 - Tag：不允许。
 - Release：不允许。
-

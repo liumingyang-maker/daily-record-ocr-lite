@@ -146,4 +146,3 @@ git diff | Select-String -Pattern 'sk-(ws|sp)-[A-Za-z0-9._-]+'
 - [ ] Create private tag and Release `v1.1.0-personal.1`.
 - [ ] Attach installer, checksums, manifest, installation guide and redacted audit.
 - [ ] Verify Release assets can be downloaded and their SHA-256 values match.
-
