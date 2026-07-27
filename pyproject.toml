@@ -25,6 +25,12 @@ dependencies = [
 
 [project.scripts]
 daily-record-ocr = "lite_app.main:run"
+daily-record-ocr-desktop = "lite_app.desktop_launcher:main"
+
+[project.optional-dependencies]
+desktop = [
+  "pystray>=0.19,<1",
+]
 
 [tool.setuptools.packages.find]
 include = ["lite_app*"]
