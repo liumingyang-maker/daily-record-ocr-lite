@@ -227,3 +227,72 @@ def test_blank_formula_template_is_excluded_instead_of_pending() -> None:
     assert result.formulas == ()
     assert result.pending == ()
     assert result.exclusions[0].reason == "EMPTY_TEMPLATE"
+
+
+def test_formula_row_date_is_not_treated_as_a_material() -> None:
+    sheet = _sheet(
+        "G30A",
+        [
+            ["G30A"],
+            ["配方", "PA6", "玻纤", "2024-08-09"],
+            [None, "55", "45"],
+        ],
+    )
+
+    result = extract_sheet(sheet, customer_hint="联创")
+
+    assert result.pending == ()
+    formula = result.formulas[0]
+    assert formula.record_date == "2024-08-09"
+    assert [item.name_raw for item in formula.materials] == ["PA6", "玻纤"]
+
+
+def test_trailing_date_on_amount_row_is_used() -> None:
+    sheet = _sheet(
+        "PA6G30",
+        [
+            ["配方", "PA6", "玻纤"],
+            [None, "70", "30", "2022-10-04"],
+        ],
+    )
+
+    result = extract_sheet(sheet, customer_hint="港腾")
+
+    assert result.formulas[0].record_date == "2022-10-04"
+
+
+def test_multiple_dates_in_one_formula_require_review() -> None:
+    sheet = _sheet(
+        "PA6G30",
+        [
+            ["配方", "PA6", "玻纤", "2023-04-26", "2023-06-08"],
+            [None, "70", "30"],
+        ],
+    )
+
+    result = extract_sheet(sheet, customer_hint="飞璜")
+
+    assert result.formulas == ()
+    assert result.pending[0].reason == "MULTIPLE_DATES"
+    assert result.pending[0].formula is not None
+
+
+def test_date_only_row_after_process_belongs_to_previous_formula() -> None:
+    sheet = _sheet(
+        "401S",
+        [
+            ["401S"],
+            ["配方1", "PA66", "玻纤"],
+            [None, "60", "40"],
+            ["工艺", "主机", "喂料"],
+            [None, "465", "20"],
+            ["2023-09-26"],
+            ["配方2", "PA66", "玻纤"],
+            [None, "58", "42"],
+        ],
+    )
+
+    result = extract_sheet(sheet, customer_hint="世讯")
+
+    assert result.formulas[0].record_date == "2023-09-26"
+    assert result.formulas[1].record_date is None

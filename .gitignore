@@ -56,3 +56,5 @@ Thumbs.db
 *.db
 
 data/diagnostics/
+data/personal_imports/
+data/personal_build/

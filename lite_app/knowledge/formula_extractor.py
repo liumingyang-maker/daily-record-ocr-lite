@@ -77,7 +77,7 @@ def extract_sheet(sheet: SheetData, customer_hint: str) -> SheetExtraction:
             if previous_anchor
             else max(1, anchor.row - 3)
         )
-        title, record_date = _title_and_date(
+        title, header_date = _title_and_date(
             sheet,
             start_row=date_scope_start,
             end_row=anchor.row - 1,
@@ -92,6 +92,15 @@ def extract_sheet(sheet: SheetData, customer_hint: str) -> SheetExtraction:
             if anchor.row <= cell.row <= end_row
         )
         materials, amount_row = _extract_materials(sheet, anchor, end_row)
+        dates, date_columns = _block_dates(
+            sheet,
+            header_date,
+            anchor.row,
+            amount_row,
+            end_row,
+        )
+        multiple_dates = len(dates) > 1
+        record_date = dates[0] if len(dates) == 1 else None
         process, process_rows = _extract_process(sheet, amount_row, end_row)
         notes = _extract_notes(
             sheet,
@@ -108,7 +117,8 @@ def extract_sheet(sheet: SheetData, customer_hint: str) -> SheetExtraction:
             end_column=max(
                 [anchor.column]
                 + [item.column for item in materials]
-                + [item.column for item in process],
+                + [item.column for item in process]
+                + list(date_columns),
             ),
         )
         formula = FormulaCandidate(
@@ -171,6 +181,18 @@ def extract_sheet(sheet: SheetData, customer_hint: str) -> SheetExtraction:
                 )
             )
             continue
+        if multiple_dates:
+            pending.append(
+                ExtractionIssue(
+                    reason="MULTIPLE_DATES",
+                    start_row=anchor.row,
+                    end_row=end_row,
+                    details=", ".join(dates),
+                    formula=formula,
+                )
+            )
+            terms.extend(_formula_terms(formula, "candidate"))
+            continue
         if conflict:
             pending.append(
                 ExtractionIssue(
@@ -218,7 +240,9 @@ def _extract_materials(
     material_cells = [
         cell
         for cell in sheet.row_cells(anchor.row)
-        if cell.column > anchor.column and _text(cell.value)
+        if cell.column > anchor.column
+        and _text(cell.value)
+        and _cell_date(cell) is None
     ]
     if not material_cells:
         return (), min(anchor.row + 1, end_row)
@@ -239,6 +263,37 @@ def _extract_materials(
         if _text(cell.value) not in ROW_LABELS
     )
     return materials, amount_row
+
+
+def _block_dates(
+    sheet: SheetData,
+    header_date: str | None,
+    anchor_row: int,
+    amount_row: int,
+    end_row: int,
+) -> tuple[tuple[str, ...], tuple[int, ...]]:
+    dates: list[str] = [header_date] if header_date else []
+    columns: list[int] = []
+    for row in dict.fromkeys((anchor_row, amount_row)):
+        for cell in sheet.row_cells(row):
+            parsed = _standalone_cell_date(cell)
+            if parsed:
+                dates.append(parsed)
+                columns.append(cell.column)
+    for row in range(amount_row + 1, end_row + 1):
+        cells = sheet.row_cells(row)
+        if not cells:
+            continue
+        parsed_cells = [
+            (cell, _standalone_cell_date(cell))
+            for cell in cells
+            if _text(cell.value)
+        ]
+        if parsed_cells and all(parsed for _, parsed in parsed_cells):
+            for cell, parsed in parsed_cells:
+                dates.append(str(parsed))
+                columns.append(cell.column)
+    return tuple(dict.fromkeys(dates)), tuple(dict.fromkeys(columns))
 
 
 def _extract_process(
@@ -316,7 +371,17 @@ def _title_and_date(
             ),
             None,
         )
-        if record_date is None and row_date is not None:
+        has_non_date_context = any(
+            _text(cell.value)
+            and _cell_date(cell) is None
+            and not _looks_numeric(_text(cell.value))
+            for cell in row_cells
+        )
+        if (
+            record_date is None
+            and row_date is not None
+            and (allow_undated_title or has_non_date_context)
+        ):
             record_date = row_date
         if title or (not allow_undated_title and row_date is None):
             continue
@@ -341,6 +406,42 @@ def _cell_date(cell: CellData) -> str | None:
         converted = from_excel(float(value))
         return converted.date().isoformat() if isinstance(converted, datetime) else converted.isoformat()
     return _parse_date(value)
+
+
+def _standalone_cell_date(cell: CellData) -> str | None:
+    if cell.is_date:
+        return _cell_date(cell)
+    value = cell.value
+    if isinstance(value, (int, float)):
+        return _cell_date(cell)
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    try:
+        return date.fromisoformat(text).isoformat()
+    except ValueError:
+        pass
+    match = DATE_PATTERN.fullmatch(text)
+    if match:
+        try:
+            return date(
+                int(match["year"]),
+                int(match["month"]),
+                int(match["day"]),
+            ).isoformat()
+        except ValueError:
+            return None
+    compact = COMPACT_DATE_PATTERN.fullmatch(text)
+    if compact:
+        try:
+            return date(
+                int(compact.group(1)),
+                int(compact.group(2)),
+                int(compact.group(3)),
+            ).isoformat()
+        except ValueError:
+            return None
+    return None
 
 
 def _parse_date(value: CellValue) -> str | None:
