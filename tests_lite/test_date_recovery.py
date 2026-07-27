@@ -134,3 +134,19 @@ def test_recover_formula_date_rejects_valid_date_below_date_band() -> None:
     )
 
     assert candidate is None
+
+
+def test_recover_formula_date_rejects_token_crossing_formula_boundary() -> None:
+    page = _page(_token("p1_t001", "22/9/3", [0, 400, 1000, 650]))
+
+    candidate = recover_formula_date(
+        formula_id="formula_002",
+        vlm_value="",
+        page=page,
+        formula_regions={
+            "formula_001": [0.0, 0.0, 1.0, 0.5],
+            "formula_002": [0.0, 0.5, 1.0, 1.0],
+        },
+    )
+
+    assert candidate is None

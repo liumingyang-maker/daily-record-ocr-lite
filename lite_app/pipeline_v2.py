@@ -499,12 +499,13 @@ def _build_fusion_result(
             record.get("formula_id") or record.get("record_id") or "formula"
         )
         image_index = int((record.get("source_image_indexes") or [1])[0])
-        record_bbox = record.get("record_bbox") or (
+        local_formula_region = (
             (layout or {})
             .get("formula_regions", {})
             .get(str(image_index), {})
             .get(formula_id)
         )
+        record_bbox = local_formula_region or record.get("record_bbox")
         fields.append(
             _fuse_record_date(
                 engine,
@@ -579,6 +580,7 @@ def _build_fusion_result(
                     )
                 )
 
+    _reject_reused_numeric_tokens(engine, fields)
     summary = {
         "total_fields": len(fields),
         "auto_accept": sum(
@@ -679,6 +681,68 @@ def _fuse_record_date(
             "reasons": association.reasons,
         }
     return result
+
+
+def _reject_reused_numeric_tokens(
+    engine: FusionEngine,
+    fields: list[dict[str, Any]],
+) -> None:
+    claims: dict[str, set[str]] = {}
+    for field in fields:
+        if field.get("field_type") not in {"amount", "numeric"}:
+            continue
+        for candidate in field.get("candidates", []):
+            if not str(candidate.get("source", "")).startswith("ocr"):
+                continue
+            for token_id in candidate.get("evidence", []):
+                claims.setdefault(str(token_id), set()).add(
+                    str(field.get("field_id", ""))
+                )
+    reused = {
+        token_id
+        for token_id, field_ids in claims.items()
+        if len(field_ids) > 1
+    }
+    if not reused:
+        return
+    for field in fields:
+        ocr_evidence = {
+            str(token_id)
+            for candidate in field.get("candidates", [])
+            if str(candidate.get("source", "")).startswith("ocr")
+            for token_id in candidate.get("evidence", [])
+        }
+        if not ocr_evidence.intersection(reused):
+            continue
+        safe_candidates = [
+            Candidate(
+                value=str(candidate.get("value", "")),
+                normalized_value=str(candidate.get("value", "")),
+                source="vlm",
+                confidence=float(candidate.get("confidence", 0.0)),
+                evidence=list(candidate.get("evidence", [])),
+            )
+            for candidate in field.get("candidates", [])
+            if candidate.get("source") == "vlm" and candidate.get("value")
+        ]
+        repaired = _fused_to_dict(
+            engine.fuse_field(
+                str(field.get("field_id", "")),
+                str(field.get("field_type", "amount")),
+                safe_candidates,
+            )
+        )
+        repaired = _apply_knowledge_correction(
+            repaired,
+            str(field.get("field_type", "amount")),
+            [],
+        )
+        repaired["status"] = "NEED_REVIEW"
+        repaired.setdefault("reasons", []).append("OCR_NUMERIC_TOKEN_REUSED")
+        repaired["bbox"] = None
+        repaired["source_image_index"] = field.get("source_image_index", 1)
+        field.clear()
+        field.update(repaired)
 
 
 def _fuse_one(

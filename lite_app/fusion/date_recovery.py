@@ -54,11 +54,17 @@ def recover_formula_date(
     date_band_bottom = region[1] + (region[3] - region[1]) * _DATE_BAND_RATIO
     matched: list[tuple[ParsedDateCandidate, OCRToken]] = []
     for token in page.tokens:
-        center_x = token.center_x / page.width
-        center_y = token.center_y / page.height
+        token_bbox = [
+            token.bbox[0] / page.width,
+            token.bbox[1] / page.height,
+            token.bbox[2] / page.width,
+            token.bbox[3] / page.height,
+        ]
         if not (
-            region[0] <= center_x <= region[2]
-            and region[1] <= center_y <= date_band_bottom
+            region[0] <= token_bbox[0]
+            and region[1] <= token_bbox[1]
+            and token_bbox[2] <= region[2]
+            and token_bbox[3] <= date_band_bottom
         ):
             continue
         parsed = parse_date_candidate(token.text)

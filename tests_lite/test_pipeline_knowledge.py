@@ -806,6 +806,209 @@ def test_pipeline_rejects_same_parameter_from_another_formula_region() -> None:
     assert all(candidate["value"] != "8" for candidate in field["candidates"])
 
 
+def test_pipeline_rejects_cross_formula_direct_numeric_evidence_id() -> None:
+    structured = _structured("Material A")
+    section = structured["pages"][0]["product_sections"][0]
+    first_formula = section["formulas"][0]
+    first_formula["process_parameters"] = [
+        {
+            "parameter_id": "parameter_001",
+            "name": {"value": "Side Feed", "confidence": 0.9},
+            "value": {"value": "8", "confidence": 0.9},
+            "unit": {"value": "", "confidence": 0.0},
+        }
+    ]
+    second_formula = copy.deepcopy(first_formula)
+    second_formula["formula_id"] = "formula_002"
+    second_formula["process_parameters"][0]["value"] = {
+        "value": "7.6",
+        "confidence": 0.9,
+        "evidence_token_ids": ["p1_t002"],
+    }
+    section["formulas"] = [first_formula, second_formula]
+    page = OCRPage(
+        image_index=1,
+        width=1000,
+        height=1000,
+        tokens=[
+            OCRToken(
+                id="p1_t001",
+                text="Side Feed",
+                confidence=0.99,
+                polygon=[[100, 100], [220, 100], [220, 140], [100, 140]],
+                bbox=[100, 100, 220, 140],
+                center_x=160,
+                center_y=120,
+            ),
+            OCRToken(
+                id="p1_t002",
+                text="8",
+                confidence=0.99,
+                polygon=[[100, 170], [140, 170], [140, 210], [100, 210]],
+                bbox=[100, 170, 140, 210],
+                center_x=120,
+                center_y=190,
+            ),
+        ],
+        average_confidence=0.99,
+        provider="paddleocr_v6",
+        model="PP-OCRv6_medium",
+        elapsed_ms=1,
+    )
+    layout = {
+        "pairs": {"1": []},
+        "records": {"1": []},
+        "formula_regions": {
+            "1": {
+                "formula_001": [0.0, 0.0, 1.0, 0.5],
+                "formula_002": [0.0, 0.5, 1.0, 1.0],
+            }
+        },
+    }
+
+    fusion = _build_fusion_result(structured, [page], {}, layout)
+    field = next(
+        item
+        for item in fusion["fields"]
+        if item["field_id"] == "formula_002__parameter_001__value"
+    )
+
+    assert field["final_value"] == "7.6"
+    assert [candidate["value"] for candidate in field["candidates"]] == ["7.6"]
+
+
+def test_pipeline_prefers_local_region_over_coarse_vlm_record_bbox() -> None:
+    structured = _structured("Material A")
+    section = structured["pages"][0]["product_sections"][0]
+    first_formula = section["formulas"][0]
+    first_formula["record_bbox"] = [0.0, 0.0, 1.0, 1.0]
+    first_formula["process_parameters"] = [
+        {
+            "parameter_id": "parameter_001",
+            "name": {"value": "Side Feed", "confidence": 0.9},
+            "value": {"value": "8", "confidence": 0.9},
+            "unit": {"value": "", "confidence": 0.0},
+        }
+    ]
+    second_formula = copy.deepcopy(first_formula)
+    second_formula["formula_id"] = "formula_002"
+    second_formula["process_parameters"][0]["value"]["value"] = "7.6"
+    section["formulas"] = [first_formula, second_formula]
+    page = OCRPage(
+        image_index=1,
+        width=1000,
+        height=1000,
+        tokens=[
+            OCRToken(
+                id="p1_t001",
+                text="Side Feed",
+                confidence=0.99,
+                polygon=[[100, 100], [220, 100], [220, 140], [100, 140]],
+                bbox=[100, 100, 220, 140],
+                center_x=160,
+                center_y=120,
+            ),
+            OCRToken(
+                id="p1_t002",
+                text="8",
+                confidence=0.99,
+                polygon=[[100, 170], [140, 170], [140, 210], [100, 210]],
+                bbox=[100, 170, 140, 210],
+                center_x=120,
+                center_y=190,
+            ),
+        ],
+        average_confidence=0.99,
+        provider="paddleocr_v6",
+        model="PP-OCRv6_medium",
+        elapsed_ms=1,
+    )
+    layout = {
+        "pairs": {
+            "1": [
+                {
+                    "name_token_ids": ["p1_t001"],
+                    "amount_token_ids": ["p1_t002"],
+                    "name": "Side Feed",
+                    "score": 0.99,
+                }
+            ]
+        },
+        "records": {"1": [{"bbox": [0, 0, 1000, 1000]}]},
+        "formula_regions": {
+            "1": {
+                "formula_001": [0.0, 0.0, 1.0, 0.5],
+                "formula_002": [0.0, 0.5, 1.0, 1.0],
+            }
+        },
+    }
+
+    fusion = _build_fusion_result(structured, [page], {}, layout)
+    field = next(
+        item
+        for item in fusion["fields"]
+        if item["field_id"] == "formula_002__parameter_001__value"
+    )
+
+    assert field["final_value"] == "7.6"
+    assert all(candidate["value"] != "8" for candidate in field["candidates"])
+
+
+def test_pipeline_rejects_numeric_token_reused_by_multiple_fields() -> None:
+    structured = _structured("Material A")
+    formula = structured["pages"][0]["product_sections"][0]["formulas"][0]
+    first = formula["materials"][0]
+    first["amount"] = {
+        "value": "12",
+        "confidence": 0.9,
+        "evidence_token_ids": ["p1_t002"],
+    }
+    second = copy.deepcopy(first)
+    second["material_id"] = "material_002"
+    second["name"]["value"] = "Material B"
+    second["amount"]["value"] = "7.5"
+    formula["materials"] = [first, second]
+    page = OCRPage(
+        image_index=1,
+        width=1000,
+        height=1000,
+        tokens=[
+            OCRToken(
+                id="p1_t002",
+                text="99",
+                confidence=0.99,
+                polygon=[[100, 170], [160, 170], [160, 210], [100, 210]],
+                bbox=[100, 170, 160, 210],
+                center_x=130,
+                center_y=190,
+            )
+        ],
+        average_confidence=0.99,
+        provider="paddleocr_v6",
+        model="PP-OCRv6_medium",
+        elapsed_ms=1,
+    )
+    layout = {
+        "pairs": {"1": []},
+        "records": {"1": []},
+        "formula_regions": {"1": {"formula_001": [0.0, 0.0, 1.0, 0.5]}},
+    }
+
+    fusion = _build_fusion_result(structured, [page], {}, layout)
+    amounts = [
+        field for field in fusion["fields"] if field["field_id"].endswith("__amount")
+    ]
+
+    assert [field["final_value"] for field in amounts] == ["12", "7.5"]
+    assert all(field["status"] == "NEED_REVIEW" for field in amounts)
+    assert all("OCR_NUMERIC_TOKEN_REUSED" in field["reasons"] for field in amounts)
+    assert all(
+        candidate["source"] != "ocr_base"
+        for field in amounts
+        for candidate in field["candidates"]
+    )
+
+
 def test_formula_regions_are_resolved_for_every_structured_formula() -> None:
     structured = _structured("Material A")
     section = structured["pages"][0]["product_sections"][0]
