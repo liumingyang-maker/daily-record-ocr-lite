@@ -211,6 +211,17 @@ class KnowledgeHistory:
             """,
             (formula_id,),
         ).fetchall()
+        evidence = connection.execute(
+            """
+            SELECT e.id, e.kind, e.relative_path, e.sha256,
+                   s.source_path, s.sheet_name, s.cell_range
+            FROM formula_evidence e
+            JOIN formula_sources s ON s.id = e.formula_source_id
+            WHERE e.formula_id = ?
+            ORDER BY s.id, CASE e.kind WHEN 'tight' THEN 0 ELSE 1 END
+            """,
+            (formula_id,),
+        ).fetchall()
         return {
             "id": int(row["id"]),
             "customer": str(row["customer"] or "未记录客户"),
@@ -226,6 +237,7 @@ class KnowledgeHistory:
             "revision_of_id": row["revision_of_id"],
             "materials": [dict(item) for item in materials],
             "process": [dict(item) for item in process],
+            "evidence": [dict(item) for item in evidence],
         }
 
     def compare(self, left_id: int, right_id: int) -> dict[str, Any]:

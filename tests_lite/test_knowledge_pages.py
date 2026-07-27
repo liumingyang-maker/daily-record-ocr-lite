@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -23,6 +26,40 @@ def knowledge_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         storage.save_job(job)
         source_jobs.append(job["id"])
     formula_ids = seed_dated_history(db_path, tuple(source_jobs))
+    evidence_path = (
+        db_path.parent
+        / "personal_imports"
+        / "test"
+        / "evidence"
+        / "formula-tight.png"
+    )
+    evidence_path.parent.mkdir(parents=True)
+    evidence_bytes = b"\x89PNG\r\n\x1a\nEVIDENCE"
+    evidence_path.write_bytes(evidence_bytes)
+    connection = sqlite3.connect(db_path)
+    source_id = connection.execute(
+        """
+        INSERT INTO formula_sources (
+            formula_id, source_path, sheet_name, cell_range, created_at
+        ) VALUES (?, '客户/历史.xlsx', 'G30A', 'A2:D6', ?)
+        """,
+        (formula_ids[1], datetime.now(UTC).isoformat()),
+    ).lastrowid
+    connection.execute(
+        """
+        INSERT INTO formula_evidence (
+            formula_id, formula_source_id, kind, relative_path, sha256
+        ) VALUES (?, ?, 'tight', ?, ?)
+        """,
+        (
+            formula_ids[1],
+            source_id,
+            evidence_path.relative_to(db_path.parent).as_posix(),
+            hashlib.sha256(evidence_bytes).hexdigest(),
+        ),
+    )
+    connection.commit()
+    connection.close()
 
     from lite_app import main
 
@@ -45,6 +82,10 @@ def test_knowledge_tree_detail_and_comparison(knowledge_client):
     assert detail["record_date"] == "2026-07-28"
     assert detail["materials"][0]["amount"] == "62"
     assert detail["evidence_image_url"].startswith(f"/jobs/{source_jobs[1]}/files/")
+    assert detail["evidence"][0]["source_path"] == "客户/历史.xlsx"
+    evidence = client.get(detail["evidence"][0]["image_url"])
+    assert evidence.status_code == 200
+    assert evidence.content == b"\x89PNG\r\n\x1a\nEVIDENCE"
 
     comparison = client.get(f"/api/knowledge/compare?left={older}&right={newer}").json()
     assert comparison["materials"]["PA66"]["before"] == "60"

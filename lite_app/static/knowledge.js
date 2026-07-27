@@ -100,6 +100,21 @@
             figure.append(image, node("figcaption", "", "原图证据"));
             detailRoot.append(figure);
         }
+        (detail.evidence || []).forEach((evidence) => {
+            const figure = node("figure", "knowledge-evidence");
+            const image = node("img");
+            image.src = evidence.image_url;
+            image.alt = `${evidence.kind} 证据`;
+            figure.append(
+                image,
+                node(
+                    "figcaption",
+                    "",
+                    `${evidence.source_path} · ${evidence.sheet_name} · ${evidence.cell_range}`,
+                ),
+            );
+            detailRoot.append(figure);
+        });
         detailRoot.append(renderRows("材料与数量", detail.materials, "amount"));
         if (detail.process.length) detailRoot.append(renderRows("工艺", detail.process, "value"));
     }

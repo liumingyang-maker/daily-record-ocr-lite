@@ -1782,7 +1782,43 @@ async def knowledge_formula(formula_id: int):
                 )
         except (FileNotFoundError, ValueError, IndexError):
             pass
+    for evidence in detail.get("evidence", []):
+        evidence["image_url"] = (
+            f"/api/knowledge/evidence/{int(evidence['id'])}"
+        )
     return detail
+
+
+@app.get("/api/knowledge/evidence/{evidence_id}")
+async def knowledge_evidence(evidence_id: int):
+    import hashlib
+
+    from .knowledge.database import KnowledgeDB
+
+    database = KnowledgeDB(_knowledge_db_path())
+    database.initialize()
+    connection = database._get_conn()
+    row = connection.execute(
+        """
+        SELECT relative_path, sha256 FROM formula_evidence WHERE id = ?
+        """,
+        (evidence_id,),
+    ).fetchone()
+    database.close()
+    if row is None:
+        raise HTTPException(status_code=404, detail="证据不存在")
+    data_root = _knowledge_db_path().parent.resolve()
+    path = (data_root / str(row["relative_path"])).resolve()
+    try:
+        path.relative_to(data_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="证据路径无效") from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="证据文件不存在")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != str(row["sha256"]):
+        raise HTTPException(status_code=409, detail="证据校验失败")
+    return FileResponse(path, media_type="image/png")
 
 
 @app.get("/api/knowledge/compare")
