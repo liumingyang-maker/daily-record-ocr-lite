@@ -226,6 +226,8 @@ def test_compact_qwen_prompt_keeps_business_and_safety_contract() -> None:
 
     assert "JSON" in prompt
     assert "source_image_index" in prompt
+    assert "record_bbox" in prompt
+    assert "归一化" in prompt
     assert "company" in prompt
     assert "product_or_series" in prompt
     assert "amount" in prompt

@@ -26,6 +26,7 @@ from .contracts import (
     validate_page_coverage,
     validate_record_result,
 )
+from .evidence_regions import generate_formula_evidence
 from .final_result import FinalResultService, project_final_result
 from .fusion.association import (
     FieldEvidence,
@@ -420,6 +421,16 @@ async def analyze_job_v2(
         final["recognition_run_id"] = recognition_run_id
         final_service = FinalResultService(job_dir)
         final_service.replace(final)
+        try:
+            generate_formula_evidence(
+                job_dir,
+                job,
+                final,
+                ocr_pages,
+                layout_by_page,
+            )
+        except Exception:
+            logger.warning("配方审查证据生成失败，审查页将回退显示整图")
 
         job["schema_status"] = (
             "REVIEW_REQUIRED" if validation.reviewable else "VALID"
@@ -698,6 +709,7 @@ def _build_compact_qwen_prompt(
                 "product_or_series": "",
                 "formula_no": "",
                 "record_date": "",
+                "record_bbox": [0.10, 0.18, 0.88, 0.42],
                 "materials": [{"name": "", "amount": "", "unit": ""}],
                 "process_parameters": [
                     {"name": "", "value": "", "unit": ""}
@@ -711,7 +723,8 @@ def _build_compact_qwen_prompt(
     return (
         "每个可见配方输出一条 records 记录；source_image_index 是从 1 开始的图片"
         "序号。formula_no 只填写可见的数字序号，不翻译、不补写“配方”。"
-        "每条配方下方的日期行写入该条 record_date。材料名称横排及其正下方"
+        "每条配方下方的日期行写入该条 record_date。record_bbox 填写该配方完整区域的"
+        "归一化坐标 [x1,y1,x2,y2]，仅用于审查定位；无法可靠定位时可省略。材料名称横排及其正下方"
         "对齐的全部数量都写入 materials；只有明确写有“工艺”的行才写入"
         "process_parameters。数字、小数点、加减号、斜杠和范围连接符逐字符保留。"
         "保留原始数量文本、日期、单位、工艺和注意事项。看不清就留空。"

@@ -84,7 +84,7 @@
 
   Run: `.venv\Scripts\python.exe -m pytest tests_lite/test_knowledge_migrations.py tests_lite/test_knowledge_history.py tests_lite/test_knowledge_package.py tests_lite/test_knowledge_pages.py -q`
 
-- [ ] **Step 7: 提交 Task 2**
+- [x] **Step 7: 提交 Task 2**
 
   `git add lite_app/knowledge tests_lite/test_knowledge_migrations.py tests_lite/test_knowledge_history.py tests_lite/test_knowledge_package.py tests_lite/test_knowledge_pages.py && git commit -m "feat: sort history without rewriting source dates"`
 
@@ -98,31 +98,31 @@
 - Test: `tests_lite/test_pipeline_knowledge.py`
 - Test: `tests_lite/test_v1_contracts.py`
 
-- [ ] **Step 1: 写 bbox 验证与融合失败测试**
+- [x] **Step 1: 写 bbox 验证与融合失败测试**
 
   覆盖正常、越界、反向、过小、过大、乱序、异常重叠；模型/本地一致时安全并集；冲突时较大安全区；双方不可用时页面内容区或整图；四周 padding 与 clamp。
 
-- [ ] **Step 2: 写裁剪产物安全失败测试**
+- [x] **Step 2: 写裁剪产物安全失败测试**
 
   断言安全 formula 文件名、原图及裁剪 SHA-256、像素/归一化坐标、定位来源写入 `review/evidence_regions.json`；路径穿越、错误公式 ID、原图 hash 改变均不能返回裁剪。
 
-- [ ] **Step 3: 运行证据测试并确认 RED**
+- [x] **Step 3: 运行证据测试并确认 RED**
 
   Run: `.venv\Scripts\python.exe -m pytest tests_lite/test_evidence_regions.py -q`
 
-- [ ] **Step 4: 实现纯本地 resolver 与 artifact store**
+- [x] **Step 4: 实现纯本地 resolver 与 artifact store**
 
   使用模型 `record_bbox` 候选；从 OCR token 的配方序号、日期形态、材料/数量行和相邻锚点构造本地候选；失败时静默扩大到安全区域或整图。从原始上传图生成高质量 JPEG，不把裁剪失败升级为 Job 失败。
 
-- [ ] **Step 5: 扩展 Qwen 紧凑合同**
+- [x] **Step 5: 扩展 Qwen 紧凑合同**
 
   在每条 record 中加入可选归一化 `record_bbox`，明确坐标仅用于定位；Prompt 保持整图输入与现有业务字段，不增加逐配方模型调用。
 
-- [ ] **Step 6: 接入 Pipeline**
+- [x] **Step 6: 接入 Pipeline**
 
   structured result/FinalResult 成功后生成证据；使用持久化 OCR/layout 与原图；异常只写脱敏状态，不记录完整响应或本机私密路径。
 
-- [ ] **Step 7: 验证 Task 3**
+- [x] **Step 7: 验证 Task 3**
 
   Run: `.venv\Scripts\python.exe -m pytest tests_lite/test_evidence_regions.py tests_lite/test_pipeline_knowledge.py tests_lite/test_v1_contracts.py -q`
 
@@ -138,19 +138,19 @@
 - Test: `tests_lite/test_review_api.py`
 - Test: `tests_lite/test_review_view.py`
 
-- [ ] **Step 1: 写 API 失败测试**
+- [x] **Step 1: 写 API 失败测试**
 
   断言 review view 为每条配方返回 `crop_url` 与 `full_image_url`；缺失/损坏裁剪自动回退整图；错误 Job、错误 formula ID、路径穿越和 hash 不匹配被拒绝。
 
-- [ ] **Step 2: 运行测试并确认 RED**
+- [x] **Step 2: 运行测试并确认 RED**
 
   Run: `.venv\Scripts\python.exe -m pytest tests_lite/test_review_api.py tests_lite/test_review_view.py -q`
 
-- [ ] **Step 3: 实现身份映射式证据路由**
+- [x] **Step 3: 实现身份映射式证据路由**
 
   路由只接受 Job ID 与已存在 formula ID，从 manifest 解析真实文件；解析后验证仍位于 Job 目录并核对 SHA-256；不得接受任意相对路径。
 
-- [ ] **Step 4: 实现视图回退**
+- [x] **Step 4: 实现视图回退**
 
   crop 可验证时使用裁剪；否则 `image_url` 使用整图；始终保留 `full_image_url`；不向浏览器暴露磁盘绝对路径或 hash 内部细节。
 
@@ -168,15 +168,15 @@
 - Test: `tests_lite/test_review_api.py`
 - Test: `tests_lite/test_web.py`
 
-- [ ] **Step 1: 增加静态契约失败测试**
+- [x] **Step 1: 增加静态契约失败测试**
 
   断言证据图使用 crop URL、存在可聚焦“查看整图”链接、日期为文本输入、桌面 sticky、祖先无阻断 sticky 的 overflow、小于 900px 取消 sticky 且无嵌套滚动。
 
-- [ ] **Step 2: 运行静态测试并确认 RED**
+- [x] **Step 2: 运行静态测试并确认 RED**
 
   Run: `.venv\Scripts\python.exe -m pytest tests_lite/test_review_api.py tests_lite/test_web.py -q`
 
-- [ ] **Step 3: 实现桌面与窄屏布局**
+- [x] **Step 3: 实现桌面与窄屏布局**
 
   桌面约 42/58 两列；证据只在当前卡片范围内 sticky；圆角转移到内部标题/内容层；图片声明稳定 aspect ratio；窄屏证据置顶并取消 sticky；不显示“裁剪待确认”。
 

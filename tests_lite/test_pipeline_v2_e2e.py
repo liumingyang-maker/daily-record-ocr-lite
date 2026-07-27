@@ -217,6 +217,19 @@ async def test_v2_pipeline_conflict_manual_api_and_excel_source(
     assert result["status"] == "REVIEW_REQUIRED"
 
     final = FinalResultService(storage.get_job_dir(job["id"])).load()
+    evidence_manifest = json.loads(
+        (
+            storage.get_job_dir(job["id"])
+            / "review"
+            / "evidence_regions.json"
+        ).read_text(encoding="utf-8")
+    )
+    formula_id = final["pages"][0]["product_sections"][0]["formulas"][0][
+        "formula_id"
+    ]
+    evidence = evidence_manifest["formulas"][formula_id]
+    assert (storage.get_job_dir(job["id"]) / evidence["crop_path"]).is_file()
+    assert evidence["locator_source"] in {"model", "local", "hybrid", "full_image"}
     amount = final["pages"][0]["product_sections"][0]["formulas"][0][
         "materials"
     ][0]["amount"]
