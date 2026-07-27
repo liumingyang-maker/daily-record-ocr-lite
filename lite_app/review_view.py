@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote
 
+from .date_values import parse_record_date
+
 REVIEW_STATUSES = {"CONFLICT", "EMPTY", "NEED_REVIEW"}
 
 
@@ -93,6 +95,9 @@ def _present_formula(
     formula_id = str(formula.get("formula_id", ""))
     formula_no = str(formula.get("formula_no", "")) or "未编号配方"
     date = present_field(formula.get("record_date", {}), required=False)
+    parsed_date = parse_record_date(date["value"])
+    date["sort_value"] = parsed_date.sort_value
+    date["parse_status"] = parsed_date.status
     date_pending = not date["value"].strip()
     if date_pending:
         date["needs_confirmation"] = False

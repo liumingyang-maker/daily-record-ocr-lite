@@ -21,27 +21,27 @@
 - Test: `tests_lite/test_review_editor.py`
 - Test: `tests_lite/test_review_view.py`
 
-- [ ] **Step 1: 写日期解析失败测试**
+- [x] **Step 1: 写日期解析失败测试**
 
   覆盖 `24.7.19 -> 2024-07-19`、`22/9/27 -> 2022-09-27`、四位年份、`.` `/` `-`、空值、非法日历日期与不可解析原文。断言解析器返回 `(raw, sort_value, status)`，原文永不改写。
 
-- [ ] **Step 2: 运行日期测试并确认 RED**
+- [x] **Step 2: 运行日期测试并确认 RED**
 
   Run: `.venv\Scripts\python.exe -m pytest tests_lite/test_date_values.py -q`
 
-- [ ] **Step 3: 最小实现日期解析器**
+- [x] **Step 3: 最小实现日期解析器**
 
   使用完整匹配和 `datetime.date` 严格校验；两位年份固定映射至 `20xx`；空值为 `UNKNOWN`，合法值为 `KNOWN`，非空非法值为 `UNPARSED`。
 
-- [ ] **Step 4: 写审查编辑失败测试**
+- [x] **Step 4: 写审查编辑失败测试**
 
   断言审查编辑接受并原样保存 `24.7.19`、`22/9/27`，拒绝 `2026-02-30`，且 review view 返回原始文本与内部日期状态。
 
-- [ ] **Step 5: 实现文本日期控件与服务器校验**
+- [x] **Step 5: 实现文本日期控件与服务器校验**
 
   将浏览器日期输入从 `type=date` 改为普通文本；后端调用统一解析器，仅拒绝 `UNPARSED`，不把合法原文改成 ISO；显示“保留原写法，系统用于排序”的辅助说明。
 
-- [ ] **Step 6: 验证 Task 1**
+- [x] **Step 6: 验证 Task 1**
 
   Run: `.venv\Scripts\python.exe -m pytest tests_lite/test_date_values.py tests_lite/test_review_editor.py tests_lite/test_review_view.py -q`
 

@@ -67,3 +67,17 @@ def test_review_view_orders_issue_formulas_before_confirmed_formulas():
     assert [item["formula_no"] for item in formulas] == ["配方1", "配方0"]
     assert formulas[0]["collapsed"] is False
     assert formulas[1]["collapsed"] is True
+
+
+def test_review_view_preserves_date_text_and_exposes_internal_sort_state():
+    final = make_review_final("job-review")
+    formula = final["pages"][0]["product_sections"][0]["formulas"][0]
+    formula["record_date"]["value"] = "24.7.19"
+    formula["record_date"]["status"] = "AUTO_ACCEPT"
+
+    view = build_review_view(_job(), final, confirmed={})
+    date = view["groups"][0]["formulas"][0]["date"]
+
+    assert date["value"] == "24.7.19"
+    assert date["sort_value"] == "2024-07-19"
+    assert date["parse_status"] == "KNOWN"

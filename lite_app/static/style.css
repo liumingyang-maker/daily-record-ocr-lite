@@ -161,6 +161,7 @@ footer { color: #888; font-size: 0.78rem; margin: 28px 0 12px; }
 }
 .review-field { display: grid; gap: 5px; flex: 1; min-width: 130px; }
 .review-field-label { color: #4b5563; font-size: 0.8rem; font-weight: 600; }
+.field-help { color: #5f6368; font-size: 0.8rem; }
 .review-field input {
     width: 100%;
     box-sizing: border-box;

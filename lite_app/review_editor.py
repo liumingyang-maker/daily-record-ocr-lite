@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from .date_values import parse_record_date
 from .final_result import FinalResultError, FinalResultService
 from .storage import read_json_optional, write_json_atomic
-
-ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 class ReviewVersionConflict(RuntimeError):
@@ -100,10 +98,11 @@ class ReviewEditor:
         expected_version: str,
     ) -> None:
         _reject_unknown(changes, {"formula_no", "record_date", "notes"})
-        if "record_date" in changes and changes["record_date"] and not _is_iso_date(
-            str(changes["record_date"])
+        if (
+            "record_date" in changes
+            and parse_record_date(changes["record_date"]).status == "UNPARSED"
         ):
-            raise ReviewInputError("日期必须使用 YYYY-MM-DD 格式")
+            raise ReviewInputError("日期格式无效，请使用年.月.日、年/月/日或年-月-日")
 
         def edit(final: dict[str, Any]) -> None:
             _page, _section, formula = find_identity_and_formula(final, formula_id)
@@ -349,16 +348,6 @@ def _reject_unknown(values: dict[str, Any], allowed: set[str]) -> None:
     unknown = sorted(set(values) - allowed)
     if unknown:
         raise ReviewInputError(f"不支持的字段: {', '.join(unknown)}")
-
-
-def _is_iso_date(value: str) -> bool:
-    if not ISO_DATE.fullmatch(value):
-        return False
-    try:
-        date.fromisoformat(value)
-    except ValueError:
-        return False
-    return True
 
 
 def _manual_status(value: Any) -> str:

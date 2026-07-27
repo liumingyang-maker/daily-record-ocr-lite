@@ -40,6 +40,7 @@
             timers.set(input, setTimeout(() => queueSave(() => onSave(input.value)), 450));
         });
         label.append(input);
+        if (options.help) label.append(node("small", "field-help", options.help));
         return label;
     }
 
@@ -207,8 +208,9 @@
         basics.append(
             field("配方", formula.formula_no, (value) => updateFormula({formula_no: value})),
             field("日期", formula.date.value, (value) => updateFormula({record_date: value}), {
-                type: "date",
                 issue: formula.date.needs_confirmation,
+                placeholder: "例如 24.7.19 或 22/9/27",
+                help: "保留原写法，系统用于排序",
             }),
         );
         editor.append(basics);
